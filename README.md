@@ -133,3 +133,15 @@ For deep technical explorations, read our dedicated guides:
 - [API Documentation Specification](API_DOCUMENTATION.md)
 - [Deployment & Orchestration Manual](DEPLOYMENT_GUIDE.md)
 - [Contributing Standards](CONTRIBUTING.md)
+
+---
+
+## Resume Upgrade Notes
+
+This fork includes resume-oriented upgrades and documentation:
+
+- [Resume Upgrade Plan](docs/RESUME_UPGRADE_PLAN.md)
+- [Resume Project Guide](docs/RESUME_PROJECT_GUIDE.md)
+- [Resume Upgrade Change Log](docs/CHANGELOG_RESUME_UPGRADE.md)
+
+The CRM, order-management, and ticketing integrations are local mock adapters intended for demo and interview use. The architecture is adapter-driven so these mocks can be replaced with real enterprise service clients.
