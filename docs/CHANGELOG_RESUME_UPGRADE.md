@@ -121,3 +121,37 @@ Recommended stabilization:
 - Add a lock file.
 - Split optional evaluation dependencies into an extra group.
 - Disable third-party telemetry in tests.
+
+## Commit 4: `feat: add security short-circuit routing`
+
+### Files Changed
+
+- `src/agents/graph.py`
+
+### What Changed
+
+- Added `route_after_analyzer`, a LangGraph conditional router.
+- Tickets flagged by guardrails as security threats now route directly from `analyzer` to `escalation`.
+- Security-blocked requests skip:
+  - Tool context lookup.
+  - RAG retrieval.
+  - Response generation.
+  - QA validation.
+
+Updated workflow:
+
+```text
+analyzer
+  ├── security threat -> escalation -> END
+  └── normal request  -> tooling -> retriever -> resolver -> qa -> escalation -> END
+```
+
+### Resume Value
+
+This enables an honest resume claim:
+
+> Added conditional routing in the LangGraph workflow so prompt-injection and jailbreak attempts are blocked early and escalated without invoking downstream tools or retrieval.
+
+### Mock Boundary
+
+The guardrail detectors are rule-based. This is acceptable for a resume project, but a production system should combine rules with model-based classifiers, audit logging, and policy-driven severity levels.

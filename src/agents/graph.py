@@ -59,6 +59,13 @@ async def escalate_node(state: AgentState) -> Dict[str, Any]:
     return await escalation_agent.evaluate(state)
 
 
+def route_after_analyzer(state: AgentState) -> str:
+    """Route security-blocked tickets directly to escalation."""
+    if "Security threat" in "".join(state.get("errors", [])):
+        return "escalation"
+    return "tooling"
+
+
 def create_agent_graph() -> StateGraph:
     """Build and compile the LangGraph workflow."""
     workflow = StateGraph(AgentState)
@@ -73,7 +80,14 @@ def create_agent_graph() -> StateGraph:
 
     # Establish Transitions
     workflow.set_entry_point("analyzer")
-    workflow.add_edge("analyzer", "tooling")
+    workflow.add_conditional_edges(
+        "analyzer",
+        route_after_analyzer,
+        {
+            "tooling": "tooling",
+            "escalation": "escalation",
+        },
+    )
     workflow.add_edge("tooling", "retriever")
     workflow.add_edge("retriever", "resolver")
     workflow.add_edge("resolver", "qa")
