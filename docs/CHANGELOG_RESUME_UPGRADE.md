@@ -191,3 +191,21 @@ This makes the tool-augmented Agent behavior visible from the API layer. It is u
 ### Mock Boundary
 
 The returned `tool_context.mocked` field intentionally marks local tool adapters as mock data. Keep this visible in demos to avoid overclaiming real enterprise integrations.
+
+## Commit 6: `docs: document mock boundaries for resume claims`
+
+### Files Changed
+
+- `docs/MOCK_BOUNDARIES.md`
+- `README.md`
+
+### What Changed
+
+- Added a dedicated document explaining which parts are implemented and which are mocked.
+- Added safe resume wording and risky wording to avoid.
+- Added a mock-to-production upgrade checklist.
+- Linked the document from README.
+
+### Resume Value
+
+This helps defend the project in interviews. It shows engineering judgment by making the boundary between demo adapters and production integrations explicit.
