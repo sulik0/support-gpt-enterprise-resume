@@ -28,6 +28,7 @@ from src.approval.workflows import human_it_loop_service
 from src.tools.crm import crm_tool
 from src.tools.ticketing import ticketing_tool
 from src.tools.order_mgmt import order_mgmt_tool
+from src.memory.redis_memory import redis_memory
 from src.observability.tracing import init_tracing
 from src.observability.metrics import HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
 from src.evaluation.framework import run_deeval_evaluation
@@ -158,8 +159,9 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         )
         db.add(session_mem)
 
-    # Append user message
-    session_history = list(session_mem.conversation_history)
+    # Use Redis as short-term working memory when available; SQL remains durable history.
+    redis_history = await redis_memory.load_messages(req.session_id)
+    session_history = list(redis_history if redis_history is not None else session_mem.conversation_history)
     session_history.append({"role": "user", "content": req.message})
 
     # 3. Invoke multi-agent graph
@@ -193,6 +195,7 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     # Append assistant message
     session_history.append({"role": "assistant", "content": agent_output.get("suggested_response", "")})
     session_mem.conversation_history = session_history
+    await redis_memory.save_messages(req.session_id, session_history)
     
     await db.commit()
 
