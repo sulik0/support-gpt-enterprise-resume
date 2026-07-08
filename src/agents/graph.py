@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, END
 from src.config import settings
 from src.agents.analyzer import ticket_analyzer_agent
 from src.agents.retriever import knowledge_retriever_agent
+from src.agents.tooling import tooling_agent
 from src.agents.resolver import resolution_agent
 from src.agents.quality_assurance import quality_assurance_agent
 from src.agents.escalation import escalation_agent
@@ -24,6 +25,7 @@ class AgentState(TypedDict):
     priority: str
     intent: str
     department: str
+    tool_context: Dict[str, Any]
     context_citations: List[Any]
     suggested_response: str
     qa_score: float
@@ -44,6 +46,9 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
 async def retrieve_node(state: AgentState) -> Dict[str, Any]:
     return await knowledge_retriever_agent.retrieve(state)
 
+async def tooling_node(state: AgentState) -> Dict[str, Any]:
+    return await tooling_agent.enrich(state)
+
 async def resolve_node(state: AgentState) -> Dict[str, Any]:
     return await resolution_agent.resolve(state)
 
@@ -60,6 +65,7 @@ def create_agent_graph() -> StateGraph:
 
     # Register Nodes
     workflow.add_node("analyzer", analyze_node)
+    workflow.add_node("tooling", tooling_node)
     workflow.add_node("retriever", retrieve_node)
     workflow.add_node("resolver", resolve_node)
     workflow.add_node("qa", qa_node)
@@ -67,7 +73,8 @@ def create_agent_graph() -> StateGraph:
 
     # Establish Transitions
     workflow.set_entry_point("analyzer")
-    workflow.add_edge("analyzer", "retriever")
+    workflow.add_edge("analyzer", "tooling")
+    workflow.add_edge("tooling", "retriever")
     workflow.add_edge("retriever", "resolver")
     workflow.add_edge("resolver", "qa")
     workflow.add_edge("qa", "escalation")
@@ -96,6 +103,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "priority": "medium",
         "intent": "general",
         "department": "general",
+        "tool_context": {},
         "context_citations": [],
         "suggested_response": "",
         "qa_score": 1.0,

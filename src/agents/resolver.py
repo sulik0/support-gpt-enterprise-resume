@@ -1,3 +1,4 @@
+import json
 import time
 import logging
 from typing import Dict, Any
@@ -22,12 +23,22 @@ class ResolutionAgent:
         subject = state.get("subject", "")
         description = state.get("description", "")
         citations = state.get("context_citations", [])
+        tool_context = state.get("tool_context", {})
 
         # Build context prompt
         context_blocks = []
         for citation in citations:
             context_blocks.append(f"Source: {citation.source}\nContent: {citation.text}")
-        combined_context = "\n\n".join(context_blocks) if context_blocks else "No relevant articles found in KB."
+        kb_context = "\n\n".join(context_blocks) if context_blocks else "No relevant articles found in KB."
+        business_context = (
+            json.dumps(tool_context, default=str, ensure_ascii=False, indent=2)
+            if tool_context
+            else "No structured customer tool context available."
+        )
+        combined_context = (
+            f"Knowledge Base Context:\n{kb_context}\n\n"
+            f"Structured Tool Context:\n{business_context}"
+        )
 
         try:
             # Generate the text from LLM provider
