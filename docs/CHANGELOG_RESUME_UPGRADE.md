@@ -155,3 +155,39 @@ This enables an honest resume claim:
 ### Mock Boundary
 
 The guardrail detectors are rule-based. This is acceptable for a resume project, but a production system should combine rules with model-based classifiers, audit logging, and policy-driven severity levels.
+
+## Commit 5: `feat: expose tool context in API responses`
+
+### Files Changed
+
+- `src/models/schemas.py`
+- `src/main.py`
+
+### What Changed
+
+- Added `tool_context` to `ChatResponse`.
+- Added `tool_context` to `SuggestResponseResponse`.
+- `/chat` and `/suggest-response` now return the structured context gathered by the tool node.
+
+Example tool context:
+
+```json
+{
+  "customer_profile": {
+    "customer_id": "cust_101",
+    "tier": "VIP",
+    "open_tickets_count": 2
+  },
+  "recent_orders": [],
+  "past_tickets": [],
+  "mocked": true
+}
+```
+
+### Resume Value
+
+This makes the tool-augmented Agent behavior visible from the API layer. It is useful for demos, debugging, and interview explanation because the response can prove which business context was injected before answer generation.
+
+### Mock Boundary
+
+The returned `tool_context.mocked` field intentionally marks local tool adapters as mock data. Keep this visible in demos to avoid overclaiming real enterprise integrations.

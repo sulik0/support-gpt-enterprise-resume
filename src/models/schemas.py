@@ -59,6 +59,7 @@ class ChatResponse(BaseModel):
     response: str
     sentiment: str
     priority: str
+    tool_context: Dict[str, Any] = Field(default_factory=dict)
     citations: List[Citation]
     escalation_recommended: bool
     escalation_reason: Optional[str] = None
@@ -120,6 +121,7 @@ class SuggestResponseRequest(BaseModel):
 class SuggestResponseResponse(BaseModel):
     ticket_id: int
     suggested_response: str
+    tool_context: Dict[str, Any] = Field(default_factory=dict)
     citations: List[Citation]
     qa_score: float
     hallucination_detected: bool

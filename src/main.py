@@ -217,6 +217,7 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         response=agent_output.get("suggested_response", ""),
         sentiment=agent_output.get("sentiment", "neutral"),
         priority=agent_output.get("priority", "medium"),
+        tool_context=agent_output.get("tool_context", {}),
         citations=citations,
         escalation_recommended=agent_output.get("escalation_recommended", False),
         escalation_reason=agent_output.get("escalation_reason"),
@@ -286,6 +287,7 @@ async def suggest_response(req: SuggestResponseRequest, db: AsyncSession = Depen
     return SuggestResponseResponse(
         ticket_id=ticket.id,
         suggested_response=agent_output.get("suggested_response", ""),
+        tool_context=agent_output.get("tool_context", {}),
         citations=citations,
         qa_score=agent_output.get("qa_score", 1.0),
         hallucination_detected=agent_output.get("hallucination_detected", False),
