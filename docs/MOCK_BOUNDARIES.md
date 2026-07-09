@@ -59,7 +59,7 @@ Avoid:
 - Add cross-encoder or LLM-based reranking before answer generation.
 - Pin Python and dependencies in a lock file.
 - Move optional evaluation dependencies to a separate install extra.
-- Add CI on Python 3.11/3.12.
+- Add a broader CI matrix after the current Python 3.11 smoke workflow.
 - Add real-world golden evaluation datasets.
 
 ## Resume Bullet Boundaries

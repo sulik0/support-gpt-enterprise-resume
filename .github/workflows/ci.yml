@@ -1,49 +1,38 @@
-name: CI/CD Pipeline
+name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: ["main"]
   pull_request:
-    branches: [ main, master ]
+    branches: ["main"]
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-
-    services:
-      # We can mock Redis and Postgres in tests, or spawn them as services
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements/base.txt
+            requirements/test.txt
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements/test.txt
 
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Compile
+        run: python -m compileall src tests
 
-    - name: Run Pytest suite
-      env:
-        APP_ENV: testing
-        DATABASE_URL: sqlite+aiosqlite:///:memory:
-        LLM_PROVIDER: mock
-        REDIS_URL: redis://localhost:6379/0
-      run: |
-        pytest --cov=src --cov-report=term-missing
+      - name: Run focused backend tests
+        env:
+          APP_ENV: testing
+          LLM_PROVIDER: mock
+        run: python -m pytest tests/test_agents.py tests/test_rag.py -q

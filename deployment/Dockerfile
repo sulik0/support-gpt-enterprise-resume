@@ -1,5 +1,5 @@
-# Multi-stage build setup using official Python 3.12 image
-FROM python:3.12-slim as builder
+# Multi-stage build setup using the same Python minor version as CI
+FROM python:3.11-slim as builder
 
 WORKDIR /app
 
@@ -9,12 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+COPY requirements ./requirements
 
 # Install dependencies into user directory
 RUN pip install --user --no-cache-dir -r requirements.txt
 
 # Final production stage
-FROM python:3.12-slim as runner
+FROM python:3.11-slim as runner
 
 WORKDIR /app
 

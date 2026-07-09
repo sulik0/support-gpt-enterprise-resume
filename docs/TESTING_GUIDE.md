@@ -8,11 +8,33 @@ This document describes how to execute the testing suite, run locust load tests,
 
 We use **pytest** and **pytest-asyncio** to verify all system components.
 
+### Dependency Profiles
+
+Runtime dependencies are intentionally separated from optional test, evaluation, and load-test dependencies:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements/test.txt
+pip install -r requirements/eval.txt   # optional RAGAS/DeepEval
+pip install -r requirements/load.txt   # optional Locust
+```
+
+Use Python 3.11 for the most reproducible local and CI behavior.
+
 ### Running Pytest
-Execute the command below from the repository root:
+Execute the focused smoke suite below from the repository root:
+```bash
+python -m compileall src tests
+pytest tests/test_agents.py tests/test_rag.py -q
+```
+
+The full suite can still be run with:
+
 ```bash
 pytest --cov=src --cov-report=term-missing
 ```
+
+If full pytest crashes in Python 3.13/macOS after installing optional evaluation packages, recreate the environment with Python 3.11 and install only `requirements/test.txt` first.
 
 ### Coverage targets
 The CI/CD pipeline enforces **90%+ test coverage** on key business layers:

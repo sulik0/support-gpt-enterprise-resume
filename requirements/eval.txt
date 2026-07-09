@@ -1,0 +1,4 @@
+-r base.txt
+
+deepeval>=0.21.0,<1.0.0
+ragas>=0.1.5,<1.0.0

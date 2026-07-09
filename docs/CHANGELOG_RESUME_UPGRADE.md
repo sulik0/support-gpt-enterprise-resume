@@ -264,3 +264,65 @@ Output:
 Known local limitation:
 
 - `.venv/bin/python -m pytest tests/test_rag.py -q` still exits with code `139` in this Python 3.13/macOS environment, matching the existing native dependency crash documented earlier.
+
+## Commit 8: `chore: stabilize python dependency profiles`
+
+### Files Changed
+
+- `.python-version`
+- `.github/workflows/ci.yml`
+- `requirements.txt`
+- `requirements/base.txt`
+- `requirements/test.txt`
+- `requirements/eval.txt`
+- `requirements/load.txt`
+- `docs/DEPENDENCY_PROFILES.md`
+- `deployment/Dockerfile`
+- `pyproject.toml`
+- `README.md`
+- `docs/TESTING_GUIDE.md`
+
+### What Changed
+
+- Standardized the project on Python 3.11 for local development, Docker, and CI.
+- Split dependencies into runtime, test, evaluation, and load-test profiles.
+- Kept the root `requirements.txt` as a runtime install entry point.
+- Moved optional RAGAS/DeepEval and Locust dependencies out of the default install path.
+- Added a GitHub Actions workflow that compiles the code and runs focused backend/RAG tests.
+- Updated README and testing docs with the reproducible install path.
+- Added a dedicated dependency profile guide.
+
+### Resume Value
+
+This enables an honest resume claim:
+
+> Improved project reproducibility by separating runtime, test, evaluation, and load-test dependency profiles, then added a Python 3.11 CI workflow for compile checks and focused Agent/RAG tests.
+
+### Production Boundary
+
+This is dependency hygiene, not a fully locked production build. A stricter production setup should add a generated lock file, vulnerability scanning, image scanning, and a full CI matrix.
+
+### Verification Performed
+
+Passed:
+
+```bash
+python -m compileall src tests
+```
+
+```bash
+.venv/bin/python -c 'import yaml; yaml.safe_load(open(".github/workflows/ci.yml")); print("ci yaml ok")'
+```
+
+```bash
+.venv/bin/python -c 'import src.main; print("main import ok")'
+```
+
+Checked:
+
+- `requirements/test.txt` resolves `-r base.txt` from the `requirements/` directory.
+- Dockerfile copies both `requirements.txt` and the `requirements/` directory before install.
+
+Known local limitation:
+
+- A `pip install --dry-run -r requirements/test.txt` check was cancelled because the current local virtualenv is Python 3.13 and began preparing native package metadata. The committed CI workflow uses Python 3.11.

@@ -1,7 +1,7 @@
 # SupportGPT Enterprise 🚀
 
-[![CI/CD Pipeline](https://github.com/enterprise/supportgpt-enterprise/actions/workflows/ci.yml/badge.svg)](https://github.com/enterprise/supportgpt-enterprise/actions/workflows/ci.yml)
-[![Python Version](https://img.shields.ly/badge/python-3.12%2B-blue)](https://www.python.org/)
+[![CI](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/ci.yml/badge.svg)](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/ci.yml)
+[![Python Version](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.ly/badge/FastAPI-0.110%2B-green)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.ly/badge/LangGraph-0.0.28-orange)](https://github.com/langchain-ai/langgraph)
 [![Docker](https://img.shields.ly/badge/Docker-ready-blue)](https://www.docker.com/)
@@ -71,6 +71,7 @@ supportgpt-enterprise/
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   pip install -r requirements/test.txt  # only needed for local tests
    ```
 4. Configure env parameters:
    ```bash
@@ -120,9 +121,10 @@ When the stack is running, you can access monitoring panels:
 ## 🧪 Testing Suite
 To verify compilation and test coverage:
 ```bash
-pytest --cov=src --cov-report=term-missing
+python -m compileall src tests
+pytest tests/test_agents.py tests/test_rag.py -q
 ```
-For load testing details, see our [Testing Guide](docs/TESTING_GUIDE.md).
+Optional evaluation and load-test dependencies are split into `requirements/eval.txt` and `requirements/load.txt`. For details, see our [Testing Guide](docs/TESTING_GUIDE.md).
 
 ---
 
