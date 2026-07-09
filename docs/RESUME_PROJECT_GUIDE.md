@@ -15,7 +15,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 ## Resume Bullets
 
 - 基于 `LangGraph` 设计客服 Agent 工作流，将工单分析、工具上下文增强、知识库检索、回复生成、质量校验和 SLA 升级拆分为可观测节点，提升客服流程的可控性。
-- 构建 `RAG` 知识库检索链路，支持文档切分、Embedding 向量化、ChromaDB 存储、知识库版本过滤和 citation 返回，降低无依据回答风险。
+- 构建 `RAG` 知识库检索链路，支持文档切分、Embedding 向量化、ChromaDB 存储、知识库版本过滤、BM25 风格混合检索、轻量 rerank 和 citation 返回，降低无依据回答风险。
 - 设计 CRM、订单管理、历史工单等工具上下文节点，将结构化客户画像、订单状态和历史问题注入回复生成流程，模拟真实客服业务系统集成。
 - 实现 `Redis` 短期会话记忆与 SQL 持久化会话历史，支持多轮客服对话上下文复用，并在 Redis 不可用时自动降级。
 - 基于 `FastAPI + SQLAlchemy` 封装聊天、工单、用户鉴权、人工审批和评估接口，持久化用户、Ticket、SessionMemory 和 ResponseApproval 记录。
@@ -27,6 +27,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 - LangGraph workflow.
 - Tooling node inside the Agent graph.
 - ChromaDB vector store manager.
+- Lightweight BM25-style hybrid retrieval and reranking.
 - SQLAlchemy ticket/session/approval models.
 - Optional Redis memory adapter.
 - Mock LLM provider plus OpenAI/Azure provider adapters.
@@ -82,7 +83,7 @@ Use these as design/target metrics unless measured:
 
 This project is an enterprise customer support Agent platform. A customer message enters the FastAPI `/chat` endpoint, where the system creates or updates a ticket and loads conversation history. Redis is used as short-term working memory when configured, while SQL keeps durable conversation records.
 
-The request then enters a LangGraph workflow. The analyzer node performs guardrail checks and classifies the ticket by sentiment, priority, department, and intent. The tooling node enriches the state with CRM, order, and historical ticket context. The retriever node queries the knowledge base through ChromaDB using the detected department and knowledge-base version. The resolver node combines RAG context and structured tool context to draft a support response. The QA node checks response quality and hallucination risk, and the escalation node triggers human approval when the answer is high-risk or low-confidence.
+The request then enters a LangGraph workflow. The analyzer node performs guardrail checks and classifies the ticket by sentiment, priority, department, and intent. The tooling node enriches the state with CRM, order, and historical ticket context. The retriever node queries the knowledge base through ChromaDB using the detected department and knowledge-base version, then reranks candidates with a lightweight BM25-style lexical score. The resolver node combines RAG context and structured tool context to draft a support response. The QA node checks response quality and hallucination risk, and the escalation node triggers human approval when the answer is high-risk or low-confidence.
 
 For local development, CRM/order/ticket tools and the LLM are mocked so the system can run without private enterprise APIs. In production, those adapters would be replaced with real CRM, OMS, logistics, refund, or ticketing service clients.
 
@@ -106,4 +107,4 @@ The system combines RAG citations, QA scoring, response filtering, and escalatio
 
 ### What would you improve next?
 
-I would add real service adapters, BM25 + vector hybrid retrieval, reranking, dependency locking, Python 3.11/3.12 CI, and OpenTelemetry traces that connect LLM calls, tool calls, retrieval, and approval decisions.
+I would add real service adapters, a production search backend such as OpenSearch or PostgreSQL full-text search, a cross-encoder reranker, dependency locking, Python 3.11/3.12 CI, and OpenTelemetry traces that connect LLM calls, tool calls, retrieval, and approval decisions.

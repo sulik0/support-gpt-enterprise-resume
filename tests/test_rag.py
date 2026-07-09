@@ -50,6 +50,32 @@ async def test_vector_store_operations():
     empty_results = await vector_store.query_kb("refund request", version="v2", top_k=2)
     assert len(empty_results) == 0
 
+@pytest.mark.asyncio
+async def test_hybrid_search_prioritizes_keyword_matches():
+    chunks = [
+        "Warranty claims for damaged headphones require a serial number and proof of purchase.",
+        "Account profile updates can be completed from the customer settings page."
+    ]
+    metadata = {"title": "Support Policy", "category": "general"}
+
+    await vector_store.add_document_chunks(
+        "hybrid_policy",
+        chunks,
+        metadata,
+        version="v1"
+    )
+
+    results = await vector_store.query_kb(
+        "damaged headphones warranty serial number",
+        version="v1",
+        top_k=1
+    )
+
+    assert len(results) == 1
+    assert "warranty" in results[0].text.lower()
+    assert "serial number" in results[0].text.lower()
+    assert results[0].score > 0
+
 def test_ingestion_text_fallback(tmp_path):
     # Test simple text extraction from txt/md files
     file_path = tmp_path / "sample.txt"

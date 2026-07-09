@@ -10,7 +10,7 @@ These claims are backed by code in this repository:
 - LangGraph Agent workflow with analyzer, tooling, retriever, resolver, QA, and escalation nodes.
 - Conditional routing for security-blocked requests.
 - Tool context enrichment through CRM, order-management, and ticket-history adapters.
-- RAG vector store with ChromaDB, embeddings, metadata filters, and KB versioning.
+- RAG vector store with ChromaDB, embeddings, metadata filters, KB versioning, lightweight hybrid retrieval, and reranking.
 - SQLAlchemy data models for users, tickets, session memory, knowledge documents, and approvals.
 - Optional Redis short-term conversation memory with SQL fallback.
 - Human-in-the-loop approval workflow for high-risk or low-confidence responses.
@@ -29,6 +29,7 @@ These integrations are intentionally mocked:
 | Ticket History | In-memory historical tickets in `src/tools/ticketing.py` | No real helpdesk backend | Jira/ServiceNow/Zendesk ticket API |
 | LLM | `mock` provider by default | Local deterministic demo | OpenAI/Azure/OpenRouter/Qwen/DeepSeek provider |
 | Evaluation | Deterministic and optional RAGAS/DeepEval code paths | No stable production eval dataset | Curated golden set plus LLM-as-judge pipeline |
+| Lexical Retrieval | In-process BM25-style scorer over Chroma-filtered chunks | Not a distributed search index | Elasticsearch/OpenSearch/PostgreSQL full-text search |
 
 ## Recommended Interview Wording
 
@@ -54,8 +55,8 @@ Avoid:
 - Add tool schemas, permissions, timeouts, retries, and circuit breakers.
 - Add audit logging for all tool calls.
 - Add per-tenant knowledge-base isolation.
-- Add BM25 + vector hybrid search.
-- Add reranking before answer generation.
+- Replace in-process lexical scoring with a production search backend.
+- Add cross-encoder or LLM-based reranking before answer generation.
 - Pin Python and dependencies in a lock file.
 - Move optional evaluation dependencies to a separate install extra.
 - Add CI on Python 3.11/3.12.

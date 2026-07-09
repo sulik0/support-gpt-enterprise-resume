@@ -209,3 +209,58 @@ The returned `tool_context.mocked` field intentionally marks local tool adapters
 ### Resume Value
 
 This helps defend the project in interviews. It shows engineering judgment by making the boundary between demo adapters and production integrations explicit.
+
+## Commit 7: `feat: add hybrid retrieval reranking`
+
+### Files Changed
+
+- `src/rag/vector_store.py`
+- `tests/test_rag.py`
+- `docs/RAG_ARCHITECTURE.md`
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/MOCK_BOUNDARIES.md`
+
+### What Changed
+
+- Upgraded `VectorStoreManager.query_kb` from pure vector search to hybrid retrieval.
+- Added ChromaDB vector candidate over-fetching.
+- Added in-process BM25-style lexical scoring over version/category-filtered chunks.
+- Added a lightweight reranker that merges vector similarity, normalized lexical score, and exact-term overlap.
+- Added a focused test proving keyword-heavy support queries can outrank unrelated chunks.
+- Updated RAG and resume documentation with the implementation boundary.
+
+### Resume Value
+
+This enables an honest resume claim:
+
+> Built a hybrid RAG retrieval layer that combines vector similarity with BM25-style lexical scoring and reranking, improving support-policy retrieval for exact terms such as warranty phrases, refund windows, product names, and order-related keywords.
+
+### Mock Boundary
+
+The lexical scorer is implemented in-process for demo and interview use. It is not a production distributed search backend. A production version should use OpenSearch, Elasticsearch, PostgreSQL full-text search, or a dedicated reranker service.
+
+### Verification Performed
+
+Passed:
+
+```bash
+python -m compileall src tests
+```
+
+```bash
+.venv/bin/python -c 'from src.rag.vector_store import vector_store; print("vector store import ok", vector_store.collection_name)'
+```
+
+```bash
+.venv/bin/python -c 'from src.agents.graph import run_agent_workflow; import asyncio; out=asyncio.run(run_agent_workflow({"ticket_id":7,"customer_id":"cust_101","subject":"warranty headphones","description":"My damaged headphones need warranty support and serial number validation","kb_version":"v1"})); print({"department": out.get("department"), "citations": len(out.get("context_citations", [])), "tool_context": bool(out.get("tool_context")), "approval_required": out.get("approval_required")})'
+```
+
+Output:
+
+```text
+{'department': 'general', 'citations': 2, 'tool_context': True, 'approval_required': False}
+```
+
+Known local limitation:
+
+- `.venv/bin/python -m pytest tests/test_rag.py -q` still exits with code `139` in this Python 3.13/macOS environment, matching the existing native dependency crash documented earlier.

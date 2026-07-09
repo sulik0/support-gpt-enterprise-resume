@@ -40,10 +40,13 @@ Hiring managers value how systems manage knowledge rollbacks. SupportGPT impleme
 
 ---
 
-## 🔍 Semantic Search & Citations
+## 🔍 Hybrid Search, Reranking & Citations
 
 - **Embedding Model**: OpenAI `text-embedding-3-small` (1536 dimensions) or Mock unit vectors in test mode.
 - **Search distance metric**: Cosine similarity.
+- **Hybrid retrieval**: `VectorStoreManager.query_kb` combines ChromaDB vector recall with a local BM25-style lexical scorer. Vector search fetches a wider candidate set, lexical search scores version/category-filtered KB chunks, and the reranker merges both signals.
+- **Rerank weights**: Final ranking uses vector similarity, normalized lexical score, and a small exact-term overlap boost. This improves support-policy queries where exact terms such as order IDs, refund windows, product names, or warranty phrases matter.
+- **Scope boundary**: The lexical scorer is lightweight and in-process. It is suitable for a resume/demo system and can be replaced by Elasticsearch/OpenSearch, Postgres full-text search, or a production reranker service.
 - **Citations format**: Retrieved contexts are wrapped in a standard schema including the source name, matching score, and document version:
   ```json
   {
