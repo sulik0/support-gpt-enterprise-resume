@@ -1,12 +1,12 @@
-# Agentic AI Architecture
+# Agent 架构说明
 
-This document details the multi-agent system design, StateGraph schema, and individual agent responsibilities implemented in **SupportGPT Enterprise**.
+本文说明 **SupportGPT Enterprise** 中多 Agent 系统的设计、`StateGraph` 状态结构，以及各 Agent 节点的职责。
 
 ---
 
-## 🧠 LangGraph State Orchestrator
+## LangGraph 状态编排器
 
-We use **LangGraph** to construct a stateful multi-agent system. The `AgentState` dictionary serves as a shared memory canvas, modified sequentially by each agent node:
+系统使用 **LangGraph** 构建有状态的多 Agent 工作流。`AgentState` 字典作为共享状态，由各个节点按顺序读取和更新：
 
 ```python
 class AgentState(TypedDict):
@@ -35,24 +35,47 @@ class AgentState(TypedDict):
 
 ---
 
-## 👥 Node Agents and Responsibilities
+## 节点 Agent 与职责
 
-### 1. Ticket Analysis Agent (`analyzer.py`)
-- **Duty**: Scrub incoming customer queries for PII (phone, SSN, cards), inspect for prompt injection/jailbreaks, and analyze tone.
-- **Output variables**: `sentiment` (positive, neutral, negative), `priority` (low, medium, high, urgent), `department` (billing, technical, general).
+### 1. 工单分析 Agent (`analyzer.py`)
 
-### 2. Knowledge Retrieval Agent (`retriever.py`)
-- **Duty**: Pulls relevant policy articles and guidelines from ChromaDB.
-- **Output variables**: `context_citations` (list of citations matching active `kb_version`).
+- **职责**：对客户输入做 PII 脱敏，检测 prompt injection 和 jailbreak 风险，并分析语气与意图。
+- **输出变量**：`sentiment`、`priority`、`department`、`intent`。
 
-### 3. Resolution Agent (`resolver.py`)
-- **Duty**: Formulates a drafted email resolution response to the customer.
-- **Output variables**: `suggested_response`.
+### 2. 工具上下文 Agent (`tooling.py`)
 
-### 4. Quality Assurance Agent (`quality_assurance.py`)
-- **Duty**: Verifies that the drafted response is backed by retrieved citations and does not leak internal agent prompts.
-- **Output variables**: `qa_score`, `hallucination_detected`.
+- **职责**：调用 CRM、订单、历史工单等工具适配器，为回复生成补充结构化业务上下文。
+- **输出变量**：`tool_context`。
+- **边界说明**：当前 CRM、订单和工单工具是本地 mock 适配器，用于演示真实企业系统集成路径。
 
-### 5. Escalation Agent (`escalation.py`)
-- **Duty**: Computes estimated SLA metrics and recommends human escalation for high-urgency cases or hallucinated drafts.
-- **Output variables**: `escalation_recommended`, `escalation_reason`, `sla_hours`.
+### 3. 知识检索 Agent (`retriever.py`)
+
+- **职责**：基于当前工单和知识库版本，从 ChromaDB 中检索相关政策、FAQ 和操作指引。
+- **输出变量**：`context_citations`。
+
+### 4. 回复生成 Agent (`resolver.py`)
+
+- **职责**：结合工单内容、RAG 引用和工具上下文，生成面向客户的客服回复草稿。
+- **输出变量**：`suggested_response`。
+
+### 5. 质量校验 Agent (`quality_assurance.py`)
+
+- **职责**：检查回复是否被引用材料支撑，是否存在幻觉风险，是否泄露内部 prompt 或工作流信息。
+- **输出变量**：`qa_score`、`hallucination_detected`。
+
+### 6. 升级决策 Agent (`escalation.py`)
+
+- **职责**：计算 SLA 建议，并对高优先级、低质量分、幻觉风险或安全风险工单触发人工升级。
+- **输出变量**：`escalation_recommended`、`escalation_reason`、`sla_hours`。
+
+---
+
+## 当前工作流
+
+```text
+analyzer
+  ├── security threat -> escalation -> END
+  └── normal request  -> tooling -> retriever -> resolver -> qa -> escalation -> END
+```
+
+该流程适合简历表述为：基于 LangGraph 设计客服 Agent 工作流，将安全检测、工具上下文、RAG 检索、回复生成、QA 校验和人工升级拆分为可观测节点。

@@ -1,25 +1,32 @@
-# Phase 2: Business Requirements
+# 阶段 2：业务需求
 
-## 🎯 Goals
-Detail the platform expectations, target users, and business outcomes:
-- **Target Users**: Customer Support Representatives, Team Leads, and Operations Managers.
-- **Outcomes**: Reduce onboarding duration, increase first-call resolution, and improve ticket routing accuracy.
+## 目标
 
----
+明确平台目标用户和业务收益：
 
-## ⚙️ Design Decisions
-SupportGPT supports multi-version KB scopes:
-- Accounts can toggle between active document versions (`v1`, `v2`, etc.).
-- Permits testing new product rules or pricing updates.
+- **目标用户**：客服坐席、客服组长、运营经理。
+- **业务收益**：缩短新人上手时间、提升首问解决率、提升工单路由准确率。
 
 ---
 
-## 💻 Code Walkthrough Reference
-- The model versions and documents registration are processed in [kb_versioning.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/rag/kb_versioning.py).
-- Request schemas are defined in [schemas.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/models/schemas.py).
+## 设计决策
+
+系统支持多版本知识库：
+
+- 请求可以指定 `v1`、`v2` 等知识库版本。
+- 可以在不影响线上主版本的情况下测试新政策、价格规则或产品说明。
+- 版本隔离也方便回滚和灰度。
 
 ---
 
-## 🧪 Validation Steps
-1. Create a ticket using `POST /tickets`.
-2. Inspect if the status is initialized as open.
+## 代码参考
+
+- 知识库版本注册：`src/rag/kb_versioning.py`
+- 请求与响应 schema：`src/models/schemas.py`
+
+---
+
+## 验证步骤
+
+1. 使用 `POST /tickets` 创建工单。
+2. 检查工单状态是否初始化为 `open`。

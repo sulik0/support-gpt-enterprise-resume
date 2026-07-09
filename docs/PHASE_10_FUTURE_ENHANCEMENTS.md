@@ -1,8 +1,12 @@
-# Phase 10: Future Enhancements
+# 阶段 10：后续增强方向
 
-## 🎯 Goals
-Detail the future expansion items for SupportGPT Enterprise:
-1. **Dynamic Graph Self-Routing**: Feed QA scores back into LangGraph to dynamically re-route low-confidence suggestions for context refining before agent preview.
-2. **Neo4j Graph Database**: Incorporate a graph store for hybrid knowledge retrieval, tracking customer relational hierarchies.
-3. **Model Fine-Tuning**: Feed response approvals and custom agent edits into an ingestion pipeline to fine-tune local models, improving draft accuracy.
-4. **WebSocket Streams**: Stream agent responses token-by-token in real time.
+## 目标
+
+后续可以从以下方向继续增强 **SupportGPT Enterprise**：
+
+1. **动态图自路由**：将 QA 分数反馈给 LangGraph，对低置信度回复自动回到检索或重写节点。
+2. **图数据库增强检索**：引入 Neo4j 等图数据库，表达客户、订单、产品和问题之间的关系。
+3. **模型微调**：将人工审批结果和客服编辑记录沉淀为训练数据，用于后续微调或偏好优化。
+4. **WebSocket 流式输出**：面向客服端实时流式展示 Agent 回复。
+5. **真实业务系统接入**：替换 mock CRM、订单和工单工具，接入企业内部 API。
+6. **生产级评估集**：构建 golden dataset，并引入 LLM-as-Judge 和人工抽检流程。

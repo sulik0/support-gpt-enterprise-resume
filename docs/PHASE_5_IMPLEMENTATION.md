@@ -1,29 +1,38 @@
-# Phase 5: Implementation
+# 阶段 5：实现说明
 
-## 🎯 Goals
-Write high-quality, async, type-safe Python code implementing:
-- Input/output safety guardrails.
-- RAG document chunking splitters and vector lookups.
-- Stateful LangGraph agent nodes.
-- React frontend dashboard client.
+## 目标
 
----
+实现异步、模块化、可测试的 Python 后端，覆盖：
 
-## ⚙️ Design Decisions
-We separate logic modules cleanly:
-- `src/guardrails/`: PII scrubbing, injection detection.
-- `src/agents/`: Node orchestrations.
-- `src/rag/`: Splitters and vector managers.
-- `frontend/`: UI dashboards.
+- 输入和输出安全 guardrails。
+- RAG 文档切分、向量写入和混合检索。
+- LangGraph 有状态 Agent 节点。
+- 工单、审批、会话和知识库元数据 API。
 
 ---
 
-## 💻 Code Walkthrough Reference
-- PII scrubbing regex rules: [pii_detection.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/guardrails/pii_detection.py).
-- LangGraph node mappings: [graph.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/agents/graph.py).
-- RAG vector additions: [vector_store.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/rag/vector_store.py).
+## 设计决策
+
+代码按职责拆分：
+
+- `src/guardrails/`：PII 脱敏、prompt injection 检测、jailbreak 检测和输出过滤。
+- `src/agents/`：LangGraph 节点和工作流。
+- `src/rag/`：文档解析、切分、向量存储和知识库版本管理。
+- `src/tools/`：CRM、订单、历史工单等工具适配器。
+- `src/approval/`：人工审批流程。
+- `src/observability/`：Prometheus 指标和成本统计。
 
 ---
 
-## 🧪 Validation Steps
-1. Verify the project files are placed in their respective target package folders.
+## 代码参考
+
+- PII 脱敏规则：`src/guardrails/pii_detection.py`
+- LangGraph 节点映射：`src/agents/graph.py`
+- RAG 向量写入与检索：`src/rag/vector_store.py`
+
+---
+
+## 验证步骤
+
+1. 检查各模块位于对应 package 下。
+2. 运行 `python -m compileall src tests`。

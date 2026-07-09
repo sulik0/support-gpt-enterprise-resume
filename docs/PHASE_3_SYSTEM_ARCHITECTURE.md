@@ -1,25 +1,31 @@
-# Phase 3: System Architecture
+# 阶段 3：系统架构
 
-## 🎯 Goals
-Implement a highly scalable, containerized, and secure microservice. The architecture must segregate endpoints, state transitions, security layers, databases, and caches.
+## 目标
 
----
-
-## ⚙️ Design Decisions
-We select:
-- **FastAPI**: For high-performance async endpoint management.
-- **LangGraph**: For routing between specialized agent nodes.
-- **ChromaDB**: For low-latency local semantic search.
-- **Redis**: For active session caches.
+实现一个容器化、可扩展、具备基础安全边界的客服 Agent 后端服务。架构需要区分 API 入口、Agent 状态流转、安全层、数据库、缓存和监控组件。
 
 ---
 
-## 💻 Code Walkthrough Reference
-- The layout is illustrated inside [ARCHITECTURE.md](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/ARCHITECTURE.md).
-- Endpoints mounting and middle-wares are defined in [main.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/main.py).
+## 设计决策
+
+核心技术选择：
+
+- **FastAPI**：提供异步后端 API。
+- **LangGraph**：编排多个专职 Agent 节点。
+- **ChromaDB**：提供本地低延迟语义检索。
+- **Redis**：作为可选短期会话记忆和缓存层。
+- **PostgreSQL / SQLAlchemy**：持久化工单、审批、会话和知识库元数据。
 
 ---
 
-## 🧪 Validation Steps
-1. Spin up the container stack: `docker-compose up`.
-2. Access Swagger documentation at `http://localhost:8000/docs`.
+## 代码参考
+
+- 架构总览：`ARCHITECTURE.md`
+- API 入口和中间件：`src/main.py`
+
+---
+
+## 验证步骤
+
+1. 启动容器栈：`docker-compose -f deployment/docker-compose.yml up --build`
+2. 访问 Swagger 文档：`http://localhost:8000/docs`

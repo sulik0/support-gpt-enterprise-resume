@@ -1,97 +1,92 @@
-# Resume Upgrade Change Log
+# 简历项目改造变更日志
 
-This document records the resume-oriented upgrades made on top of the upstream project.
+本文记录在上游项目基础上，为“企业级智能客服 Agent 简历项目”所做的改造。后续 `docs/` 下的项目文档统一使用中文；代码标识符、命令、配置项、API 路径和通用技术名词可保留英文。
 
-## Commit 1: `docs: add resume upgrade plan`
+## Commit 1：`docs: add resume upgrade plan`
 
-Commit: `9f31e13`
+提交：`9f31e13`
 
-### Files Changed
+### 修改文件
 
 - `docs/RESUME_UPGRADE_PLAN.md`
 
-### What Changed
+### 修改内容
 
-- Added a clear upgrade plan for turning the project into a resume-ready large-language-model application.
-- Separated implemented capabilities from mock integrations and production gaps.
-- Documented the expected GitHub upload flow and current remote/auth constraints.
+- 增加简历项目改造计划。
+- 区分已实现能力、mock 集成和生产化缺口。
+- 记录 GitHub 上传流程和 remote 状态。
 
-### Resume Value
+### 简历价值
 
-This prevents overclaiming. It gives a defensible interview narrative:
+该文档避免过度包装项目，并提供清晰面试叙事：
 
-- The project has a real FastAPI/LangGraph/RAG/HITL backbone.
-- CRM/order/ticketing integrations are mocked adapters for local demo use.
-- Production hardening is explicitly scoped as future work.
+- 项目具备 FastAPI / LangGraph / RAG / HITL 主干。
+- CRM、订单和工单工具是本地 mock adapter。
+- 生产化缺口已明确列出。
 
-## Commit 2: `feat: add tool context node to agent workflow`
+## Commit 2：`feat: add tool context node to agent workflow`
 
-Commit: `824da7b`
+提交：`824da7b`
 
-### Files Changed
+### 修改文件
 
 - `src/agents/tooling.py`
 - `src/agents/graph.py`
 - `src/agents/resolver.py`
 
-### What Changed
+### 修改内容
 
-- Added `ToolingAgent`, a dedicated LangGraph node that enriches the Agent state with structured business context.
-- The tooling node calls mock CRM, order-management, and ticket-history adapters.
-- Added `tool_context` to the shared Agent state.
-- Inserted the new node into the workflow:
+- 新增 `ToolingAgent`，作为 LangGraph 中独立工具上下文节点。
+- 工具节点调用 CRM、订单和历史工单 mock adapter。
+- 在 Agent state 中新增 `tool_context`。
+- 将工作流升级为：
 
 ```text
 analyzer -> tooling -> retriever -> resolver -> qa -> escalation
 ```
 
-- Updated the resolver so generated responses receive both:
-  - RAG knowledge-base context.
-  - Structured tool context from customer/order/ticket mock adapters.
+- Resolver 生成回复时同时接收 RAG 知识库上下文和结构化工具上下文。
 
-### Resume Value
+### 简历价值
 
-This enables an honest resume claim:
+可以真实表述为：
 
-> Designed a tool-augmented customer support Agent workflow where the Agent enriches each ticket with CRM, order, and historical ticket context before generating a response.
+> 设计工具增强型客服 Agent 工作流，在回复生成前为工单注入 CRM、订单和历史工单上下文。
 
-### Mock Boundary
+### Mock 边界
 
-The tools are local mock adapters, not real enterprise APIs. This is acceptable for a resume/demo project if described as simulated CRM/OMS/ticketing integrations.
+工具是本地 mock adapter，不是真实企业 API。作为简历项目可以接受，但面试中需要明确说明。
 
-## Commit 3: `feat: add optional Redis conversation memory`
+## Commit 3：`feat: add optional Redis conversation memory`
 
-Commit: `57d948d`
+提交：`57d948d`
 
-### Files Changed
+### 修改文件
 
 - `src/memory/__init__.py`
 - `src/memory/redis_memory.py`
 - `src/main.py`
 
-### What Changed
+### 修改内容
 
-- Added `RedisConversationMemory`, an optional Redis-backed short-term memory adapter.
-- The adapter loads and saves recent chat turns by `session_id`.
-- Redis is optional; if `REDIS_URL` is not configured, the system continues using SQL `SessionMemory`.
-- Updated `/chat` flow to:
-  - Prefer Redis recent messages when available.
-  - Persist conversation history to SQL.
-  - Save recent messages back to Redis.
+- 新增 `RedisConversationMemory`，作为可选 Redis 短期记忆层。
+- 按 `session_id` 加载和保存最近对话 turn。
+- Redis 不配置或不可用时，系统继续使用 SQL `SessionMemory`。
+- `/chat` 流程会优先读取 Redis 最近消息，并同时持久化 SQL 会话历史。
 
-### Resume Value
+### 简历价值
 
-This enables an honest resume claim:
+可以真实表述为：
 
-> Implemented Redis short-term conversation memory with SQL-backed durable session history.
+> 实现 Redis 短期会话记忆，并使用 SQL 保存持久化会话历史。
 
-### Mock Boundary
+### Mock 边界
 
-Redis usage is real but optional. In local demo mode the app still runs without Redis. Docker Compose provides Redis for integration-style runs.
+Redis 能力是真实实现，但属于可选能力。本地 demo 不启动 Redis 时系统也能运行。
 
-## Verification Performed
+### 验证记录
 
-### Passed
+通过：
 
 ```bash
 python -m compileall src
@@ -105,40 +100,31 @@ python -m compileall src
 .venv/bin/python -c 'from src.agents.graph import run_agent_workflow; import asyncio; out=asyncio.run(run_agent_workflow({"ticket_id":1,"customer_id":"cust_101","subject":"refund","description":"I want refund for charge","kb_version":"v1"})); print(out["department"], bool(out.get("tool_context")), out.get("tool_context", {}).get("mocked"), out["approval_required"])'
 ```
 
-Output:
+输出：
 
 ```text
 billing True True True
 ```
 
-### Known Test Limitation
+已知限制：
 
-Full pytest currently crashes with exit code `139` in this local Python 3.13/macOS environment after installing broad evaluation dependencies. The failure happens during pytest startup and appears related to native dependency/plugin interactions, not a normal assertion failure.
+- 当前本地 Python 3.13/macOS 环境在安装较多 evaluation/native 依赖后，full pytest 可能以 `139` 崩溃。建议使用 Python 3.11 或 3.12，并拆分可选依赖。
 
-Recommended stabilization:
+## Commit 4：`feat: add security short-circuit routing`
 
-- Pin Python to 3.11 or 3.12.
-- Add a lock file.
-- Split optional evaluation dependencies into an extra group.
-- Disable third-party telemetry in tests.
+提交：`923b073`
 
-## Commit 4: `feat: add security short-circuit routing`
-
-### Files Changed
+### 修改文件
 
 - `src/agents/graph.py`
 
-### What Changed
+### 修改内容
 
-- Added `route_after_analyzer`, a LangGraph conditional router.
-- Tickets flagged by guardrails as security threats now route directly from `analyzer` to `escalation`.
-- Security-blocked requests skip:
-  - Tool context lookup.
-  - RAG retrieval.
-  - Response generation.
-  - QA validation.
+- 新增 analyzer 后的条件路由 `route_after_analyzer`。
+- 命中 prompt injection 或 jailbreak 的请求会直接进入 `escalation`。
+- 安全风险请求会跳过 tooling、retriever、resolver 和 QA。
 
-Updated workflow:
+工作流变为：
 
 ```text
 analyzer
@@ -146,30 +132,32 @@ analyzer
   └── normal request  -> tooling -> retriever -> resolver -> qa -> escalation -> END
 ```
 
-### Resume Value
+### 简历价值
 
-This enables an honest resume claim:
+可以真实表述为：
 
-> Added conditional routing in the LangGraph workflow so prompt-injection and jailbreak attempts are blocked early and escalated without invoking downstream tools or retrieval.
+> 在 LangGraph 工作流中增加条件路由，使 prompt injection 和 jailbreak 请求在调用工具或检索前被提前阻断并升级人工处理。
 
-### Mock Boundary
+### Mock 边界
 
-The guardrail detectors are rule-based. This is acceptable for a resume project, but a production system should combine rules with model-based classifiers, audit logging, and policy-driven severity levels.
+当前 guardrail 是规则型实现。生产系统应结合模型分类器、策略配置、审计日志和安全评审。
 
-## Commit 5: `feat: expose tool context in API responses`
+## Commit 5：`feat: expose tool context in API responses`
 
-### Files Changed
+提交：`51c6523`
+
+### 修改文件
 
 - `src/models/schemas.py`
 - `src/main.py`
 
-### What Changed
+### 修改内容
 
-- Added `tool_context` to `ChatResponse`.
-- Added `tool_context` to `SuggestResponseResponse`.
-- `/chat` and `/suggest-response` now return the structured context gathered by the tool node.
+- `ChatResponse` 增加 `tool_context`。
+- `SuggestResponseResponse` 增加 `tool_context`。
+- `/chat` 和 `/suggest-response` 会返回 Agent 收集到的结构化工具上下文。
 
-Example tool context:
+示例：
 
 ```json
 {
@@ -184,35 +172,39 @@ Example tool context:
 }
 ```
 
-### Resume Value
+### 简历价值
 
-This makes the tool-augmented Agent behavior visible from the API layer. It is useful for demos, debugging, and interview explanation because the response can prove which business context was injected before answer generation.
+API 层可以直接展示工具增强效果，便于 demo、调试和面试讲解。
 
-### Mock Boundary
+### Mock 边界
 
-The returned `tool_context.mocked` field intentionally marks local tool adapters as mock data. Keep this visible in demos to avoid overclaiming real enterprise integrations.
+`tool_context.mocked` 明确标识当前工具数据来自本地 mock adapter。
 
-## Commit 6: `docs: document mock boundaries for resume claims`
+## Commit 6：`docs: document mock boundaries for resume claims`
 
-### Files Changed
+提交：`20565c5`
+
+### 修改文件
 
 - `docs/MOCK_BOUNDARIES.md`
 - `README.md`
 
-### What Changed
+### 修改内容
 
-- Added a dedicated document explaining which parts are implemented and which are mocked.
-- Added safe resume wording and risky wording to avoid.
-- Added a mock-to-production upgrade checklist.
-- Linked the document from README.
+- 增加 mock 边界说明文档。
+- 给出安全简历表述和应避免的过度表述。
+- 增加 mock 到生产化的升级清单。
+- 在 README 中增加文档入口。
 
-### Resume Value
+### 简历价值
 
-This helps defend the project in interviews. It shows engineering judgment by making the boundary between demo adapters and production integrations explicit.
+帮助面试中明确区分真实工程实现和模拟业务集成，体现工程判断。
 
-## Commit 7: `feat: add hybrid retrieval reranking`
+## Commit 7：`feat: add hybrid retrieval reranking`
 
-### Files Changed
+提交：`de876b9`
+
+### 修改文件
 
 - `src/rag/vector_store.py`
 - `tests/test_rag.py`
@@ -220,28 +212,28 @@ This helps defend the project in interviews. It shows engineering judgment by ma
 - `docs/RESUME_PROJECT_GUIDE.md`
 - `docs/MOCK_BOUNDARIES.md`
 
-### What Changed
+### 修改内容
 
-- Upgraded `VectorStoreManager.query_kb` from pure vector search to hybrid retrieval.
-- Added ChromaDB vector candidate over-fetching.
-- Added in-process BM25-style lexical scoring over version/category-filtered chunks.
-- Added a lightweight reranker that merges vector similarity, normalized lexical score, and exact-term overlap.
-- Added a focused test proving keyword-heavy support queries can outrank unrelated chunks.
-- Updated RAG and resume documentation with the implementation boundary.
+- 将 `VectorStoreManager.query_kb` 从纯向量检索升级为混合检索。
+- ChromaDB 向量检索会多取候选。
+- 增加进程内 BM25 风格关键词 scorer。
+- 增加轻量 reranker，融合向量相似度、归一化关键词分和精确词重合。
+- 增加定向测试，验证关键词密集型客服查询可以排到正确 chunk。
+- 更新 RAG 和简历文档，说明实现边界。
 
-### Resume Value
+### 简历价值
 
-This enables an honest resume claim:
+可以真实表述为：
 
-> Built a hybrid RAG retrieval layer that combines vector similarity with BM25-style lexical scoring and reranking, improving support-policy retrieval for exact terms such as warranty phrases, refund windows, product names, and order-related keywords.
+> 构建混合 RAG 检索层，结合向量相似度、BM25 风格关键词分数和轻量 rerank，提升退款窗口、产品名、保修短语等精确词的召回质量。
 
-### Mock Boundary
+### Mock 边界
 
-The lexical scorer is implemented in-process for demo and interview use. It is not a production distributed search backend. A production version should use OpenSearch, Elasticsearch, PostgreSQL full-text search, or a dedicated reranker service.
+关键词 scorer 是进程内轻量实现，不是生产分布式搜索后端。生产系统可替换为 OpenSearch、Elasticsearch、PostgreSQL full-text search 或专用 reranker 服务。
 
-### Verification Performed
+### 验证记录
 
-Passed:
+通过：
 
 ```bash
 python -m compileall src tests
@@ -255,19 +247,21 @@ python -m compileall src tests
 .venv/bin/python -c 'from src.agents.graph import run_agent_workflow; import asyncio; out=asyncio.run(run_agent_workflow({"ticket_id":7,"customer_id":"cust_101","subject":"warranty headphones","description":"My damaged headphones need warranty support and serial number validation","kb_version":"v1"})); print({"department": out.get("department"), "citations": len(out.get("context_citations", [])), "tool_context": bool(out.get("tool_context")), "approval_required": out.get("approval_required")})'
 ```
 
-Output:
+输出：
 
 ```text
 {'department': 'general', 'citations': 2, 'tool_context': True, 'approval_required': False}
 ```
 
-Known local limitation:
+已知限制：
 
-- `.venv/bin/python -m pytest tests/test_rag.py -q` still exits with code `139` in this Python 3.13/macOS environment, matching the existing native dependency crash documented earlier.
+- `.venv/bin/python -m pytest tests/test_rag.py -q` 在当前 Python 3.13/macOS 环境仍以 `139` 退出，和前面记录的 native 依赖问题一致。
 
-## Commit 8: `chore: stabilize python dependency profiles`
+## Commit 8：`chore: stabilize python dependency profiles`
 
-### Files Changed
+提交：`c977f56`
+
+### 修改文件
 
 - `.python-version`
 - `.github/workflows/ci.yml`
@@ -282,29 +276,29 @@ Known local limitation:
 - `README.md`
 - `docs/TESTING_GUIDE.md`
 
-### What Changed
+### 修改内容
 
-- Standardized the project on Python 3.11 for local development, Docker, and CI.
-- Split dependencies into runtime, test, evaluation, and load-test profiles.
-- Kept the root `requirements.txt` as a runtime install entry point.
-- Moved optional RAGAS/DeepEval and Locust dependencies out of the default install path.
-- Added a GitHub Actions workflow that compiles the code and runs focused backend/RAG tests.
-- Updated README and testing docs with the reproducible install path.
-- Added a dedicated dependency profile guide.
+- 将本地开发、Docker 和 CI 推荐版本统一为 Python 3.11。
+- 拆分 runtime、test、eval 和 load 依赖 profile。
+- 根目录 `requirements.txt` 保留为运行时安装入口。
+- 将 RAGAS / DeepEval 和 Locust 从默认安装路径移出。
+- 增加 GitHub Actions workflow，执行编译和定向 Agent/RAG 测试。
+- 更新 README 和测试文档。
+- 增加依赖分层说明文档。
 
-### Resume Value
+### 简历价值
 
-This enables an honest resume claim:
+可以真实表述为：
 
-> Improved project reproducibility by separating runtime, test, evaluation, and load-test dependency profiles, then added a Python 3.11 CI workflow for compile checks and focused Agent/RAG tests.
+> 通过拆分运行时、测试、评估和压测依赖，并增加 Python 3.11 CI smoke workflow，提升项目可复现性和工程质量。
 
-### Production Boundary
+### 生产边界
 
-This is dependency hygiene, not a fully locked production build. A stricter production setup should add a generated lock file, vulnerability scanning, image scanning, and a full CI matrix.
+这是依赖治理和可复现性改进，不是完整生产锁版本策略。更严格的生产系统还需要 lock file、漏洞扫描、镜像扫描和完整 CI matrix。
 
-### Verification Performed
+### 验证记录
 
-Passed:
+通过：
 
 ```bash
 python -m compileall src tests
@@ -318,11 +312,28 @@ python -m compileall src tests
 .venv/bin/python -c 'import src.main; print("main import ok")'
 ```
 
-Checked:
+检查项：
 
-- `requirements/test.txt` resolves `-r base.txt` from the `requirements/` directory.
-- Dockerfile copies both `requirements.txt` and the `requirements/` directory before install.
+- `requirements/test.txt` 可以从 `requirements/` 目录解析 `-r base.txt`。
+- Dockerfile 会在安装前复制 `requirements.txt` 和 `requirements/` 目录。
 
-Known local limitation:
+已知限制：
 
-- A `pip install --dry-run -r requirements/test.txt` check was cancelled because the current local virtualenv is Python 3.13 and began preparing native package metadata. The committed CI workflow uses Python 3.11.
+- 本地 `pip install --dry-run -r requirements/test.txt` 因当前虚拟环境是 Python 3.13，开始解析 native package metadata 后被中止；提交的 CI 使用 Python 3.11。
+
+## Commit 9：`docs: translate docs to chinese`
+
+### 修改文件
+
+- `docs/*.md`
+
+### 修改内容
+
+- 将 `docs/` 下项目文档统一改为中文。
+- 保留代码标识符、命令、API 路径、配置项和通用技术名词。
+- 移除旧文档中的本机 `file://` 参考路径。
+- 在依赖分层说明中增加后续文档语言约定。
+
+### 简历价值
+
+中文文档更适合直接用于简历准备、项目复盘和中文面试讲解，同时保留必要英文技术词，便于和代码实现对应。

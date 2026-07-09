@@ -1,28 +1,35 @@
-# Phase 1: Problem Statement
+# 阶段 1：问题定义
 
-## 🎯 Goals
-Customer support teams are burdened with manual workflows that lower efficiency:
-1. **Long Average Handle Times (AHT)**: Reps spend too much time reading documentation, fetching order histories, or searching historical solutions.
-2. **Reduced Customer Satisfaction (CSAT)**: Inconsistent responses or delay escalations hurt user trust.
-3. **High Operational Costs**: Manual routing and SLA sorting require extensive staff overhead.
+## 目标
 
-The goal is to build an AI Copilot that acts as a supportive companion for human support agents.
+客服团队通常被大量人工流程拖慢效率：
 
----
+1. **平均处理时长较长**：客服需要手动查文档、查订单历史、翻历史解决方案。
+2. **客户满意度下降**：回复不一致或升级延迟会降低用户信任。
+3. **运营成本较高**：人工分流、SLA 判断和重复问题处理需要较多人力。
 
-## ⚙️ Design Decisions
-Rather than replacing human agents with an unmonitored chatbot, SupportGPT Enterprise implements a **Human-in-the-Loop** architecture:
-- High-priority, negative-sentiment, or low-QA-score responses are staged in a validation queue.
-- Agents verify, edit, and approve drafts before they are sent, improving accuracy.
+本项目目标是构建一个辅助客服坐席的 AI Copilot，而不是完全替代人工客服。
 
 ---
 
-## 💻 Code Walkthrough Reference
-- Safety guardrails and validation routing is implemented in [analyzer.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/agents/analyzer.py).
-- LangGraph orchestration graph transitions are configured in [graph.py](file:///C:/Users/adhan/.gemini/antigravity/scratch/supportgpt-enterprise/src/agents/graph.py).
+## 设计决策
+
+系统采用 **Human-in-the-Loop** 架构：
+
+- 高优先级、负面情绪或 QA 分数较低的回复会进入人工审批队列。
+- 客服可以在发送前审核、编辑和批准 AI 草稿。
+- 这种设计能提升准确性，也能降低自动回复带来的业务风险。
 
 ---
 
-## 🧪 Validation Steps
-1. Send ticket chat payloads to `POST /chat`.
-2. Inspect responses to verify they map correct classifications.
+## 代码参考
+
+- 安全检测和分类逻辑：`src/agents/analyzer.py`
+- LangGraph 工作流编排：`src/agents/graph.py`
+
+---
+
+## 验证步骤
+
+1. 向 `POST /chat` 发送客服对话 payload。
+2. 检查返回结果中的情绪、优先级、部门和升级标记是否符合预期。
