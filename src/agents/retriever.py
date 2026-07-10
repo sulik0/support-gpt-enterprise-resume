@@ -4,8 +4,10 @@ from typing import Dict, Any
 
 from src.rag.vector_store import vector_store
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
+from src.observability.tracing import get_tracer, set_span_attributes
 
 logger = logging.getLogger("supportgpt.agents.retriever")
+tracer = get_tracer(__name__)
 
 class KnowledgeRetrievalAgent:
     """
@@ -30,21 +32,45 @@ class KnowledgeRetrievalAgent:
 
         try:
             # Run semantic query on our ChromaDB manager
-            citations = await vector_store.query_kb(
-                query=query_str,
-                version=kb_version,
-                top_k=3,
-                category_filter=category_filter if category_filter != "general" else None
-            )
+            with tracer.start_as_current_span("rag.query") as span:
+                set_span_attributes(
+                    span,
+                    {
+                        "ticket.id": state.get("ticket_id"),
+                        "customer.id": state.get("customer_id"),
+                        "kb.version": kb_version,
+                        "rag.category_filter": category_filter,
+                        "rag.query_length": len(query_str),
+                        "rag.top_k": 3,
+                    },
+                )
+                citations = await vector_store.query_kb(
+                    query=query_str,
+                    version=kb_version,
+                    top_k=3,
+                    category_filter=category_filter if category_filter != "general" else None
+                )
+                set_span_attributes(span, {"rag.citation_count": len(citations)})
 
             # Fallback query without category filter if no documents found
             if not citations and category_filter != "general":
                 logger.info("Retrying query without category filter...")
-                citations = await vector_store.query_kb(
-                    query=query_str,
-                    version=kb_version,
-                    top_k=3
-                )
+                with tracer.start_as_current_span("rag.query_fallback") as span:
+                    set_span_attributes(
+                        span,
+                        {
+                            "ticket.id": state.get("ticket_id"),
+                            "kb.version": kb_version,
+                            "rag.original_category_filter": category_filter,
+                            "rag.top_k": 3,
+                        },
+                    )
+                    citations = await vector_store.query_kb(
+                        query=query_str,
+                        version=kb_version,
+                        top_k=3
+                    )
+                    set_span_attributes(span, {"rag.citation_count": len(citations)})
 
             duration = time.time() - start_time
             AGENT_EXECUTION_DURATION_SECONDS.labels(agent_name="knowledge_retriever").observe(duration)

@@ -507,3 +507,59 @@ print(t.status)'
 409 open close
 open
 ```
+
+## Commit 13：`feat: add opentelemetry trace spans`
+
+### 修改文件
+
+- `src/observability/tracing.py`
+- `src/main.py`
+- `src/agents/graph.py`
+- `src/agents/retriever.py`
+- `src/tools/registry.py`
+- `src/approval/workflows.py`
+- `docs/PHASE_9_MONITORING.md`
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/RESUME_VALUE_ENHANCEMENT_ROADMAP.md`
+- `docs/CHANGELOG_RESUME_UPGRADE.md`
+
+### 修改内容
+
+- 增加统一 tracer 获取和 span attribute 写入工具。
+- HTTP middleware 增加 `api.{method} {path}` span，记录请求方法、路径、状态码和耗时。
+- LangGraph 工作流增加 `agent.workflow` span，各 Agent 节点增加 `agent.*` span。
+- RAG 检索增加 `rag.query` 和 `rag.query_fallback` span，记录知识库版本、类别过滤、query 长度、top_k 和 citation 数量。
+- 工具 registry 增加 `tool.*` span，记录工具名、角色、工单 ID、权限结果、执行状态、耗时和 mock 标记。
+- 审批流程增加 `approval.create_pending` 和 `approval.process` span。
+
+### 简历价值
+
+可以真实表述为：
+
+> 引入 OpenTelemetry Trace，将一次客服请求中的 HTTP 入口、Agent workflow、工具调用、RAG 检索和人工审批串联为可观测链路，支持慢请求定位和异常节点排查。
+
+### 生产边界
+
+当前本地默认使用 Console Exporter，适合 demo 和调试。生产环境应接入 OTLP exporter，并对接 Jaeger、Tempo 或云厂商 APM，同时配置 trace sampling 和敏感字段脱敏。
+
+### 验证记录
+
+通过：
+
+```bash
+python -m compileall src tests
+```
+
+```bash
+.venv/bin/python -c 'import src.main; print("main import ok")'
+```
+
+```bash
+.venv/bin/python -c 'from src.agents.graph import run_agent_workflow; import asyncio; out=asyncio.run(run_agent_workflow({"ticket_id":21,"customer_id":"cust_101","subject":"Billing refund request","description":"Can I get a refund for my payment done 5 days ago?","kb_version":"v1"})); print({"department": out.get("department"), "tool_calls": len(out.get("tool_calls", [])), "approval_required": out.get("approval_required"), "latency": out.get("latency_seconds")})'
+```
+
+输出：
+
+```text
+{'department': 'billing', 'tool_calls': 3, 'approval_required': True, 'latency': 0.0215}
+```

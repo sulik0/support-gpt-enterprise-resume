@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
+from src.observability.tracing import get_tracer, set_span_attributes
 
 
 ROLE_RANK = {
@@ -15,6 +16,8 @@ ROLE_RANK = {
     "manager": 2,
     "admin": 3,
 }
+
+tracer = get_tracer(__name__)
 
 
 class CustomerToolInput(BaseModel):
@@ -71,6 +74,36 @@ class ToolRegistry:
         payload: Dict[str, Any],
         role: str = "agent",
         ticket_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        with tracer.start_as_current_span(f"tool.{name}") as span:
+            set_span_attributes(
+                span,
+                {
+                    "tool.name": name,
+                    "tool.role": role,
+                    "ticket.id": ticket_id,
+                    "tool.payload_keys": sorted(payload.keys()),
+                },
+            )
+            result = await self._call_tool_impl(name, payload, role, ticket_id)
+            set_span_attributes(
+                span,
+                {
+                    "tool.allowed": result.get("allowed"),
+                    "tool.status": result.get("status"),
+                    "tool.mocked": result.get("mocked"),
+                    "tool.latency_ms": result.get("latency_ms"),
+                    "tool.error": result.get("error"),
+                },
+            )
+            return result
+
+    async def _call_tool_impl(
+        self,
+        name: str,
+        payload: Dict[str, Any],
+        role: str,
+        ticket_id: Optional[int],
     ) -> Dict[str, Any]:
         started = time.time()
         definition = self._tools.get(name)

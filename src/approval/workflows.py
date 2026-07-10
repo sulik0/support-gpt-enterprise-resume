@@ -8,8 +8,10 @@ from fastapi import HTTPException, status
 from src.models.db_models import ResponseApproval, Ticket
 from src.models.schemas import ResponseApprovalRequest
 from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine
+from src.observability.tracing import get_tracer, set_span_attributes
 
 logger = logging.getLogger("supportgpt.approval.workflows")
+tracer = get_tracer(__name__)
 
 class HumanInTheLoopService:
     """
@@ -22,6 +24,25 @@ class HumanInTheLoopService:
         drafted_response: str
     ) -> ResponseApproval:
         """Create a pending response approval ticket."""
+        with tracer.start_as_current_span("approval.create_pending") as span:
+            set_span_attributes(
+                span,
+                {
+                    "ticket.id": ticket_id,
+                    "approval.status": "pending",
+                    "approval.draft_length": len(drafted_response or ""),
+                },
+            )
+            approval = await self._create_pending_approval_impl(db, ticket_id, drafted_response)
+            set_span_attributes(span, {"approval.id": approval.id})
+            return approval
+
+    async def _create_pending_approval_impl(
+        self,
+        db: AsyncSession,
+        ticket_id: int,
+        drafted_response: str,
+    ) -> ResponseApproval:
         ticket_result = await db.execute(select(Ticket).filter(Ticket.id == ticket_id))
         ticket = ticket_result.scalars().first()
         if not ticket:
@@ -60,6 +81,34 @@ class HumanInTheLoopService:
         Approve, reject, or edit an AI draft.
         Tracks response latency between AI generation and human review.
         """
+        with tracer.start_as_current_span("approval.process") as span:
+            set_span_attributes(
+                span,
+                {
+                    "approval.id": approval_id,
+                    "approval.requested_status": req.status,
+                    "agent.id": agent_id,
+                    "approval.modified": bool(req.modified_response),
+                },
+            )
+            approval = await self._process_agent_approval_impl(db, approval_id, agent_id, req)
+            set_span_attributes(
+                span,
+                {
+                    "ticket.id": approval.ticket_id,
+                    "approval.final_status": approval.status,
+                    "approval.latency_seconds": approval.latency_seconds,
+                },
+            )
+            return approval
+
+    async def _process_agent_approval_impl(
+        self,
+        db: AsyncSession,
+        approval_id: int,
+        agent_id: int,
+        req: ResponseApprovalRequest,
+    ) -> ResponseApproval:
         result = await db.execute(select(ResponseApproval).filter(ResponseApproval.id == approval_id))
         approval = result.scalars().first()
         

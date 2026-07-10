@@ -30,9 +30,11 @@ from src.tools.ticketing import ticketing_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.memory.redis_memory import redis_memory
 from src.tickets.state_machine import TicketAction, ticket_state_machine
-from src.observability.tracing import init_tracing
+from src.observability.tracing import get_tracer, init_tracing, set_span_attributes
 from src.observability.metrics import HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
 from src.evaluation.framework import run_deeval_evaluation
+
+tracer = get_tracer(__name__)
 
 # --- FastAPI Lifespan Handler ---
 @asynccontextmanager
@@ -74,18 +76,35 @@ async def track_http_telemetry(request: Request, call_next):
     if endpoint == "/metrics" or endpoint == "/health":
         return await call_next(request)
         
-    try:
-        response = await call_next(request)
-        status_code = str(response.status_code)
-        
-        duration = time.time() - start_time
-        HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status=status_code).inc()
-        HTTP_REQUEST_DURATION_SECONDS.labels(method=method, endpoint=endpoint).observe(duration)
-        
-        return response
-    except Exception as e:
-        HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status="500").inc()
-        raise e
+    with tracer.start_as_current_span(f"api.{method} {endpoint}") as span:
+        set_span_attributes(
+            span,
+            {
+                "http.method": method,
+                "http.route": endpoint,
+                "http.target": str(request.url),
+            },
+        )
+        try:
+            response = await call_next(request)
+            status_code = str(response.status_code)
+
+            duration = time.time() - start_time
+            HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status=status_code).inc()
+            HTTP_REQUEST_DURATION_SECONDS.labels(method=method, endpoint=endpoint).observe(duration)
+            set_span_attributes(
+                span,
+                {
+                    "http.status_code": response.status_code,
+                    "http.duration_seconds": round(duration, 4),
+                },
+            )
+
+            return response
+        except Exception as e:
+            HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status="500").inc()
+            set_span_attributes(span, {"http.status_code": 500, "error": str(e)})
+            raise e
 
 # --- AUTH ENDPOINTS ---
 @app.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

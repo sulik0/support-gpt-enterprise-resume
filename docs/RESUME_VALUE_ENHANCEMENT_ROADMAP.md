@@ -9,7 +9,7 @@
 | P0 | 真实工具调用协议与权限控制 | Tool Calling / Function Calling 工程化 | 中 | 可以 |
 | P0 | RAG 评估集与离线评测报告 | 可量化质量指标 | 中 | 可以 |
 | 已完成 | 工单闭环状态机 | 业务闭环能力 | 中 | 可以 |
-| P1 | OpenTelemetry Trace 串联链路 | 可观测性与排障能力 | 中 | 部分可以 |
+| 已完成 | OpenTelemetry Trace 串联链路 | 可观测性与排障能力 | 中 | 部分可以 |
 | P1 | 多租户知识库隔离 | 企业级 SaaS 架构感 | 中 | 可以 |
 | P1 | 生产级检索后端方案 | 搜索与 RAG 深度 | 中高 | 可以先文档化 |
 | P2 | 客服工作台前端 | Demo 展示能力 | 中高 | 可以 |
@@ -115,12 +115,20 @@
 
 LLM 应用出现慢请求或错误时，需要知道耗时花在检索、工具调用、LLM 还是审批。Trace 能体现生产排障能力。
 
-### 建议改造
+### 已落地改造
 
-- 为 `/chat` 创建 request trace。
-- 每个 Agent 节点创建 span。
-- 工具调用、RAG 查询、LLM 调用分别记录耗时和状态。
-- 将 `ticket_id`、`session_id`、`kb_version`、`department` 作为 trace attributes。
+- 为 HTTP 请求创建 `api.*` span。
+- 为 `agent.workflow` 和 analyzer、tooling、retriever、resolver、QA、escalation 节点创建 span。
+- 为工具调用创建 `tool.*` span，记录工具名、角色、状态、耗时和 mock 标记。
+- 为 RAG 查询创建 `rag.query` 和 `rag.query_fallback` span。
+- 为审批创建和审批处理创建 `approval.*` span。
+- 将 `ticket_id`、`customer_id`、`kb_version`、`department`、`operator_role`、工具状态和 citation 数量写入 span attributes。
+
+### 后续可增强
+
+- 替换 Console Exporter 为 OTLP exporter。
+- 接入 Jaeger、Tempo 或云厂商 APM。
+- 将 trace id 返回给前端，方便客服反馈问题时定位单次请求。
 
 ### 简历可写法
 

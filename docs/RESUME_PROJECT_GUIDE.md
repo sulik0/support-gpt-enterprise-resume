@@ -21,6 +21,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 - 设计工单闭环状态机，统一管理 `open / pending_approval / in_progress / resolved / closed` 状态流转，将 AI 草稿生成、人工审批、拒绝重处理和关闭归档串联起来。
 - 基于 `FastAPI + SQLAlchemy` 封装聊天、工单、用户鉴权、人工审批和评估接口，持久化用户、Ticket、SessionMemory 和 ResponseApproval 记录。
 - 引入 PII 检测、Prompt Injection 检测、Jailbreak 检测、输出过滤、QA 评分和人工审批机制，对高风险或低置信度回复触发人工确认。
+- 引入 OpenTelemetry Trace，将 HTTP 请求、Agent workflow、工具调用、RAG 检索和审批动作串联为可观测链路，支持慢请求定位和排障分析。
 - 拆分 runtime、test、eval、load 依赖 profile，并增加 Python 3.11 GitHub Actions smoke workflow，提高项目可复现性。
 
 ## 已实现能力
@@ -37,6 +38,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 - Mock LLM provider，以及 OpenAI / Azure provider 适配接口。
 - Human-in-the-Loop 审批流程。
 - Prometheus 指标。
+- OpenTelemetry Trace 链路追踪。
 - Docker Compose 本地栈。
 - Python 3.11 CI smoke workflow。
 
@@ -88,7 +90,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 
 这个项目是一个企业智能客服 Agent 平台。用户消息进入 FastAPI `/chat` 接口后，系统会创建或更新工单，并加载会话历史。Redis 用作可选短期工作记忆，SQL 保存持久化会话记录。
 
-请求随后进入 LangGraph 工作流。Analyzer 节点先做 guardrail 检测，并识别情绪、优先级、部门和意图。如果命中安全风险，请求会直接进入 escalation 节点。正常请求会进入 tooling 节点，补充 CRM、订单和历史工单上下文。Retriever 节点根据部门和知识库版本查询 ChromaDB，并使用 BM25 风格关键词分数做轻量 rerank。Resolver 节点结合 RAG 上下文和结构化工具上下文生成客服回复。QA 节点检查回复质量和幻觉风险，Escalation 节点对高风险或低置信度回复触发人工审批。工单状态由状态机统一管理：进入审批时变为 `pending_approval`，审批通过或修改后变为 `resolved`，拒绝后回到 `in_progress`，解决后可关闭为 `closed`。
+请求随后进入 LangGraph 工作流。Analyzer 节点先做 guardrail 检测，并识别情绪、优先级、部门和意图。如果命中安全风险，请求会直接进入 escalation 节点。正常请求会进入 tooling 节点，补充 CRM、订单和历史工单上下文。Retriever 节点根据部门和知识库版本查询 ChromaDB，并使用 BM25 风格关键词分数做轻量 rerank。Resolver 节点结合 RAG 上下文和结构化工具上下文生成客服回复。QA 节点检查回复质量和幻觉风险，Escalation 节点对高风险或低置信度回复触发人工审批。工单状态由状态机统一管理：进入审批时变为 `pending_approval`，审批通过或修改后变为 `resolved`，拒绝后回到 `in_progress`，解决后可关闭为 `closed`。OpenTelemetry Trace 会把 HTTP 请求、Agent workflow、工具调用、RAG 查询和审批动作串联起来，便于定位慢请求和异常节点。
 
 本地开发中，CRM、订单、工单工具和默认 LLM 都是 mock，因此项目可以脱离企业私有 API 运行。生产环境可以将这些 adapter 替换成真实 CRM、OMS、物流、退款或工单服务 client。
 
@@ -117,6 +119,10 @@ Redis 按 `session_id` 保存最近对话 turn，作为短期工作记忆。SQL 
 ### 工单状态机怎么设计？
 
 状态机定义了 `open`、`in_progress`、`pending_approval`、`resolved`、`closed` 五个状态。AI 回复需要人工审批时，工单进入 `pending_approval`；审批通过或人工修改后进入 `resolved`；如果客服拒绝 AI 草稿，工单回到 `in_progress`；只有已解决工单才能关闭为 `closed`。非法流转会返回 `409 Conflict`，避免业务代码随意修改状态。
+
+### Trace 和 Prometheus 的区别？
+
+Prometheus 适合看整体指标，例如请求量、延迟分布和 Agent 节点平均耗时；OpenTelemetry Trace 适合排查单次请求，可以看到一次 `/chat` 请求中具体耗时落在 analyzer、tooling、RAG query、LLM 生成还是 approval 创建。
 
 ### 下一步会怎么改？
 

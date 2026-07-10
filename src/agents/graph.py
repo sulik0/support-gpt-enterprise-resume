@@ -12,8 +12,10 @@ from src.agents.quality_assurance import quality_assurance_agent
 from src.agents.escalation import escalation_agent
 from src.observability.cost_tracking import calculate_llm_cost
 from src.observability.metrics import LLM_TOKENS_TOTAL, LLM_COST_TOTAL
+from src.observability.tracing import get_tracer, set_span_attributes
 
 logger = logging.getLogger("supportgpt.agents.graph")
+tracer = get_tracer(__name__)
 
 class AgentState(TypedDict):
     ticket_id: int
@@ -43,22 +45,46 @@ class AgentState(TypedDict):
 
 # --- Node Wrappers ---
 async def analyze_node(state: AgentState) -> Dict[str, Any]:
-    return await ticket_analyzer_agent.analyze(state)
+    with tracer.start_as_current_span("agent.analyzer") as span:
+        set_span_attributes(span, _trace_attrs(state, node="analyzer"))
+        return await ticket_analyzer_agent.analyze(state)
 
 async def retrieve_node(state: AgentState) -> Dict[str, Any]:
-    return await knowledge_retriever_agent.retrieve(state)
+    with tracer.start_as_current_span("agent.retriever") as span:
+        set_span_attributes(span, _trace_attrs(state, node="retriever"))
+        return await knowledge_retriever_agent.retrieve(state)
 
 async def tooling_node(state: AgentState) -> Dict[str, Any]:
-    return await tooling_agent.enrich(state)
+    with tracer.start_as_current_span("agent.tooling") as span:
+        set_span_attributes(span, _trace_attrs(state, node="tooling"))
+        return await tooling_agent.enrich(state)
 
 async def resolve_node(state: AgentState) -> Dict[str, Any]:
-    return await resolution_agent.resolve(state)
+    with tracer.start_as_current_span("agent.resolver") as span:
+        set_span_attributes(span, _trace_attrs(state, node="resolver"))
+        return await resolution_agent.resolve(state)
 
 async def qa_node(state: AgentState) -> Dict[str, Any]:
-    return await quality_assurance_agent.verify(state)
+    with tracer.start_as_current_span("agent.qa") as span:
+        set_span_attributes(span, _trace_attrs(state, node="qa"))
+        return await quality_assurance_agent.verify(state)
 
 async def escalate_node(state: AgentState) -> Dict[str, Any]:
-    return await escalation_agent.evaluate(state)
+    with tracer.start_as_current_span("agent.escalation") as span:
+        set_span_attributes(span, _trace_attrs(state, node="escalation"))
+        return await escalation_agent.evaluate(state)
+
+
+def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
+    return {
+        "agent.node": node,
+        "ticket.id": state.get("ticket_id"),
+        "customer.id": state.get("customer_id"),
+        "kb.version": state.get("kb_version"),
+        "ticket.department": state.get("department"),
+        "ticket.priority": state.get("priority"),
+        "operator.role": state.get("operator_role"),
+    }
 
 
 def route_after_analyzer(state: AgentState) -> str:
@@ -137,7 +163,9 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     logger.info(f"Invoking LangGraph flow for ticket ID {state_input['ticket_id']}")
-    final_output = await compiled_graph.ainvoke(state_input)
+    with tracer.start_as_current_span("agent.workflow") as span:
+        set_span_attributes(span, _trace_attrs(state_input, node="workflow"))
+        final_output = await compiled_graph.ainvoke(state_input)
 
     # Compute execution costs
     tokens_in = final_output.get("tokens_input", 0)
@@ -146,11 +174,24 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     
     final_output["cost_usd"] = cost
     final_output["latency_seconds"] = round(time.time() - start_time, 4)
+    span_attrs = {
+        "llm.provider": settings.LLM_PROVIDER,
+        "llm.tokens_input": tokens_in,
+        "llm.tokens_output": tokens_out,
+        "llm.cost_usd": cost,
+        "agent.latency_seconds": final_output["latency_seconds"],
+        "agent.approval_required": final_output.get("approval_required", False),
+        "agent.escalation_recommended": final_output.get("escalation_recommended", False),
+    }
 
     # Determine if human approval is required
     # Escalation needed or low QA score triggers approval
     if final_output.get("escalation_recommended") or final_output.get("qa_score", 1.0) < 0.8:
          final_output["approval_required"] = True
+         span_attrs["agent.approval_required"] = True
+
+    with tracer.start_as_current_span("agent.workflow.summary") as span:
+        set_span_attributes(span, span_attrs)
 
     # Record Prometheus telemetry metrics
     LLM_TOKENS_TOTAL.labels(model=settings.LLM_PROVIDER, type="input").inc(tokens_in)
