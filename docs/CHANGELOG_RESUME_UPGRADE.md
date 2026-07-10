@@ -337,3 +337,23 @@ python -m compileall src tests
 ### 简历价值
 
 中文文档更适合直接用于简历准备、项目复盘和中文面试讲解，同时保留必要英文技术词，便于和代码实现对应。
+
+## Commit 10：`docs: add resume enhancement roadmap`
+
+### 修改文件
+
+- `docs/RESUME_VALUE_ENHANCEMENT_ROADMAP.md`
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/RESUME_UPGRADE_PLAN.md`
+- `docs/CHANGELOG_RESUME_UPGRADE.md`
+
+### 修改内容
+
+- 增加后续简历加分改造路线图。
+- 按优先级列出 RAG 评估集、工具调用协议、工单状态机、OpenTelemetry Trace、多租户知识库隔离、生产检索后端、客服工作台和 Prompt 灰度等方向。
+- 对每个方向补充简历可写法、可 mock 边界和面试追问回答。
+- 在简历指南和改造计划中增加文档入口。
+
+### 简历价值
+
+该文档用于指导后续继续增强项目，避免盲目堆技术名词。优先选择能体现业务闭环、质量评估、安全工具调用和生产排障能力的方向。

@@ -110,3 +110,7 @@ Redis 按 `session_id` 保存最近对话 turn，作为短期工作记忆。SQL 
 ### 下一步会怎么改？
 
 我会接入真实业务系统 adapter，引入生产搜索后端或 cross-encoder reranker，补充 lock file 和 Python 版本 CI matrix，并增加 OpenTelemetry trace，把 LLM 调用、工具调用、检索和审批决策串起来。
+
+## 后续加分改造
+
+更详细的后续改造建议见 `docs/RESUME_VALUE_ENHANCEMENT_ROADMAP.md`。建议优先做 RAG 评估集、工具调用协议、工单状态机、OpenTelemetry Trace 和多租户知识库隔离，这些方向最容易体现“不是普通 Chatbot demo”，也最适合在面试中展开。
