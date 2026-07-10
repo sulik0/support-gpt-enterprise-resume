@@ -18,6 +18,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 - 构建 `RAG` 知识库检索链路，支持文档切分、Embedding 向量化、ChromaDB 存储、知识库版本过滤、BM25 风格混合检索、轻量 rerank 和 citation 返回，降低无依据回答风险。
 - 设计统一工具调用 registry，为 CRM、订单管理、历史工单和退款初筛工具增加 schema 校验、角色权限、超时控制和审计记录，并将结构化客户画像、订单状态和历史问题注入回复生成流程。
 - 实现 `Redis` 短期会话记忆与 SQL 持久化会话历史，支持多轮客服对话上下文复用，并在 Redis 不可用时自动降级。
+- 设计工单闭环状态机，统一管理 `open / pending_approval / in_progress / resolved / closed` 状态流转，将 AI 草稿生成、人工审批、拒绝重处理和关闭归档串联起来。
 - 基于 `FastAPI + SQLAlchemy` 封装聊天、工单、用户鉴权、人工审批和评估接口，持久化用户、Ticket、SessionMemory 和 ResponseApproval 记录。
 - 引入 PII 检测、Prompt Injection 检测、Jailbreak 检测、输出过滤、QA 评分和人工审批机制，对高风险或低置信度回复触发人工确认。
 - 拆分 runtime、test、eval、load 依赖 profile，并增加 Python 3.11 GitHub Actions smoke workflow，提高项目可复现性。
@@ -31,6 +32,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 - ChromaDB 向量存储。
 - BM25 风格混合检索和轻量 rerank。
 - SQLAlchemy 工单、会话和审批模型。
+- 工单状态机和审批闭环流转。
 - 可选 Redis memory adapter。
 - Mock LLM provider，以及 OpenAI / Azure provider 适配接口。
 - Human-in-the-Loop 审批流程。
@@ -86,7 +88,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 
 这个项目是一个企业智能客服 Agent 平台。用户消息进入 FastAPI `/chat` 接口后，系统会创建或更新工单，并加载会话历史。Redis 用作可选短期工作记忆，SQL 保存持久化会话记录。
 
-请求随后进入 LangGraph 工作流。Analyzer 节点先做 guardrail 检测，并识别情绪、优先级、部门和意图。如果命中安全风险，请求会直接进入 escalation 节点。正常请求会进入 tooling 节点，补充 CRM、订单和历史工单上下文。Retriever 节点根据部门和知识库版本查询 ChromaDB，并使用 BM25 风格关键词分数做轻量 rerank。Resolver 节点结合 RAG 上下文和结构化工具上下文生成客服回复。QA 节点检查回复质量和幻觉风险，Escalation 节点对高风险或低置信度回复触发人工审批。
+请求随后进入 LangGraph 工作流。Analyzer 节点先做 guardrail 检测，并识别情绪、优先级、部门和意图。如果命中安全风险，请求会直接进入 escalation 节点。正常请求会进入 tooling 节点，补充 CRM、订单和历史工单上下文。Retriever 节点根据部门和知识库版本查询 ChromaDB，并使用 BM25 风格关键词分数做轻量 rerank。Resolver 节点结合 RAG 上下文和结构化工具上下文生成客服回复。QA 节点检查回复质量和幻觉风险，Escalation 节点对高风险或低置信度回复触发人工审批。工单状态由状态机统一管理：进入审批时变为 `pending_approval`，审批通过或修改后变为 `resolved`，拒绝后回到 `in_progress`，解决后可关闭为 `closed`。
 
 本地开发中，CRM、订单、工单工具和默认 LLM 都是 mock，因此项目可以脱离企业私有 API 运行。生产环境可以将这些 adapter 替换成真实 CRM、OMS、物流、退款或工单服务 client。
 
@@ -111,6 +113,10 @@ Redis 按 `session_id` 保存最近对话 turn，作为短期工作记忆。SQL 
 ### 如何降低幻觉？
 
 系统结合 RAG citation、QA 分数、输出过滤和升级规则。如果检索上下文为空、QA 分数低或命中高风险规则，回复会进入人工审批。
+
+### 工单状态机怎么设计？
+
+状态机定义了 `open`、`in_progress`、`pending_approval`、`resolved`、`closed` 五个状态。AI 回复需要人工审批时，工单进入 `pending_approval`；审批通过或人工修改后进入 `resolved`；如果客服拒绝 AI 草稿，工单回到 `in_progress`；只有已解决工单才能关闭为 `closed`。非法流转会返回 `409 Conflict`，避免业务代码随意修改状态。
 
 ### 下一步会怎么改？
 

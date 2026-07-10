@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 
 from src.models.db_models import ResponseApproval, Ticket
 from src.models.schemas import ResponseApprovalRequest
+from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine
 
 logger = logging.getLogger("supportgpt.approval.workflows")
 
@@ -21,6 +22,16 @@ class HumanInTheLoopService:
         drafted_response: str
     ) -> ResponseApproval:
         """Create a pending response approval ticket."""
+        ticket_result = await db.execute(select(Ticket).filter(Ticket.id == ticket_id))
+        ticket = ticket_result.scalars().first()
+        if not ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ticket {ticket_id} not found.",
+            )
+
+        ticket_state_machine.transition(ticket, TicketAction.REQUEST_APPROVAL)
+
         approval = ResponseApproval(
             ticket_id=ticket_id,
             drafted_response=drafted_response,
@@ -79,12 +90,17 @@ class HumanInTheLoopService:
         else:
             approval.modified_response = approval.drafted_response
 
-        # If approved or modified, update ticket status to completed / resolved
-        if req.status in ["approved", "modified"]:
-            ticket_result = await db.execute(select(Ticket).filter(Ticket.id == approval.ticket_id))
-            ticket = ticket_result.scalars().first()
-            if ticket:
-                ticket.status = "resolved"
+        ticket_result = await db.execute(select(Ticket).filter(Ticket.id == approval.ticket_id))
+        ticket = ticket_result.scalars().first()
+        if ticket:
+            if ticket.status in {TicketStatus.OPEN, TicketStatus.IN_PROGRESS}:
+                ticket_state_machine.transition(ticket, TicketAction.REQUEST_APPROVAL)
+            if req.status == "approved":
+                ticket_state_machine.transition(ticket, TicketAction.APPROVE_RESPONSE)
+            elif req.status == "modified":
+                ticket_state_machine.transition(ticket, TicketAction.MODIFY_RESPONSE)
+            elif req.status == "rejected":
+                ticket_state_machine.transition(ticket, TicketAction.REJECT_RESPONSE)
 
         await db.commit()
         await db.refresh(approval)

@@ -29,6 +29,7 @@ from src.tools.crm import crm_tool
 from src.tools.ticketing import ticketing_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.memory.redis_memory import redis_memory
+from src.tickets.state_machine import TicketAction, ticket_state_machine
 from src.observability.tracing import init_tracing
 from src.observability.metrics import HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
 from src.evaluation.framework import run_deeval_evaluation
@@ -184,7 +185,6 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     # 4. Save to Response Approval if HITL is required
     approval_id = None
     if agent_output.get("approval_required"):
-        ticket.status = "in_progress"
         appr_obj = await human_it_loop_service.create_pending_approval(
             db=db,
             ticket_id=ticket.id,
@@ -442,6 +442,18 @@ async def create_ticket(req: TicketCreate, db: AsyncSession = Depends(get_db)):
         priority="medium"
     )
     db.add(ticket)
+    await db.commit()
+    await db.refresh(ticket)
+    return ticket
+
+@app.post("/tickets/{ticket_id}/close", response_model=TicketResponse)
+async def close_ticket(ticket_id: int, db: AsyncSession = Depends(get_db)):
+    ticket_res = await db.execute(select(Ticket).filter(Ticket.id == ticket_id))
+    ticket = ticket_res.scalars().first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ticket_state_machine.transition(ticket, TicketAction.CLOSE)
     await db.commit()
     await db.refresh(ticket)
     return ticket

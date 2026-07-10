@@ -84,3 +84,28 @@ analyzer
 ```
 
 该流程适合简历表述为：基于 LangGraph 设计客服 Agent 工作流，将安全检测、工具上下文、RAG 检索、回复生成、QA 校验和人工升级拆分为可观测节点。
+
+---
+
+## 工单闭环状态机
+
+工单状态由 `src/tickets/state_machine.py` 统一管理，避免业务代码直接随意修改 `Ticket.status`。
+
+核心状态：
+
+- `open`：新工单。
+- `in_progress`：人工继续处理或 AI 草稿被拒绝后回到处理中。
+- `pending_approval`：AI 生成的回复需要人工审批。
+- `resolved`：AI 草稿通过或被人工修改后完成处理。
+- `closed`：已解决工单被关闭归档。
+
+核心流转：
+
+```text
+open -> pending_approval -> resolved -> closed
+pending_approval -> in_progress  # 人工拒绝 AI 草稿
+resolved -> in_progress          # 重新打开
+closed -> in_progress            # 重新打开
+```
+
+非法流转会返回 `409 Conflict`，例如 `open -> closed` 会被拒绝。

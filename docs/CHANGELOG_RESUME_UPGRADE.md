@@ -434,3 +434,76 @@ asyncio.run(main())'
 已知限制：
 
 - `.venv/bin/python -m pytest tests/test_tool_registry.py -q` 在当前 Python 3.13/macOS 环境仍以 `139` 退出，和此前记录的 pytest/native 依赖问题一致。CI 推荐 Python 3.11。
+
+## Commit 12：`feat: add ticket lifecycle state machine`
+
+### 修改文件
+
+- `src/tickets/__init__.py`
+- `src/tickets/state_machine.py`
+- `src/approval/workflows.py`
+- `src/main.py`
+- `tests/test_ticket_state_machine.py`
+- `docs/AGENT_ARCHITECTURE.md`
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/RESUME_VALUE_ENHANCEMENT_ROADMAP.md`
+- `docs/CHANGELOG_RESUME_UPGRADE.md`
+
+### 修改内容
+
+- 新增 `TicketStateMachine`，统一管理工单合法状态流转。
+- 定义 `open`、`in_progress`、`pending_approval`、`resolved`、`closed` 五个核心状态。
+- 创建人工审批时，工单从 `open` 或 `in_progress` 进入 `pending_approval`。
+- 审批通过或修改时，工单进入 `resolved`。
+- 审批拒绝时，工单回到 `in_progress`。
+- 新增 `/tickets/{ticket_id}/close` 接口，仅允许合法状态流转到 `closed`。
+- 非法流转返回 `409 Conflict`，避免业务代码直接随意修改 `Ticket.status`。
+
+### 简历价值
+
+可以真实表述为：
+
+> 设计工单闭环状态机，将 AI 草稿生成、人工审批、拒绝重处理、解决和关闭归档串联起来，并通过合法流转校验避免工单状态被随意修改。
+
+### 生产边界
+
+当前状态机复用 `Ticket.status` 字段，没有新增状态流转历史表。生产环境建议增加 `ticket_status_events` 审计表，记录操作者、动作、来源状态、目标状态、原因和时间。
+
+### 验证记录
+
+通过：
+
+```bash
+python -m compileall src tests
+```
+
+```bash
+.venv/bin/python -c 'from src.models.db_models import Ticket; from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine; t=Ticket(customer_id="c", subject="s", description="d", status=TicketStatus.OPEN); print(ticket_state_machine.transition(t, TicketAction.REQUEST_APPROVAL)); print(ticket_state_machine.transition(t, TicketAction.APPROVE_RESPONSE)); print(ticket_state_machine.transition(t, TicketAction.CLOSE)); print(t.status)'
+```
+
+输出：
+
+```text
+Transition(source='open', target='pending_approval', action='request_approval')
+Transition(source='pending_approval', target='resolved', action='approve_response')
+Transition(source='resolved', target='closed', action='close')
+closed
+```
+
+非法流转验证：
+
+```bash
+.venv/bin/python -c 'from fastapi import HTTPException; from src.models.db_models import Ticket; from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine; t=Ticket(customer_id="c", subject="s", description="d", status=TicketStatus.OPEN);
+try:
+    ticket_state_machine.transition(t, TicketAction.CLOSE)
+except HTTPException as exc:
+    print(exc.status_code, exc.detail["current_status"], exc.detail["requested_action"])
+print(t.status)'
+```
+
+输出：
+
+```text
+409 open close
+open
+```
