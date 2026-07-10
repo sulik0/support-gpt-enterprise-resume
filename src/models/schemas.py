@@ -54,12 +54,23 @@ class CostMetadata(BaseModel):
     cost_usd: float = 0.0
     latency_seconds: float = 0.0
 
+class ToolCallTrace(BaseModel):
+    tool_name: str
+    role: str
+    ticket_id: Optional[int] = None
+    allowed: bool
+    status: str
+    latency_ms: float
+    mocked: bool = True
+    error: Optional[str] = None
+
 class ChatResponse(BaseModel):
     session_id: str
     response: str
     sentiment: str
     priority: str
     tool_context: Dict[str, Any] = Field(default_factory=dict)
+    tool_calls: List[ToolCallTrace] = Field(default_factory=list)
     citations: List[Citation]
     escalation_recommended: bool
     escalation_reason: Optional[str] = None
@@ -122,6 +133,7 @@ class SuggestResponseResponse(BaseModel):
     ticket_id: int
     suggested_response: str
     tool_context: Dict[str, Any] = Field(default_factory=dict)
+    tool_calls: List[ToolCallTrace] = Field(default_factory=list)
     citations: List[Citation]
     qa_score: float
     hallucination_detected: bool

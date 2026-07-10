@@ -3,9 +3,7 @@ import time
 from typing import Any, Dict
 
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
-from src.tools.crm import crm_tool
-from src.tools.order_mgmt import order_mgmt_tool
-from src.tools.ticketing import ticketing_tool
+from src.tools.registry import tool_registry
 
 logger = logging.getLogger("supportgpt.agents.tooling")
 
@@ -22,6 +20,8 @@ class ToolingAgent:
     async def enrich(self, state: Dict[str, Any]) -> Dict[str, Any]:
         start_time = time.time()
         customer_id = state.get("customer_id", "")
+        ticket_id = state.get("ticket_id")
+        operator_role = state.get("operator_role", "agent")
         department = state.get("department", "general")
         intent = state.get("intent", "general")
 
@@ -36,14 +36,43 @@ class ToolingAgent:
         )
 
         try:
-            profile = crm_tool.get_customer_profile(customer_id)
-            past_tickets = ticketing_tool.get_past_tickets(customer_id)
+            profile_call = await tool_registry.call_tool(
+                "crm.get_customer_profile",
+                {"customer_id": customer_id},
+                role=operator_role,
+                ticket_id=ticket_id,
+            )
+            ticket_call = await tool_registry.call_tool(
+                "tickets.get_past_tickets",
+                {"customer_id": customer_id},
+                role=operator_role,
+                ticket_id=ticket_id,
+            )
 
             should_fetch_orders = department in {"billing", "shipping"} or any(
                 token in intent.lower()
                 for token in ["billing", "refund", "order", "shipping", "payment", "invoice"]
             )
-            orders = order_mgmt_tool.get_order_history(customer_id) if should_fetch_orders else []
+            order_call = None
+            if should_fetch_orders:
+                order_call = await tool_registry.call_tool(
+                    "orders.get_order_history",
+                    {"customer_id": customer_id},
+                    role=operator_role,
+                    ticket_id=ticket_id,
+                )
+
+            profile = profile_call.get("result") or {}
+            past_tickets = ticket_call.get("result") or []
+            orders = order_call.get("result") if order_call else []
+            tool_calls = [profile_call, ticket_call]
+            if order_call:
+                tool_calls.append(order_call)
+
+            public_tool_calls = [
+                {key: value for key, value in call.items() if key != "result"}
+                for call in tool_calls
+            ]
 
             tool_context = {
                 "customer_profile": {
@@ -54,7 +83,13 @@ class ToolingAgent:
                 "recent_orders": orders[:3],
                 "past_tickets": past_tickets[:3],
                 "mocked": True,
-                "mock_note": "CRM, order, and ticketing tools are local mock adapters for resume/demo use.",
+                "tool_policy": {
+                    "operator_role": operator_role,
+                    "schema_validated": True,
+                    "permission_checked": True,
+                    "audit_enabled": True,
+                },
+                "mock_note": "CRM, order, and ticketing tools are local mock adapters behind the tool registry.",
             }
 
             duration = time.time() - start_time
@@ -63,12 +98,14 @@ class ToolingAgent:
             return {
                 **state,
                 "tool_context": tool_context,
+                "tool_calls": public_tool_calls,
             }
         except Exception as exc:
             logger.error("Tooling agent failed: %s", exc)
             return {
                 **state,
                 "tool_context": {},
+                "tool_calls": [],
                 "errors": state.get("errors", []) + [f"Tooling agent error: {str(exc)}"],
             }
 

@@ -19,6 +19,9 @@ class AgentState(TypedDict):
     priority: str
     intent: str
     department: str
+    operator_role: str
+    tool_context: Dict[str, Any]
+    tool_calls: List[Dict[str, Any]]
     context_citations: List[Citation]
     suggested_response: str
     qa_score: float
@@ -44,9 +47,11 @@ class AgentState(TypedDict):
 
 ### 2. 工具上下文 Agent (`tooling.py`)
 
-- **职责**：调用 CRM、订单、历史工单等工具适配器，为回复生成补充结构化业务上下文。
-- **输出变量**：`tool_context`。
-- **边界说明**：当前 CRM、订单和工单工具是本地 mock 适配器，用于演示真实企业系统集成路径。
+- **职责**：通过 `src/tools/registry.py` 中的统一工具注册中心调用 CRM、订单、历史工单等工具，为回复生成补充结构化业务上下文。
+- **输出变量**：`tool_context`、`tool_calls`。
+- **权限控制**：每个工具定义 `input_schema`、`output_schema`、`min_role`、`timeout_seconds` 和 `mocked` 标记；调用前会做角色权限校验和 Pydantic 参数校验。
+- **审计记录**：每次工具调用都会记录工具名、角色、工单 ID、是否允许、状态、耗时、mock 标记和错误信息。
+- **边界说明**：当前 CRM、订单和工单工具是本地 mock 适配器，用于演示真实企业系统集成路径；高风险退款初筛工具要求 `manager` 及以上角色。
 
 ### 3. 知识检索 Agent (`retriever.py`)
 

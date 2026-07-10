@@ -9,7 +9,8 @@
 - 基于 FastAPI 的聊天、工单、鉴权、审批、评估和客户上下文 API。
 - 基于 LangGraph 的 Agent 工作流，包含 analyzer、tooling、retriever、resolver、QA 和 escalation 节点。
 - 对安全风险请求的条件路由和提前阻断。
-- 通过 CRM、订单、历史工单适配器注入结构化工具上下文。
+- 通过统一工具调用 registry 注入 CRM、订单、历史工单等结构化工具上下文，并记录 `tool_calls` 审计信息。
+- 工具调用具备 schema 校验、角色权限校验、超时控制和 mock 标记。
 - 基于 ChromaDB、Embedding、metadata filter、知识库版本、轻量混合检索和 rerank 的 RAG 检索。
 - SQLAlchemy 数据模型，覆盖用户、工单、会话记忆、知识文档和审批记录。
 - 可选 Redis 短期会话记忆，SQL 作为持久化兜底。
@@ -25,6 +26,7 @@
 | CRM | `src/tools/crm.py` 中的内存客户画像 | 没有真实 CRM 权限 | Salesforce / Zendesk / HubSpot API client |
 | 订单管理 | `src/tools/order_mgmt.py` 中的内存订单历史 | 没有真实 OMS 账号 | 电商/OMS REST 或 GraphQL adapter |
 | 历史工单 | `src/tools/ticketing.py` 中的内存历史工单 | 没有真实 helpdesk backend | Jira / ServiceNow / Zendesk ticket API |
+| 退款初筛 | `src/tools/registry.py` 中的 manager 级 mock 工具 | 没有真实退款审批系统 | 退款/财务审批 API + 人工审批流 |
 | LLM | 默认 `mock` provider | 本地 demo 可复现 | OpenAI / Azure / OpenRouter / Qwen / DeepSeek provider |
 | 评估 | 本地确定性指标，可选 RAGAS / DeepEval | 没有稳定生产评估集 | Golden set + LLM-as-Judge pipeline |
 | 关键词检索 | 进程内 BM25 风格 scorer | 不是分布式搜索索引 | Elasticsearch / OpenSearch / PostgreSQL full-text search |
@@ -33,7 +35,7 @@
 
 可以说：
 
-> 我实现了 Agent 工作流、RAG 链路、记忆层、人工审批和可观测性。CRM、订单和工单系统使用 mock adapter，本地可以直接运行；这些 adapter 被隔离在工具类后面，生产环境可以替换成真实企业 API client。
+> 我实现了 Agent 工作流、RAG 链路、记忆层、人工审批和可观测性。CRM、订单和工单系统使用 mock adapter，本地可以直接运行；这些 adapter 统一注册到 ToolRegistry 中，具备 schema 校验、角色权限和调用审计，生产环境可以替换成真实企业 API client。
 
 避免说：
 
@@ -51,6 +53,7 @@
 
 - 将 mock tools 替换为真实 API client。
 - 为工具调用增加 schema、权限、超时、重试和 circuit breaker。
+- 将工具审计记录持久化到数据库或日志系统。
 - 为所有工具调用增加审计日志。
 - 增加租户级知识库隔离。
 - 将进程内关键词打分替换为生产搜索后端。

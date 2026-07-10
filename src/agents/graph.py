@@ -25,7 +25,9 @@ class AgentState(TypedDict):
     priority: str
     intent: str
     department: str
+    operator_role: str
     tool_context: Dict[str, Any]
+    tool_calls: List[Dict[str, Any]]
     context_citations: List[Any]
     suggested_response: str
     qa_score: float
@@ -117,7 +119,9 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "priority": "medium",
         "intent": "general",
         "department": "general",
+        "operator_role": initial_state.get("operator_role", "agent"),
         "tool_context": {},
+        "tool_calls": [],
         "context_citations": [],
         "suggested_response": "",
         "qa_score": 1.0,

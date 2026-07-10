@@ -94,6 +94,9 @@ async def test_compiled_langgraph_flow():
     assert final_output["sentiment"] == "negative"
     assert final_output["priority"] == "high"
     assert final_output["department"] == "billing"
+    assert final_output["tool_context"]["tool_policy"]["permission_checked"] is True
+    assert len(final_output["tool_calls"]) >= 2
+    assert all(call["allowed"] for call in final_output["tool_calls"])
     assert "suggested_response" in final_output
     assert final_output["cost_usd"] >= 0.0
     assert final_output["latency_seconds"] > 0.0

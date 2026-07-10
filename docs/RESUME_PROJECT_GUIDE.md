@@ -16,7 +16,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 
 - 基于 `LangGraph` 设计客服 Agent 工作流，将工单分析、工具上下文增强、知识库检索、回复生成、质量校验和 SLA 升级拆分为可观测节点，提升客服流程可控性。
 - 构建 `RAG` 知识库检索链路，支持文档切分、Embedding 向量化、ChromaDB 存储、知识库版本过滤、BM25 风格混合检索、轻量 rerank 和 citation 返回，降低无依据回答风险。
-- 设计 CRM、订单管理、历史工单等工具上下文节点，将结构化客户画像、订单状态和历史问题注入回复生成流程，模拟真实客服业务系统集成。
+- 设计统一工具调用 registry，为 CRM、订单管理、历史工单和退款初筛工具增加 schema 校验、角色权限、超时控制和审计记录，并将结构化客户画像、订单状态和历史问题注入回复生成流程。
 - 实现 `Redis` 短期会话记忆与 SQL 持久化会话历史，支持多轮客服对话上下文复用，并在 Redis 不可用时自动降级。
 - 基于 `FastAPI + SQLAlchemy` 封装聊天、工单、用户鉴权、人工审批和评估接口，持久化用户、Ticket、SessionMemory 和 ResponseApproval 记录。
 - 引入 PII 检测、Prompt Injection 检测、Jailbreak 检测、输出过滤、QA 评分和人工审批机制，对高风险或低置信度回复触发人工确认。
@@ -27,6 +27,7 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 - FastAPI 后端 API。
 - LangGraph 工作流。
 - Agent graph 内的 tooling node。
+- 统一工具调用 registry、工具 schema、角色权限校验和工具调用审计。
 - ChromaDB 向量存储。
 - BM25 风格混合检索和轻量 rerank。
 - SQLAlchemy 工单、会话和审批模型。
@@ -98,6 +99,10 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 ### 工具调用是真的业务系统吗？
 
 当前工具是 mock adapter，用来模拟 CRM、订单和工单系统。架构上这些工具被封装在独立 class 后面，可以不改 graph contract 就替换成真实服务 client。
+
+### 工具权限怎么控制？
+
+工具统一注册到 `ToolRegistry`，每个工具都有 `input_schema`、`output_schema`、`min_role` 和超时时间。调用前会先做角色权限校验和参数校验，例如读类工具允许 `agent` 调用，退款初筛工具要求 `manager` 及以上角色。每次调用都会生成 `tool_calls` 审计记录，API 可以返回工具名、状态、耗时和是否 mock。
 
 ### 记忆系统怎么做？
 

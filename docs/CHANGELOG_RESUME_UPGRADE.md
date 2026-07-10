@@ -357,3 +357,80 @@ python -m compileall src tests
 ### 简历价值
 
 该文档用于指导后续继续增强项目，避免盲目堆技术名词。优先选择能体现业务闭环、质量评估、安全工具调用和生产排障能力的方向。
+
+## Commit 11：`feat: add tool registry permissions and audit`
+
+### 修改文件
+
+- `src/tools/registry.py`
+- `src/agents/tooling.py`
+- `src/agents/graph.py`
+- `src/models/schemas.py`
+- `src/main.py`
+- `tests/test_agents.py`
+- `tests/test_tool_registry.py`
+- `docs/AGENT_ARCHITECTURE.md`
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/MOCK_BOUNDARIES.md`
+- `docs/CHANGELOG_RESUME_UPGRADE.md`
+
+### 修改内容
+
+- 新增 `ToolRegistry`，统一管理工具定义、参数 schema、输出 schema、最低角色、超时和 mock 标记。
+- 将 CRM、订单、历史工单工具注册为 schema 校验后的读类工具。
+- 新增 `orders.check_refund_eligibility` manager 级 mock 工具，用于展示高风险业务工具的权限控制。
+- `ToolingAgent` 改为只通过 registry 调用工具，不再直接调用具体工具 class。
+- 每次工具调用都会生成 `tool_calls` 审计记录，包含工具名、角色、工单 ID、是否允许、状态、耗时、mock 标记和错误信息。
+- `/chat` 和 `/suggest-response` 响应增加 `tool_calls` 字段，便于前端展示和面试 demo。
+
+### 简历价值
+
+可以真实表述为：
+
+> 设计统一工具调用协议，为 CRM、订单、历史工单和退款初筛工具增加 Pydantic schema 校验、角色权限、超时控制和调用审计，使 Agent 工具调用具备可治理能力。
+
+### Mock 边界
+
+当前业务工具仍是本地 mock adapter，没有接入真实 CRM / OMS / 财务退款系统。权限校验、schema 校验、超时控制和审计记录是真实工程实现；生产环境需要将工具 handler 替换为真实 API client，并将审计记录持久化。
+
+### 验证记录
+
+通过：
+
+```bash
+python -m compileall src tests
+```
+
+```bash
+.venv/bin/python -c 'import src.main; print("main import ok")'
+```
+
+```bash
+.venv/bin/python -c 'import asyncio
+from src.tools.registry import tool_registry
+async def main():
+    denied = await tool_registry.call_tool("orders.check_refund_eligibility", {"customer_id":"cust_101", "order_id":"ORD-7001"}, role="agent", ticket_id=1)
+    allowed = await tool_registry.call_tool("orders.check_refund_eligibility", {"customer_id":"cust_101", "order_id":"ORD-7001"}, role="manager", ticket_id=1)
+    print({"agent_status": denied["status"], "manager_status": allowed["status"], "eligible": allowed["result"]["eligible"]})
+asyncio.run(main())'
+```
+
+输出：
+
+```text
+{'agent_status': 'permission_denied', 'manager_status': 'success', 'eligible': True}
+```
+
+```bash
+.venv/bin/python -c 'from src.agents.graph import run_agent_workflow; import asyncio; out=asyncio.run(run_agent_workflow({"ticket_id":11,"customer_id":"cust_101","subject":"Billing refund request","description":"Can I get a refund for my payment done 5 days ago?","kb_version":"v1"})); print({"tool_calls": len(out.get("tool_calls", [])), "statuses": [c["status"] for c in out.get("tool_calls", [])], "permission_checked": out.get("tool_context", {}).get("tool_policy", {}).get("permission_checked")})'
+```
+
+输出：
+
+```text
+{'tool_calls': 3, 'statuses': ['success', 'success', 'success'], 'permission_checked': True}
+```
+
+已知限制：
+
+- `.venv/bin/python -m pytest tests/test_tool_registry.py -q` 在当前 Python 3.13/macOS 环境仍以 `139` 退出，和此前记录的 pytest/native 依赖问题一致。CI 推荐 Python 3.11。
