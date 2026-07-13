@@ -581,3 +581,22 @@ python -m compileall src tests
 ### 简历价值
 
 更清晰地展示项目从 FAQ 问答到 Agentic 客服工作流的升级路径，并将工程治理、检索质量、业务风险和可观测性作为可面试展开的亮点。
+
+## Commit 15：`docs: align resume copy with implementation`
+
+### 修改文件
+
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/CHANGELOG_RESUME_UPGRADE.md`
+
+### 修改内容
+
+- 逐项核对 Agent Graph、ToolRegistry、Hybrid RAG、Redis / SQL 记忆、HITL 和可观测实现，将简历文案改为与代码一致的表述。
+- 明确 prompt injection / jailbreak 由 Agent Graph 安全短路拦截，越权工具调用由 ToolRegistry RBAC 拒绝并记录审计。
+- 按实际 Escalation 规则校准人工审批条件，不再将所有高优先级工单表述为自动审批。
+- 将工具状态和耗时归入 Tool Audit / OpenTelemetry Trace，Prometheus 指标仅保留代码已实际暴露的请求、Agent、LLM、QA、Guardrail 和工单升级指标。
+- 补充本地 SQLite、Docker Compose PostgreSQL 以及 Redis 可选降级边界。
+
+### 简历价值
+
+简历中的每项能力均可从现有代码、API 字段或部署配置中获得支撑，便于面试时围绕具体实现展开，同时避免夸大真实业务系统接入或监控能力。

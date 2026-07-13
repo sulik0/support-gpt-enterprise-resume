@@ -10,20 +10,20 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 
 ## 简历项目描述
 
-面向售后客服场景，将初版 FAQ 问答系统升级为支持工单理解、业务系统联动、风险拦截、回复校验和人工审批的 Agent 平台，覆盖退款、保修、物流异常、订单取消等复杂问题处理。
+面向企业售后客服场景，将初版 FAQ / RAG 问答系统升级为支持工单理解、业务上下文补全、安全风险短路、回复质量校验和人工审批的 Agent 平台，面向退款、保修、物流异常、订单取消等复杂问题形成可观测的工单处理闭环。CRM、OMS 和历史工单当前采用本地 mock adapter，可按统一工具协议替换为真实企业服务。
 
 ## 技术栈
 
-Python、FastAPI、LangGraph、SQLAlchemy、Redis、PostgreSQL、ChromaDB、Hybrid RAG、Prompt Guardrails、Prometheus、Docker
+Python、FastAPI、LangGraph、SQLAlchemy Async、PostgreSQL / SQLite、Redis、ChromaDB、Hybrid RAG、Prompt Guardrails、Prometheus、OpenTelemetry、Docker Compose
 
 ## 核心工作
 
-- 基于 LangGraph 编排工单分类、上下文补全、知识检索、工具调用、回复生成、质量校验和升级判断等节点，通过条件路由处理复杂售后场景，并对 prompt injection、jailbreak、越权查询等高风险输入进行拦截或转人工。
-- 设计客户画像、订单状态、历史工单三类 Tool Adapter，在回复生成前注入用户等级、订单状态、投诉历史和过往处理结果，并保留 mock adapter 边界以支持后续接入真实 CRM / OMS / 工单系统。
-- 构建面向退款规则、保修流程、售后政策和 FAQ 的 Hybrid RAG 检索链路，支持知识库版本过滤、类别筛选和 citation 溯源，并结合关键词打分与轻量 rerank 提升精确规则问题召回稳定性。
-- 基于 Redis 保存短期会话状态和最近多轮对话，PostgreSQL 持久化聊天历史、审批记录和工单上下文；Redis 不可用时降级到数据库查询，提升系统容错能力。
-- 引入 QA 评分、幻觉检测、PII 脱敏、输出泄露过滤和人工审批流程，对低置信度、高优先级或高风险回复自动创建审批记录，降低自动回复业务风险。
-- 接入 Prometheus 监控请求延迟、Agent 节点耗时、工具调用成功率、token 使用量和人工升级次数，并通过 Docker Compose 编排后端、数据库、缓存和监控组件，提升项目可复现性和可观测性。
+- 基于 LangGraph 将 Analyzer、Tooling、Retriever、Resolver、QA 和 Escalation 编排为显式工作流：对正常工单依次完成意图/优先级分类、业务上下文补全、知识检索、回复生成和质量校验；对 prompt injection 和 jailbreak 请求进行安全短路，直接阻断后续工具与生成节点并进入升级流程。
+- 设计统一 ToolRegistry，将客户画像、订单历史和历史工单三类 mock adapter 接入 Agent，在回复前注入客户等级、未结工单数、近期订单状态和过往处理结果；为工具调用增加 Pydantic Schema 校验、RBAC 权限、超时控制和审计记录，并将退款资格初筛限制为 manager 及以上角色。
+- 基于 ChromaDB 构建 Hybrid RAG，将向量召回与进程内 BM25 风格关键词打分融合，再按原始相似度与词项覆盖度进行轻量 rerank；支持知识库版本、业务类别过滤、类别无结果时放宽召回以及 citation 溯源，降低精确规则问题的漏召回和无依据回复风险。
+- 实现 Redis 可选短期会话记忆与 SQLAlchemy 持久化历史，按 session_id 复用最近多轮对话，Redis 未配置或不可用时自动回退到 SQL 记录；本地默认使用 SQLite 降低启动门槛，Docker Compose 环境切换为 PostgreSQL，同时编排 Redis 与 Prometheus。
+- 在输入侧实现 PII 脱敏、Prompt Injection / Jailbreak 检测，在输出侧实现 QA 评分、幻觉检测和指令泄露过滤；对安全违规、紧急工单、高优先级叠加负面情绪、QA 分数低于 0.8 或检测到幻觉的回复触发人工审批，并通过状态机约束 pending_approval、resolved、in_progress 和 closed 等工单流转。
+- 构建 Prometheus + OpenTelemetry 可观测链路：统计 HTTP 请求量/延迟、Agent 节点耗时、LLM token/估算成本、QA 分数分布、Guardrail 违规与工单升级次数，并使用 Trace Span 串联 HTTP 入口、Agent workflow、RAG 查询、工具状态/耗时和人工审批动作，支持单次请求的慢节点定位与错误排查。
 
 ## 已实现能力
 
