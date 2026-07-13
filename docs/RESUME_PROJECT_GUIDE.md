@@ -10,19 +10,20 @@ Enterprise Customer Support Agent Platform with LangGraph, RAG, Tool Context, an
 
 ## 简历项目描述
 
-面向企业售后客服场景，设计并实现一套智能客服 Agent 平台，支持用户意图识别、知识库 RAG 检索、CRM / 订单 / 历史工单上下文增强、客服回复生成、人工审批、工单升级和质量评估。系统基于 FastAPI 提供后端服务，使用 LangGraph 编排多 Agent 工作流，通过 Redis 管理短期会话记忆，使用 SQLAlchemy 持久化工单与审批记录，并结合 Prometheus 指标与 RAG 评估模块提升系统可观测性和回答可信度。
+面向售后客服场景，将初版 FAQ 问答系统升级为支持工单理解、业务系统联动、风险拦截、回复校验和人工审批的 Agent 平台，覆盖退款、保修、物流异常、订单取消等复杂问题处理。
 
-## 简历 Bullet
+## 技术栈
 
-- 基于 `LangGraph` 设计客服 Agent 工作流，将工单分析、工具上下文增强、知识库检索、回复生成、质量校验和 SLA 升级拆分为可观测节点，提升客服流程可控性。
-- 构建 `RAG` 知识库检索链路，支持文档切分、Embedding 向量化、ChromaDB 存储、知识库版本过滤、BM25 风格混合检索、轻量 rerank 和 citation 返回，降低无依据回答风险。
-- 设计统一工具调用 registry，为 CRM、订单管理、历史工单和退款初筛工具增加 schema 校验、角色权限、超时控制和审计记录，并将结构化客户画像、订单状态和历史问题注入回复生成流程。
-- 实现 `Redis` 短期会话记忆与 SQL 持久化会话历史，支持多轮客服对话上下文复用，并在 Redis 不可用时自动降级。
-- 设计工单闭环状态机，统一管理 `open / pending_approval / in_progress / resolved / closed` 状态流转，将 AI 草稿生成、人工审批、拒绝重处理和关闭归档串联起来。
-- 基于 `FastAPI + SQLAlchemy` 封装聊天、工单、用户鉴权、人工审批和评估接口，持久化用户、Ticket、SessionMemory 和 ResponseApproval 记录。
-- 引入 PII 检测、Prompt Injection 检测、Jailbreak 检测、输出过滤、QA 评分和人工审批机制，对高风险或低置信度回复触发人工确认。
-- 引入 OpenTelemetry Trace，将 HTTP 请求、Agent workflow、工具调用、RAG 检索和审批动作串联为可观测链路，支持慢请求定位和排障分析。
-- 拆分 runtime、test、eval、load 依赖 profile，并增加 Python 3.11 GitHub Actions smoke workflow，提高项目可复现性。
+Python、FastAPI、LangGraph、SQLAlchemy、Redis、PostgreSQL、ChromaDB、Hybrid RAG、Prompt Guardrails、Prometheus、Docker
+
+## 核心工作
+
+- 基于 LangGraph 编排工单分类、上下文补全、知识检索、工具调用、回复生成、质量校验和升级判断等节点，通过条件路由处理复杂售后场景，并对 prompt injection、jailbreak、越权查询等高风险输入进行拦截或转人工。
+- 设计客户画像、订单状态、历史工单三类 Tool Adapter，在回复生成前注入用户等级、订单状态、投诉历史和过往处理结果，并保留 mock adapter 边界以支持后续接入真实 CRM / OMS / 工单系统。
+- 构建面向退款规则、保修流程、售后政策和 FAQ 的 Hybrid RAG 检索链路，支持知识库版本过滤、类别筛选和 citation 溯源，并结合关键词打分与轻量 rerank 提升精确规则问题召回稳定性。
+- 基于 Redis 保存短期会话状态和最近多轮对话，PostgreSQL 持久化聊天历史、审批记录和工单上下文；Redis 不可用时降级到数据库查询，提升系统容错能力。
+- 引入 QA 评分、幻觉检测、PII 脱敏、输出泄露过滤和人工审批流程，对低置信度、高优先级或高风险回复自动创建审批记录，降低自动回复业务风险。
+- 接入 Prometheus 监控请求延迟、Agent 节点耗时、工具调用成功率、token 使用量和人工升级次数，并通过 Docker Compose 编排后端、数据库、缓存和监控组件，提升项目可复现性和可观测性。
 
 ## 已实现能力
 

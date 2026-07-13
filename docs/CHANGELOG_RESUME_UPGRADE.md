@@ -563,3 +563,21 @@ python -m compileall src tests
 ```text
 {'department': 'billing', 'tool_calls': 3, 'approval_required': True, 'latency': 0.0215}
 ```
+
+## Commit 14：`docs: refine resume project description`
+
+### 修改文件
+
+- `docs/RESUME_PROJECT_GUIDE.md`
+- `docs/CHANGELOG_RESUME_UPGRADE.md`
+
+### 修改内容
+
+- 将简历项目概述调整为“从 FAQ 问答系统升级为售后客服 Agent 平台”的改造叙事。
+- 新增独立技术栈段落，突出 FastAPI、LangGraph、Redis、PostgreSQL、ChromaDB、Hybrid RAG、Prometheus 和 Docker 等核心技术。
+- 将核心工作聚焦为 Agent 编排与风险路由、Tool Adapter、Hybrid RAG、分层会话存储、QA 与人工审批、可观测与 Docker 编排六项简历要点。
+- 保留 CRM / OMS / 工单系统为 mock adapter 的真实边界，不表述为已接入真实企业系统。
+
+### 简历价值
+
+更清晰地展示项目从 FAQ 问答到 Agentic 客服工作流的升级路径，并将工程治理、检索质量、业务风险和可观测性作为可面试展开的亮点。
