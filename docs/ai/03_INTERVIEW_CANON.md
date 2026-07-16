@@ -237,9 +237,11 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 - HTTP 请求数量和请求延迟。
 - Agent 节点执行耗时。
-- LLM 输入/输出 token、估算成本与部分 LLM 延迟。
+- LLM 输入/输出 token 与估算成本。
 - QA 分数分布。
 - 情绪分类计数、Guardrail 违规计数和工单升级计数。
+
+LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有完整的更新逻辑，不能当作可用的实测监控数据。
 
 OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工具调用、RAG 查询与回退、审批创建和审批处理。
 
