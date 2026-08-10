@@ -78,6 +78,25 @@ locust -f tests/load_test.py
 
 ## RAG 评估
 
+### 第一阶段 dataset 离线评测
+
+正式 Ragas 回归命令：
+
+```bash
+python scripts/seed_kb.py
+export OPENAI_API_KEY=<your-key>
+python scripts/run_agent_eval.py --engine ragas
+```
+
+命令会运行完整 LangGraph workflow，使用 `evaluation/golden/support_qa_golden.json` 评估 Faithfulness、Answer Relevancy、Context Precision 和 Context Recall，生成：
+
+- `evaluation/reports/agent_eval_latest.json`
+- `evaluation/reports/agent_eval_latest.md`
+
+无 API key 时可以使用 `python scripts/run_agent_eval.py --engine local` 验证管道和报告生成，但 local proxy 分数不等于 Ragas 分数。完整设计参见 [第一阶段 Agent Evaluation](AGENT_EVALUATION_PHASE1.md)。
+
+### 旧版单条评估入口
+
 评估模块支持两种模式：
 
 1. **RAGAS / DeepEval 适配器**

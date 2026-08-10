@@ -13,6 +13,7 @@ from src.agents.escalation import escalation_agent
 from src.observability.cost_tracking import calculate_llm_cost
 from src.observability.metrics import LLM_TOKENS_TOTAL, LLM_COST_TOTAL
 from src.observability.tracing import get_tracer, set_span_attributes
+from src.observability.langsmith_tracing import traceable
 
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
@@ -127,6 +128,7 @@ def create_agent_graph() -> StateGraph:
 
 compiled_graph = create_agent_graph()
 
+@traceable(name="supportgpt.langgraph.workflow", run_type="chain")
 async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes the multi-agent workflow sequentially using LangGraph.

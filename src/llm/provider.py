@@ -2,6 +2,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple
 from src.config import settings
+from src.observability.langsmith_tracing import traceable
 
 class BaseLLMProvider(ABC):
     @abstractmethod
@@ -44,6 +45,7 @@ class BaseLLMProvider(ABC):
 
 
 class MockLLMProvider(BaseLLMProvider):
+    @traceable(name="supportgpt.llm.analyze_ticket", run_type="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         text_lower = text.lower()
         sentiment = "neutral"
@@ -80,6 +82,7 @@ class MockLLMProvider(BaseLLMProvider):
         }
         return analysis, 150, 45
 
+    @traceable(name="supportgpt.llm.generate_resolution", run_type="llm")
     async def generate_resolution(
         self, subject: str, description: str, context: str
     ) -> Tuple[str, int, int]:
@@ -105,6 +108,7 @@ class MockLLMProvider(BaseLLMProvider):
         
         return response, 250, 80
 
+    @traceable(name="supportgpt.llm.evaluate_qa", run_type="llm")
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
@@ -129,6 +133,7 @@ class MockLLMProvider(BaseLLMProvider):
         }
         return evaluation, 350, 60
 
+    @traceable(name="supportgpt.llm.run_chat", run_type="llm")
     async def run_chat(
         self, history: List[Dict[str, str]], context: str
     ) -> Tuple[str, int, int]:
@@ -159,6 +164,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         output_tokens = response.usage.completion_tokens
         return content, input_tokens, output_tokens
 
+    @traceable(name="supportgpt.llm.analyze_ticket", run_type="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         prompt = (
             "Analyze the following support ticket and return a JSON object with: "
@@ -174,6 +180,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
         return json.loads(content), in_tok, out_tok
 
+    @traceable(name="supportgpt.llm.generate_resolution", run_type="llm")
     async def generate_resolution(
         self, subject: str, description: str, context: str
     ) -> Tuple[str, int, int]:
@@ -189,6 +196,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         ]
         return await self._call_gpt(messages, json_mode=False)
 
+    @traceable(name="supportgpt.llm.evaluate_qa", run_type="llm")
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
@@ -211,17 +219,18 @@ class OpenAILLMProvider(BaseLLMProvider):
         content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
         return json.loads(content), in_tok, out_tok
 
+    @traceable(name="supportgpt.llm.run_chat", run_type="llm")
     async def run_chat(
         self, history: List[Dict[str, str]], context: str
     ) -> Tuple[str, int, int]:
         system_msg = "You are SupportGPT, a customer support AI assistant. Answer using the retrieved context if available."
         if context:
             system_msg += f"\n\nContext:\n{context}"
-        
+
         messages = [{"role": "system", "content": system_msg}]
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
-        
+
         return await self._call_gpt(messages, json_mode=False)
 
 
@@ -251,6 +260,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         output_tokens = response.usage.completion_tokens
         return content, input_tokens, output_tokens
 
+    @traceable(name="supportgpt.llm.analyze_ticket", run_type="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         prompt = (
             "Analyze the following support ticket and return a JSON object with: "
@@ -266,6 +276,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
         return json.loads(content), in_tok, out_tok
 
+    @traceable(name="supportgpt.llm.generate_resolution", run_type="llm")
     async def generate_resolution(
         self, subject: str, description: str, context: str
     ) -> Tuple[str, int, int]:
@@ -281,6 +292,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         ]
         return await self._call_gpt(messages, json_mode=False)
 
+    @traceable(name="supportgpt.llm.evaluate_qa", run_type="llm")
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
@@ -303,17 +315,18 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
         return json.loads(content), in_tok, out_tok
 
+    @traceable(name="supportgpt.llm.run_chat", run_type="llm")
     async def run_chat(
         self, history: List[Dict[str, str]], context: str
     ) -> Tuple[str, int, int]:
         system_msg = "You are SupportGPT, a customer support AI assistant. Answer using the retrieved context if available."
         if context:
             system_msg += f"\n\nContext:\n{context}"
-        
+
         messages = [{"role": "system", "content": system_msg}]
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
-        
+
         return await self._call_gpt(messages, json_mode=False)
 
 

@@ -24,13 +24,29 @@ def set_span_attributes(span: Any, attributes: Dict[str, Any]) -> None:
 def init_tracing() -> None:
     """Initialize OpenTelemetry and LangChain LangSmith tracing settings."""
     # LangSmith config
-    if settings.LANGCHAIN_TRACING_V2:
+    langsmith_enabled = settings.LANGSMITH_TRACING or settings.LANGCHAIN_TRACING_V2
+    if settings.LANGSMITH_TRACING:
+        langsmith_api_key = settings.LANGSMITH_API_KEY or settings.LANGCHAIN_API_KEY
+        langsmith_project = settings.LANGSMITH_PROJECT
+    else:
+        langsmith_api_key = settings.LANGCHAIN_API_KEY or settings.LANGSMITH_API_KEY
+        langsmith_project = settings.LANGCHAIN_PROJECT
+
+    if langsmith_enabled:
+        os.environ["LANGSMITH_TRACING"] = "true"
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        if settings.LANGCHAIN_API_KEY:
-            os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
-        os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+        if langsmith_api_key:
+            os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
+            os.environ["LANGCHAIN_API_KEY"] = langsmith_api_key
+        os.environ["LANGSMITH_PROJECT"] = langsmith_project
+        os.environ["LANGCHAIN_PROJECT"] = langsmith_project
+        os.environ["LANGSMITH_ENDPOINT"] = settings.LANGSMITH_ENDPOINT
+        os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGSMITH_ENDPOINT
+        if settings.LANGSMITH_WORKSPACE_ID:
+            os.environ["LANGSMITH_WORKSPACE_ID"] = settings.LANGSMITH_WORKSPACE_ID
         logger.info("LangSmith tracing enabled and environment variables configured.")
     else:
+        os.environ["LANGSMITH_TRACING"] = "false"
         os.environ["LANGCHAIN_TRACING_V2"] = "false"
         logger.info("LangSmith tracing is disabled.")
 

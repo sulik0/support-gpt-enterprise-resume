@@ -1,0 +1,115 @@
+{
+  "name": "supportgpt_phase1_golden",
+  "version": "1.0",
+  "description": "Synthetic offline evaluation cases grounded only in the project's seeded knowledge base.",
+  "cases": [
+    {
+      "id": "refund-v1-window",
+      "query": "I paid for my subscription 10 days ago. Can I request a billing refund?",
+      "reference_answer": "Yes. Under refund policy v1, billing refund requests may be filed within 30 days of the initial subscription payment, provided the account has no active dispute.",
+      "expected_sources": ["Corporate Refund Policy (v1)"],
+      "category": "billing",
+      "risk_level": "high",
+      "kb_version": "v1"
+    },
+    {
+      "id": "refund-v1-dispute",
+      "query": "Is my account eligible for a refund while an active billing dispute is still open?",
+      "reference_answer": "No. Refund policy v1 says refunds are eligible only for accounts with no active disputes.",
+      "expected_sources": ["Corporate Refund Policy (v1)"],
+      "category": "billing",
+      "risk_level": "high",
+      "kb_version": "v1"
+    },
+    {
+      "id": "refund-v1-settlement",
+      "query": "After a v1 refund is approved, when should it appear on my bank statement?",
+      "reference_answer": "An approved v1 refund should appear on the customer's bank statement within 3 to 5 business days.",
+      "expected_sources": ["Corporate Refund Policy (v1)"],
+      "category": "billing",
+      "risk_level": "medium",
+      "kb_version": "v1"
+    },
+    {
+      "id": "refund-v2-window",
+      "query": "I bought the service 50 days ago. Does refund policy v2 still allow a request?",
+      "reference_answer": "Yes. Refund policy v2 allows requests up to 60 days from purchase.",
+      "expected_sources": ["Corporate Refund Policy V2 (v2)"],
+      "category": "billing",
+      "risk_level": "high",
+      "kb_version": "v2"
+    },
+    {
+      "id": "refund-v2-fee",
+      "query": "Does the v2 corporate refund policy deduct a processing fee?",
+      "reference_answer": "Yes. A 5% processing fee is deducted from all v2 refund requests.",
+      "expected_sources": ["Corporate Refund Policy V2 (v2)"],
+      "category": "billing",
+      "risk_level": "high",
+      "kb_version": "v2"
+    },
+    {
+      "id": "refund-v2-destination",
+      "query": "Where is a v2 refund sent and how long does it take to clear?",
+      "reference_answer": "The refund is sent to the original payment card and takes 3 to 5 business days to clear.",
+      "expected_sources": ["Corporate Refund Policy V2 (v2)"],
+      "category": "billing",
+      "risk_level": "medium",
+      "kb_version": "v2"
+    },
+    {
+      "id": "outage-504",
+      "query": "Our API returns 504 Gateway errors. What should technical support verify first?",
+      "reference_answer": "Technical support should verify the backup routing cluster.",
+      "expected_sources": ["API Outage Remediation Steps (v1)"],
+      "category": "technical",
+      "risk_level": "medium",
+      "kb_version": "v1"
+    },
+    {
+      "id": "outage-region",
+      "query": "Which region hosts the fallback API cluster used during connectivity timeouts?",
+      "reference_answer": "The fallback API cluster is in the AWS us-east-1 region.",
+      "expected_sources": ["API Outage Remediation Steps (v1)"],
+      "category": "technical",
+      "risk_level": "medium",
+      "kb_version": "v1"
+    },
+    {
+      "id": "outage-cache",
+      "query": "What client-side action is required after API routing switches to the fallback cluster?",
+      "reference_answer": "Clear client caches after the routing switch to restore service.",
+      "expected_sources": ["API Outage Remediation Steps (v1)"],
+      "category": "technical",
+      "risk_level": "low",
+      "kb_version": "v1"
+    },
+    {
+      "id": "account-navigation",
+      "query": "Where do I go to update my customer account preferences?",
+      "reference_answer": "Navigate to Settings, then Preferences, then Profile.",
+      "expected_sources": ["User Account Profile Settings (v1)"],
+      "category": "general",
+      "risk_level": "low",
+      "kb_version": "v1"
+    },
+    {
+      "id": "account-email",
+      "query": "How do I update and verify the email address in my account profile?",
+      "reference_answer": "Update the verification email under Settings, Preferences, Profile, then click the validation link sent to the inbox.",
+      "expected_sources": ["User Account Profile Settings (v1)"],
+      "category": "general",
+      "risk_level": "low",
+      "kb_version": "v1"
+    },
+    {
+      "id": "account-api-access",
+      "query": "What must I do before API key access is enabled for my account?",
+      "reference_answer": "Click the validation link sent to the verification email inbox to enable API key access.",
+      "expected_sources": ["User Account Profile Settings (v1)"],
+      "category": "general",
+      "risk_level": "medium",
+      "kb_version": "v1"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ from typing import Dict, Any
 from src.rag.vector_store import vector_store
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 from src.observability.tracing import get_tracer, set_span_attributes
+from src.observability.langsmith_tracing import traceable
 
 logger = logging.getLogger("supportgpt.agents.retriever")
 tracer = get_tracer(__name__)
@@ -14,6 +15,7 @@ class KnowledgeRetrievalAgent:
     Retrieves supporting context, documentation guides, policies, and FAQs 
     from the vector database.
     """
+    @traceable(name="supportgpt.rag.hybrid_retriever", run_type="retriever")
     async def retrieve(self, state: Dict[str, Any]) -> Dict[str, Any]:
         start_time = time.time()
         logger.info(f"Retriever Node started for version: {state.get('kb_version')}")

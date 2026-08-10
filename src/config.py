@@ -36,6 +36,12 @@ class Settings(BaseSettings):
 
     # Observability
     PROMETHEUS_METRICS_ENABLED: bool = Field(default=True)
+    LANGSMITH_TRACING: bool = Field(default=False)
+    LANGSMITH_API_KEY: Optional[str] = Field(default=None)
+    LANGSMITH_PROJECT: str = Field(default="supportgpt-enterprise")
+    LANGSMITH_ENDPOINT: str = Field(default="https://api.smith.langchain.com")
+    LANGSMITH_WORKSPACE_ID: Optional[str] = Field(default=None)
+    # Legacy LangChain names remain supported for backwards compatibility.
     LANGCHAIN_TRACING_V2: bool = Field(default=False)
     LANGCHAIN_API_KEY: Optional[str] = Field(default=None)
     LANGCHAIN_PROJECT: str = Field(default="supportgpt-enterprise")

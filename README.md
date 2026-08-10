@@ -20,10 +20,10 @@ For a quick summary of the capabilities supported by this repository, please rev
 |---|---|---|---|
 | **Multi-Agent** | Intent classification, RAG retrieval, resolution drafting, QA verification, SLA routing | LangGraph, LangChain | [Agent Architecture](docs/AGENT_ARCHITECTURE.md) |
 | **RAG Pipeline** | Versioning, chunking splitters, hybrid vector search, source citations | ChromaDB, PyPDF2, BeautifulSoup | [RAG Architecture](docs/RAG_ARCHITECTURE.md) |
-| **Observability** | Request latency tracking, tokens tracking, USD pricing estimates | Prometheus, OpenTelemetry, Grafana | [Architecture Overview](ARCHITECTURE.md) |
+| **Observability** | Workflow/LLM/Retriever/Tool traces, latency, tokens, USD estimates | LangSmith, OpenTelemetry, Prometheus | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
 | **AI Guardrails** | PII scrubbing, injection detection, jailbreak blocks, output leak filters | Regex, String heuristic checks | [Security Guide](docs/SECURITY_GUIDE.md) |
 | **HITL Approval** | Staging drafts, agent modifications, approval history, review latency checks | FastAPI, SQLAlchemy, PostgreSQL | [System Design](SYSTEM_DESIGN.md) |
-| **Evaluation** | Faithfulness, context recall, answer relevance, hallucination rate | Ragas, DeepEval | [Testing Guide](docs/TESTING_GUIDE.md) |
+| **Evaluation** | Golden dataset, Faithfulness, Answer Relevancy, Context Precision/Recall | Ragas, DeepEval | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
 
 ---
 
@@ -125,6 +125,13 @@ python -m compileall src tests
 pytest tests/test_agents.py tests/test_rag.py -q
 ```
 Optional evaluation and load-test dependencies are split into `requirements/eval.txt` and `requirements/load.txt`. For details, see our [Testing Guide](docs/TESTING_GUIDE.md).
+
+Run the independent phase-1 Agent/RAG evaluation after seeding the knowledge base:
+
+```bash
+pip install -r requirements/eval.txt
+python scripts/run_agent_eval.py --engine ragas
+```
 
 ---
 

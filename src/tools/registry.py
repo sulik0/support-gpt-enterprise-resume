@@ -9,6 +9,7 @@ from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
 from src.observability.tracing import get_tracer, set_span_attributes
+from src.observability.langsmith_tracing import traceable
 
 
 ROLE_RANK = {
@@ -68,6 +69,7 @@ class ToolRegistry:
     def get_audit_log(self) -> List[Dict[str, Any]]:
         return list(self._audit_log)
 
+    @traceable(name="supportgpt.tool.call", run_type="tool")
     async def call_tool(
         self,
         name: str,
