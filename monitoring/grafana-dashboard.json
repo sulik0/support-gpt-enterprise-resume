@@ -1,78 +1,99 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": {"list": []},
   "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "id": 1,
-  "links": [],
-  "liveNow": false,
+  "graphTooltip": 1,
   "panels": [
     {
-      "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "id": 101,
-      "title": "Estimated LLM Cumulative Cost",
+      "id": 1,
+      "title": "Agent Request Rate",
       "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
       "targets": [
-        {
-          "expr": "sum(llm_cost_total)",
-          "legendFormat": "Cost USD",
-          "refId": "A"
-        }
+        {"expr": "sum by (status) (rate(agent_requests_total[5m]))", "legendFormat": "{{status}}", "refId": "A"}
       ]
     },
     {
-      "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "id": 102,
-      "title": "HTTP Requests Total by Status",
+      "id": 2,
+      "title": "Agent Node P95 Latency",
       "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
       "targets": [
-        {
-          "expr": "sum by (status) (http_requests_total)",
-          "legendFormat": "Status {{status}}",
-          "refId": "A"
-        }
+        {"expr": "histogram_quantile(0.95, sum by (le, node) (rate(agent_node_duration_seconds_bucket[5m])))", "legendFormat": "{{node}}", "refId": "A"}
       ]
     },
     {
-      "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "id": 103,
-      "title": "LLM Tokens Consumed",
+      "id": 3,
+      "title": "HTTP P95 Latency",
       "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
       "targets": [
-        {
-          "expr": "sum by (type) (llm_tokens_total)",
-          "legendFormat": "Token {{type}}",
-          "refId": "A"
-        }
+        {"expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(http_request_duration_seconds_bucket[5m])))", "legendFormat": "{{endpoint}}", "refId": "A"}
       ]
     },
     {
-      "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "id": 104,
-      "title": "Guardrail Violations Counter",
+      "id": 4,
+      "title": "LLM Token Rate",
       "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
       "targets": [
-        {
-          "expr": "sum by (guardrail_type) (guardrail_violations_total)",
-          "legendFormat": "Scrubbed {{guardrail_type}}",
-          "refId": "A"
-        }
+        {"expr": "sum by (type) (rate(llm_tokens_total[5m]))", "legendFormat": "{{type}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Tool Call Success Rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}},
+      "targets": [
+        {"expr": "sum by (tool_name) (rate(agent_tool_calls_total{status=\"success\"}[5m])) / clamp_min(sum by (tool_name) (rate(agent_tool_calls_total[5m])), 0.000001)", "legendFormat": "{{tool_name}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "QA Score P50 / P95",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(qa_score_ratio_bucket[5m])))", "legendFormat": "P50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(qa_score_ratio_bucket[5m])))", "legendFormat": "P95", "refId": "B"}
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Guardrail Blocks",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+      "targets": [
+        {"expr": "sum by (guardrail_type) (increase(guardrail_violations_total[1h]))", "legendFormat": "{{guardrail_type}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Human Approval Events",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+      "targets": [
+        {"expr": "sum by (status) (increase(human_approvals_total[1h]))", "legendFormat": "{{status}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Collector Export Failures",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+      "targets": [
+        {"expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_spans_total[5m]))", "legendFormat": "{{exporter}}", "refId": "A"}
       ]
     }
   ],
-  "schemaVersion": 38,
-  "style": "dark",
-  "tags": ["telemetry", "llm"],
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
-  "title": "SupportGPT Telemetry Insights",
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["supportgpt", "agent", "observability"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "SupportGPT Agent Observability",
+  "uid": "supportgpt-observability",
   "version": 1
 }

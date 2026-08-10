@@ -34,7 +34,7 @@ def test_trace_sanitizer_redacts_secrets_and_pii():
 
     assert "alice@example.com" not in sanitized["message"]
     assert "138 0013 8000" not in sanitized["message"]
-    assert sanitized["api_key"] == "[REDACTED]"
+    assert sanitized["api_key"] == "[FILTERED]"
 
 
 @pytest.mark.asyncio

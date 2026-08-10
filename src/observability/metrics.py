@@ -33,7 +33,7 @@ HTTP_REQUEST_DURATION_SECONDS = safe_register(
 LLM_TOKENS_TOTAL = safe_register(
     Counter, "llm_tokens_total",
     "Total tokens consumed by LLM transactions",
-    ["model", "type"]  # type: input, output
+    ["model", "type"]  # input, output
 )
 
 LLM_COST_TOTAL = safe_register(
@@ -59,6 +59,42 @@ AGENT_EXECUTION_COUNT = safe_register(
     Counter, "agent_execution_total",
     "Total agent executions count",
     ["agent_name", "status"]
+)
+
+AGENT_REQUESTS_TOTAL = safe_register(
+    Counter, "agent_requests_total",
+    "Total end-to-end Agent workflow requests",
+    ["status"]
+)
+
+AGENT_NODE_EXECUTIONS_TOTAL = safe_register(
+    Counter, "agent_node_executions_total",
+    "Total Agent node executions",
+    ["node", "status"]
+)
+
+AGENT_NODE_DURATION_SECONDS = safe_register(
+    Histogram, "agent_node_duration_seconds",
+    "Agent node execution duration in seconds",
+    ["node"]
+)
+
+TOOL_CALLS_TOTAL = safe_register(
+    Counter, "agent_tool_calls_total",
+    "Total ToolRegistry calls by tool and result status",
+    ["tool_name", "status"]
+)
+
+TOOL_CALL_DURATION_SECONDS = safe_register(
+    Histogram, "agent_tool_call_duration_seconds",
+    "ToolRegistry call duration in seconds",
+    ["tool_name"]
+)
+
+HUMAN_APPROVALS_TOTAL = safe_register(
+    Counter, "human_approvals_total",
+    "Total human approval workflow events",
+    ["status"]
 )
 
 # Business-level metrics

@@ -9,6 +9,7 @@ from src.models.db_models import ResponseApproval, Ticket
 from src.models.schemas import ResponseApprovalRequest
 from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine
 from src.observability.tracing import get_tracer, set_span_attributes
+from src.observability.metrics import HUMAN_APPROVALS_TOTAL
 
 logger = logging.getLogger("supportgpt.approval.workflows")
 tracer = get_tracer(__name__)
@@ -62,6 +63,10 @@ class HumanInTheLoopService:
         db.add(approval)
         await db.commit()
         await db.refresh(approval)
+        try:
+            HUMAN_APPROVALS_TOTAL.labels(status="created").inc()
+        except Exception:
+            logger.debug("Unable to record human approval creation metric")
         logger.info(f"Created pending approval ID {approval.id} for ticket ID {ticket_id}")
         return approval
 
@@ -153,6 +158,10 @@ class HumanInTheLoopService:
 
         await db.commit()
         await db.refresh(approval)
+        try:
+            HUMAN_APPROVALS_TOTAL.labels(status=req.status).inc()
+        except Exception:
+            logger.debug("Unable to record human approval result metric")
         logger.info(f"Processed approval ID {approval_id} with status {req.status} by agent {agent_id}.")
         return approval
 

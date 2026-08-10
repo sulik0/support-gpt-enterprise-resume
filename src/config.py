@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     LANGCHAIN_API_KEY: Optional[str] = Field(default=None)
     LANGCHAIN_PROJECT: str = Field(default="supportgpt-enterprise")
 
+    # OpenTelemetry
+    OTEL_ENABLED: bool = Field(default=True)
+    OTEL_SERVICE_NAME: str = Field(default="supportgpt-backend")
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Optional[str] = Field(default=None)
+    OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS: float = Field(default=3.0)
+    OTEL_CONSOLE_EXPORTER: bool = Field(default=False)
+    OTEL_TRACE_SAMPLE_RATIO: float = Field(default=1.0, ge=0.0, le=1.0)
+    OTEL_EXCLUDED_URLS: str = Field(default="health,metrics")
+
     # Guardrails Settings
     PII_ANONYMIZATION_ENABLED: bool = Field(default=True)
     PROMPT_INJECTION_PROTECTION_ENABLED: bool = Field(default=True)

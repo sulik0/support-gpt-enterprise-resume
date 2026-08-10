@@ -1,5 +1,6 @@
 import time
 import datetime
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +10,7 @@ from sqlalchemy.future import select
 from prometheus_client import make_asgi_app
 
 from src.config import settings
-from src.database import init_db, get_db
+from src.database import engine, init_db, get_db
 from src.models.db_models import User, Ticket, SessionMemory, ResponseApproval
 from src.models.schemas import (
     UserCreate, UserResponse, LoginRequest, Token,
@@ -30,11 +31,31 @@ from src.tools.ticketing import ticketing_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.memory.redis_memory import redis_memory
 from src.tickets.state_machine import TicketAction, ticket_state_machine
-from src.observability.tracing import get_tracer, init_tracing, set_span_attributes
+from src.observability.instrumentation import instrument_dependencies
+from src.observability.tracing import (
+    bind_request_id,
+    get_current_trace_id,
+    get_tracer,
+    init_tracing,
+    reset_request_id,
+    set_span_attributes,
+)
 from src.observability.metrics import HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
 from src.evaluation.framework import run_deeval_evaluation
 
 tracer = get_tracer(__name__)
+
+
+def _record_http_metrics(method: str, endpoint: str, status_code: str, duration: float) -> None:
+    try:
+        HTTP_REQUESTS_TOTAL.labels(
+            method=method, endpoint=endpoint, status=status_code
+        ).inc()
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=method, endpoint=endpoint
+        ).observe(duration)
+    except Exception:
+        return
 
 # --- FastAPI Lifespan Handler ---
 @asynccontextmanager
@@ -76,35 +97,47 @@ async def track_http_telemetry(request: Request, call_next):
     if endpoint == "/metrics" or endpoint == "/health":
         return await call_next(request)
         
-    with tracer.start_as_current_span(f"api.{method} {endpoint}") as span:
-        set_span_attributes(
-            span,
-            {
-                "http.method": method,
-                "http.route": endpoint,
-                "http.target": str(request.url),
-            },
-        )
-        try:
-            response = await call_next(request)
-            status_code = str(response.status_code)
-
-            duration = time.time() - start_time
-            HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status=status_code).inc()
-            HTTP_REQUEST_DURATION_SECONDS.labels(method=method, endpoint=endpoint).observe(duration)
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    request_token = bind_request_id(request_id)
+    try:
+        with tracer.start_as_current_span(f"api.{method} {endpoint}") as span:
             set_span_attributes(
                 span,
                 {
-                    "http.status_code": response.status_code,
-                    "http.duration_seconds": round(duration, 4),
+                    "http.method": method,
+                    "http.route": endpoint,
+                    "http.target": endpoint,
+                    "request.id": request_id,
                 },
             )
+            try:
+                response = await call_next(request)
+                status_code = str(response.status_code)
 
-            return response
-        except Exception as e:
-            HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status="500").inc()
-            set_span_attributes(span, {"http.status_code": 500, "error": str(e)})
-            raise e
+                duration = time.time() - start_time
+                _record_http_metrics(method, endpoint, status_code, duration)
+                set_span_attributes(
+                    span,
+                    {
+                        "http.status_code": response.status_code,
+                        "http.duration_seconds": round(duration, 4),
+                    },
+                )
+                response.headers["X-Request-ID"] = request_id
+                trace_id = get_current_trace_id()
+                if trace_id:
+                    response.headers["X-Trace-ID"] = trace_id
+                return response
+            except Exception as e:
+                _record_http_metrics(method, endpoint, "500", time.time() - start_time)
+                set_span_attributes(span, {"http.status_code": 500, "error": str(e)})
+                raise
+    finally:
+        reset_request_id(request_token)
+
+
+# Auto-instrument infrastructure once; each integration fails open when unavailable.
+instrument_dependencies(app, engine)
 
 # --- AUTH ENDPOINTS ---
 @app.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

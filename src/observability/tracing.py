@@ -1,9 +1,16 @@
 import os
 import logging
-from typing import Any, Dict
+from contextvars import ContextVar, Token
+from typing import Any, Dict, Optional
+
 from src.config import settings
+from src.observability.sanitization import sanitize_attributes, redact_text
 
 logger = logging.getLogger("supportgpt.observability.tracing")
+_initialized = False
+_request_id_context: ContextVar[Optional[str]] = ContextVar(
+    "supportgpt_request_id", default=None
+)
 
 
 def get_tracer(name: str = "supportgpt"):
@@ -13,16 +20,61 @@ def get_tracer(name: str = "supportgpt"):
 
 
 def set_span_attributes(span: Any, attributes: Dict[str, Any]) -> None:
-    for key, value in attributes.items():
-        if value is None:
-            continue
-        if isinstance(value, (str, bool, int, float)):
-            span.set_attribute(key, value)
-        else:
-            span.set_attribute(key, str(value))
+    """Set sanitized attributes without allowing telemetry to break business code."""
+    try:
+        span.set_attributes(sanitize_attributes(attributes))
+    except Exception as exc:
+        logger.debug("Unable to attach span attributes: %s", exc)
+
+
+def bind_request_id(request_id: str) -> Token:
+    return _request_id_context.set(redact_text(request_id)[:128])
+
+
+def reset_request_id(token: Token) -> None:
+    try:
+        _request_id_context.reset(token)
+    except Exception:
+        return
+
+
+def get_request_id() -> Optional[str]:
+    return _request_id_context.get()
+
+
+def get_current_trace_id() -> Optional[str]:
+    try:
+        from opentelemetry import trace
+
+        context = trace.get_current_span().get_span_context()
+        if context and context.is_valid:
+            return format(context.trace_id, "032x")
+    except Exception:
+        return None
+    return None
+
+
+def mark_span_error(span: Any, error: BaseException) -> None:
+    """Record a sanitized exception while preserving the original exception flow."""
+    try:
+        from opentelemetry.trace import Status, StatusCode
+
+        safe_message = redact_text(str(error))[:256]
+        span.add_event(
+            "exception",
+            {
+                "exception.type": error.__class__.__name__,
+                "exception.message": safe_message,
+                "exception.escaped": True,
+            },
+        )
+        span.set_status(Status(StatusCode.ERROR, safe_message))
+    except Exception:
+        return
 
 def init_tracing() -> None:
     """Initialize OpenTelemetry and LangChain LangSmith tracing settings."""
+    global _initialized
     # LangSmith config
     langsmith_enabled = settings.LANGSMITH_TRACING or settings.LANGCHAIN_TRACING_V2
     if settings.LANGSMITH_TRACING:
@@ -50,16 +102,52 @@ def init_tracing() -> None:
         os.environ["LANGCHAIN_TRACING_V2"] = "false"
         logger.info("LangSmith tracing is disabled.")
 
-    # OpenTelemetry config (simulated hook or basic setup)
+    if _initialized or not settings.OTEL_ENABLED:
+        return
+
+    # OpenTelemetry SDK initialization is deliberately fail-open.
     try:
         from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
-        provider = TracerProvider()
-        processor = BatchSpanProcessor(ConsoleSpanExporter())
-        provider.add_span_processor(processor)
-        trace.set_tracer_provider(provider)
-        logger.info("OpenTelemetry TracerProvider initialized with Console Exporter.")
+        current_provider = trace.get_tracer_provider()
+        if isinstance(current_provider, TracerProvider):
+            provider = current_provider
+        else:
+            provider = TracerProvider(
+                resource=Resource.create(
+                    {
+                        "service.name": settings.OTEL_SERVICE_NAME,
+                        "service.version": "1.0.0",
+                        "deployment.environment": settings.APP_ENV,
+                    }
+                ),
+                sampler=ParentBased(TraceIdRatioBased(settings.OTEL_TRACE_SAMPLE_RATIO)),
+            )
+            trace.set_tracer_provider(provider)
+
+        if settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+            provider.add_span_processor(
+                BatchSpanProcessor(
+                    OTLPSpanExporter(
+                        endpoint=settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+                        timeout=settings.OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS,
+                    )
+                )
+            )
+        if settings.OTEL_CONSOLE_EXPORTER:
+            provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
+        _initialized = True
+        logger.info(
+            "OpenTelemetry initialized: service=%s, otlp=%s",
+            settings.OTEL_SERVICE_NAME,
+            bool(settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
+        )
     except Exception as e:
-        logger.warning(f"Could not initialize OpenTelemetry exporter: {e}")
+        logger.warning("Could not initialize OpenTelemetry exporter: %s", e)

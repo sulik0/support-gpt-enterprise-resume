@@ -10,6 +10,7 @@ from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
 from src.observability.tracing import get_tracer, set_span_attributes
 from src.observability.langsmith_tracing import traceable
+from src.observability.metrics import TOOL_CALLS_TOTAL, TOOL_CALL_DURATION_SECONDS
 
 
 ROLE_RANK = {
@@ -211,6 +212,13 @@ class ToolRegistry:
             "error": error,
         }
         self._audit_log.append(record)
+        try:
+            TOOL_CALLS_TOTAL.labels(tool_name=name, status=status).inc()
+            TOOL_CALL_DURATION_SECONDS.labels(tool_name=name).observe(
+                record["latency_ms"] / 1000.0
+            )
+        except Exception:
+            pass
         return {**record, "result": result}
 
 

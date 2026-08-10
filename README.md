@@ -20,7 +20,7 @@ For a quick summary of the capabilities supported by this repository, please rev
 |---|---|---|---|
 | **Multi-Agent** | Intent classification, RAG retrieval, resolution drafting, QA verification, SLA routing | LangGraph, LangChain | [Agent Architecture](docs/AGENT_ARCHITECTURE.md) |
 | **RAG Pipeline** | Versioning, chunking splitters, hybrid vector search, source citations | ChromaDB, PyPDF2, BeautifulSoup | [RAG Architecture](docs/RAG_ARCHITECTURE.md) |
-| **Observability** | Workflow/LLM/Retriever/Tool traces, latency, tokens, USD estimates | LangSmith, OpenTelemetry, Prometheus | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
+| **Observability** | Workflow/LLM/Retriever/Tool traces, latency, tokens, USD estimates | LangSmith, OpenTelemetry, Prometheus | [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md) |
 | **AI Guardrails** | PII scrubbing, injection detection, jailbreak blocks, output leak filters | Regex, String heuristic checks | [Security Guide](docs/SECURITY_GUIDE.md) |
 | **HITL Approval** | Staging drafts, agent modifications, approval history, review latency checks | FastAPI, SQLAlchemy, PostgreSQL | [System Design](SYSTEM_DESIGN.md) |
 | **Evaluation** | Golden dataset, Faithfulness, Answer Relevancy, Context Precision/Recall | Ragas, DeepEval | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
@@ -115,6 +115,9 @@ When the stack is running, you can access monitoring panels:
 - **API Health**: [http://localhost:8000/health](http://localhost:8000/health)
 - **Prometheus Scraper**: [http://localhost:8000/metrics](http://localhost:8000/metrics)
 - **Prometheus Dashboard**: [http://localhost:9090](http://localhost:9090)
+- **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
+
+Phase 1 的 LangSmith + OpenTelemetry + Prometheus/Grafana 配置、指标和验收流程参见 [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md)。
 
 ---
 
