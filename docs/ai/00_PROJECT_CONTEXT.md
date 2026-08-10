@@ -40,14 +40,14 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 8. **Human-in-the-Loop**：对需要人工处理的草稿创建审批记录，支持通过、修改和拒绝。
 9. **工单状态机**：统一约束 `open`、`in_progress`、`pending_approval`、`resolved` 和 `closed` 的合法流转。
 10. **分层记忆**：SQL `SessionMemory` 保存持久化对话历史，Redis 作为可选短期快速存储，不可用时回退到 SQL。
-11. **可观测性**：暴露 Prometheus Metrics，并使用 OpenTelemetry Span 串联 API、Agent、RAG、Tool Calling 和 Approval。
+11. **可观测性**：使用 OpenTelemetry 统一采集 Trace 与 Metrics；Collector 将 Trace 转发 LangSmith，并通过 Prometheus exporter 提供指标，由 Grafana 展示。
 12. **离线评测适配**：提供 RAGAS、DeepEval 和本地确定性指标的统一评测入口。
 
 ## 技术栈
 
 | 层级 | 技术 | 当前用途 |
 |---|---|---|
-| API | Python、FastAPI、Pydantic | 异步 API、请求/响应 Schema、健康检查与 Metrics 端点 |
+| API | Python、FastAPI、Pydantic | 异步 API、请求/响应 Schema与健康检查 |
 | Agent 编排 | LangGraph | 编排 Analyzer、Tooling、Retriever、Resolver、QA 和 Escalation |
 | LLM | Mock LLM、OpenAI、Azure OpenAI | 默认 Mock 保证离线可复现；通过 `BaseLLMProvider` 适配外部模型 |
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
@@ -55,7 +55,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | RAG | ChromaDB、Embedding、Hybrid RAG | 知识库分块、版本/类别过滤、向量与词法混合召回、rerank |
 | 安全 | JWT、RBAC、Prompt Guardrails | API 鉴权、工具权限、PII 脱敏、Prompt Injection / Jailbreak 检测和输出过滤 |
 | 评测 | RAGAS、DeepEval、本地启发式指标 | Faithfulness、Context Precision / Recall、Answer Relevance 和 Hallucination Rate |
-| 可观测 | Prometheus、OpenTelemetry | 请求、Agent、token、成本、QA、Guardrail、Escalation Metrics 和请求级 Trace |
+| 可观测 | LangSmith、OpenTelemetry、Prometheus、Grafana | OTel 统一采集 Trace 与 Metrics；Collector 转发 Trace 并导出 Prometheus 指标 |
 | 交付 | Docker、Docker Compose、Kubernetes manifests | 本地组件编排和部署模板 |
 | 质量保障 | pytest、GitHub Actions | Python 3.11 编译检查与定向后端测试 |
 
@@ -68,7 +68,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 FastAPI
   |-- JWT / RBAC
   |-- Chat / Ticket / Approval / Evaluation API
-  |-- Prometheus Middleware + OpenTelemetry Trace
+  |-- OpenTelemetry Trace + Metrics
   |
   +--> LangGraph Agent Workflow
   |      |-- Analyzer + Guardrails
@@ -88,11 +88,13 @@ FastAPI
   `--> Redis（可选短期记忆）
 
 Observability
-  |-- Prometheus /metrics
-  `-- OpenTelemetry Console Exporter（当前默认）
+  |-- OpenTelemetry Collector
+  |     |-- Trace --> LangSmith
+  |     `-- Metrics --> Prometheus exporter
+  `-- Prometheus --> Grafana
 ```
 
-本地默认使用 SQLite、Mock LLM 和本地持久化 ChromaDB，Redis 不是强依赖。Docker Compose 编排 backend、PostgreSQL、Redis 和 Prometheus。当前 OpenTelemetry 默认输出到 Console Exporter，尚未在编排中接入 Jaeger、Tempo 或 OTLP Collector。
+本地默认使用 SQLite、Mock LLM 和本地持久化 ChromaDB，Redis 不是强依赖。Docker Compose 编排 backend、PostgreSQL、Redis、OpenTelemetry Collector、Prometheus 和 Grafana。应用通过 OTLP/HTTP 将 Trace 与 Metrics 发送到 Collector；后端不直接暴露 Prometheus `/metrics`。
 
 ## Agent 工作流
 

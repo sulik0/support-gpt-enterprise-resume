@@ -8,11 +8,13 @@ from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 
 logger = logging.getLogger("supportgpt.agents.resolver")
 
+
 class ResolutionAgent:
     """
-    Synthesizes historical context, customer problem description, and retrieved 
+    Synthesizes historical context, customer problem description, and retrieved
     KB citations to write a professional customer support message.
     """
+
     async def resolve(self, state: Dict[str, Any]) -> Dict[str, Any]:
         start_time = time.time()
         logger.info(f"Resolver Node started for ticket_id: {state.get('ticket_id')}")
@@ -28,8 +30,14 @@ class ResolutionAgent:
         # Build context prompt
         context_blocks = []
         for citation in citations:
-            context_blocks.append(f"Source: {citation.source}\nContent: {citation.text}")
-        kb_context = "\n\n".join(context_blocks) if context_blocks else "No relevant articles found in KB."
+            context_blocks.append(
+                f"Source: {citation.source}\nContent: {citation.text}"
+            )
+        kb_context = (
+            "\n\n".join(context_blocks)
+            if context_blocks
+            else "No relevant articles found in KB."
+        )
         business_context = (
             json.dumps(tool_context, default=str, ensure_ascii=False, indent=2)
             if tool_context
@@ -43,9 +51,7 @@ class ResolutionAgent:
         try:
             # Generate the text from LLM provider
             response_text, in_tok, out_tok = await llm_provider.generate_resolution(
-                subject=subject,
-                description=description,
-                context=combined_context
+                subject=subject, description=description, context=combined_context
             )
 
             # Update metrics
@@ -53,19 +59,19 @@ class ResolutionAgent:
             state["tokens_output"] = state.get("tokens_output", 0) + out_tok
 
             duration = time.time() - start_time
-            AGENT_EXECUTION_DURATION_SECONDS.labels(agent_name="resolution_agent").observe(duration)
+            AGENT_EXECUTION_DURATION_SECONDS.record(
+                duration, {"agent_name": "resolution_agent"}
+            )
 
-            return {
-                **state,
-                "suggested_response": response_text
-            }
+            return {**state, "suggested_response": response_text}
 
         except Exception as e:
             logger.error(f"Error formulating resolution in resolver: {e}")
             return {
                 **state,
                 "errors": state.get("errors", []) + [f"Resolver agent error: {str(e)}"],
-                "suggested_response": "I apologize, but I encountered an error while writing a resolution. Please escalate to a support manager."
+                "suggested_response": "I apologize, but I encountered an error while writing a resolution. Please escalate to a support manager.",
             }
+
 
 resolution_agent = ResolutionAgent()

@@ -24,6 +24,7 @@ from src.observability.langsmith_tracing import traceable
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
 
+
 class AgentState(TypedDict):
     request_id: str
     ticket_id: int
@@ -51,6 +52,7 @@ class AgentState(TypedDict):
     approval_required: bool
     errors: List[str]
 
+
 # --- Node Wrappers ---
 async def _run_node(
     node: str,
@@ -69,9 +71,9 @@ async def _run_node(
         raise
     finally:
         try:
-            AGENT_NODE_EXECUTIONS_TOTAL.labels(node=node, status=status).inc()
-            AGENT_NODE_DURATION_SECONDS.labels(node=node).observe(
-                time.perf_counter() - started
+            AGENT_NODE_EXECUTIONS_TOTAL.add(1, {"node": node, "status": status})
+            AGENT_NODE_DURATION_SECONDS.record(
+                time.perf_counter() - started, {"node": node}
             )
         except Exception:
             logger.debug("Unable to record metrics for Agent node %s", node)
@@ -82,25 +84,30 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
         set_span_attributes(span, _trace_attrs(state, node="analyzer"))
         return await _run_node("ticket_analyzer", ticket_analyzer_agent.analyze, state)
 
+
 async def retrieve_node(state: AgentState) -> Dict[str, Any]:
     with tracer.start_as_current_span("agent.retriever") as span:
         set_span_attributes(span, _trace_attrs(state, node="retriever"))
         return await _run_node("retriever", knowledge_retriever_agent.retrieve, state)
+
 
 async def tooling_node(state: AgentState) -> Dict[str, Any]:
     with tracer.start_as_current_span("agent.tooling") as span:
         set_span_attributes(span, _trace_attrs(state, node="tooling"))
         return await _run_node("tool_call", tooling_agent.enrich, state)
 
+
 async def resolve_node(state: AgentState) -> Dict[str, Any]:
     with tracer.start_as_current_span("agent.resolver") as span:
         set_span_attributes(span, _trace_attrs(state, node="resolver"))
         return await _run_node("llm_generation", resolution_agent.resolve, state)
 
+
 async def qa_node(state: AgentState) -> Dict[str, Any]:
     with tracer.start_as_current_span("agent.qa") as span:
         set_span_attributes(span, _trace_attrs(state, node="qa"))
         return await _run_node("qa", quality_assurance_agent.verify, state)
+
 
 async def escalate_node(state: AgentState) -> Dict[str, Any]:
     with tracer.start_as_current_span("agent.escalation") as span:
@@ -162,6 +169,7 @@ def create_agent_graph() -> StateGraph:
 
 compiled_graph = create_agent_graph()
 
+
 @traceable(name="supportgpt.langgraph.workflow", run_type="chain")
 async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -169,10 +177,12 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     Estimates latency, total tokens, and USD costs.
     """
     start_time = time.time()
-    
+
     # Initialize state fields if missing
     state_input: AgentState = {
-        "request_id": initial_state.get("request_id") or get_request_id() or "background",
+        "request_id": initial_state.get("request_id")
+        or get_request_id()
+        or "background",
         "ticket_id": initial_state.get("ticket_id", 0),
         "customer_id": initial_state.get("customer_id", ""),
         "subject": initial_state.get("subject", ""),
@@ -196,7 +206,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "cost_usd": 0.0,
         "latency_seconds": 0.0,
         "approval_required": False,
-        "errors": []
+        "errors": [],
     }
 
     logger.info(f"Invoking LangGraph flow for ticket ID {state_input['ticket_id']}")
@@ -205,12 +215,12 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
             set_span_attributes(span, _trace_attrs(state_input, node="workflow"))
             final_output = await compiled_graph.ainvoke(state_input)
         try:
-            AGENT_REQUESTS_TOTAL.labels(status="success").inc()
+            AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
         except Exception:
             logger.debug("Unable to record successful Agent request metric")
     except BaseException:
         try:
-            AGENT_REQUESTS_TOTAL.labels(status="error").inc()
+            AGENT_REQUESTS_TOTAL.add(1, {"status": "error"})
         except Exception:
             logger.debug("Unable to record failed Agent request metric")
         raise
@@ -219,7 +229,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     tokens_in = final_output.get("tokens_input", 0)
     tokens_out = final_output.get("tokens_output", 0)
     cost = calculate_llm_cost(settings.LLM_PROVIDER, tokens_in, tokens_out)
-    
+
     final_output["cost_usd"] = cost
     final_output["latency_seconds"] = round(time.time() - start_time, 4)
     span_attrs = {
@@ -229,25 +239,36 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "llm.cost_usd": cost,
         "agent.latency_seconds": final_output["latency_seconds"],
         "agent.approval_required": final_output.get("approval_required", False),
-        "agent.escalation_recommended": final_output.get("escalation_recommended", False),
+        "agent.escalation_recommended": final_output.get(
+            "escalation_recommended", False
+        ),
     }
 
     # Determine if human approval is required
     # Escalation needed or low QA score triggers approval
-    if final_output.get("escalation_recommended") or final_output.get("qa_score", 1.0) < 0.8:
-         final_output["approval_required"] = True
-         span_attrs["agent.approval_required"] = True
+    if (
+        final_output.get("escalation_recommended")
+        or final_output.get("qa_score", 1.0) < 0.8
+    ):
+        final_output["approval_required"] = True
+        span_attrs["agent.approval_required"] = True
 
     with tracer.start_as_current_span("agent.workflow.summary") as span:
         set_span_attributes(span, span_attrs)
 
-    # Record Prometheus telemetry metrics
+    # Record OpenTelemetry usage metrics.
     try:
-        LLM_TOKENS_TOTAL.labels(model=settings.LLM_PROVIDER, type="input").inc(tokens_in)
-        LLM_TOKENS_TOTAL.labels(model=settings.LLM_PROVIDER, type="output").inc(tokens_out)
-        LLM_COST_TOTAL.labels(model=settings.LLM_PROVIDER).inc(cost)
+        LLM_TOKENS_TOTAL.add(
+            tokens_in, {"model": settings.LLM_PROVIDER, "type": "input"}
+        )
+        LLM_TOKENS_TOTAL.add(
+            tokens_out, {"model": settings.LLM_PROVIDER, "type": "output"}
+        )
+        LLM_COST_TOTAL.add(cost, {"model": settings.LLM_PROVIDER})
     except Exception:
         logger.debug("Unable to record LLM usage metrics")
 
-    logger.info(f"LangGraph completed in {final_output['latency_seconds']}s. Cost: ${final_output['cost_usd']}.")
+    logger.info(
+        f"LangGraph completed in {final_output['latency_seconds']}s. Cost: ${final_output['cost_usd']}."
+    )
     return final_output

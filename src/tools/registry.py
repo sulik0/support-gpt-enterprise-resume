@@ -213,9 +213,9 @@ class ToolRegistry:
         }
         self._audit_log.append(record)
         try:
-            TOOL_CALLS_TOTAL.labels(tool_name=name, status=status).inc()
-            TOOL_CALL_DURATION_SECONDS.labels(tool_name=name).observe(
-                record["latency_ms"] / 1000.0
+            TOOL_CALLS_TOTAL.add(1, {"tool_name": name, "status": status})
+            TOOL_CALL_DURATION_SECONDS.record(
+                record["latency_ms"] / 1000.0, {"tool_name": name}
             )
         except Exception:
             pass
@@ -276,7 +276,9 @@ tool_registry.register(
 
 def mock_refund_eligibility_check(customer_id: str, order_id: str) -> Dict[str, Any]:
     orders = order_mgmt_tool.get_order_history(customer_id)
-    matched_order = next((order for order in orders if order.get("order_id") == order_id), None)
+    matched_order = next(
+        (order for order in orders if order.get("order_id") == order_id), None
+    )
     if not matched_order:
         return {
             "customer_id": customer_id,

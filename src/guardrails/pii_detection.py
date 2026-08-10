@@ -4,9 +4,12 @@ from src.observability.metrics import GUARDRAIL_VIOLATIONS_TOTAL
 
 # Regular expressions for common PII
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-PHONE_REGEX = re.compile(r"\b(?:\+?(\d{1,3}))?[-. (]*(\d{3})[-. )]*(\d{3})[-. ]*(\d{4})\b|\b\d{3}[-.]\d{4}\b")
+PHONE_REGEX = re.compile(
+    r"\b(?:\+?(\d{1,3}))?[-. (]*(\d{3})[-. )]*(\d{3})[-. ]*(\d{4})\b|\b\d{3}[-.]\d{4}\b"
+)
 SSN_REGEX = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 CREDIT_CARD_REGEX = re.compile(r"\b(?:\d[ -]*?){13,16}\b")
+
 
 def anonymize_pii(text: str) -> str:
     """
@@ -17,7 +20,7 @@ def anonymize_pii(text: str) -> str:
         return text
 
     anonymized = text
-    
+
     # Track violations for prometheus
     violations_detected = False
 
@@ -38,6 +41,6 @@ def anonymize_pii(text: str) -> str:
         violations_detected = True
 
     if violations_detected:
-        GUARDRAIL_VIOLATIONS_TOTAL.labels(guardrail_type="pii").inc()
+        GUARDRAIL_VIOLATIONS_TOTAL.add(1, {"guardrail_type": "pii"})
 
     return anonymized

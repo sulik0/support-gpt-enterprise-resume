@@ -12,8 +12,9 @@ JAILBREAK_SIGNATURES = [
     "unfiltered model",
     "unlocked model",
     "root access",
-    "run in sandbox mode"
+    "run in sandbox mode",
 ]
+
 
 def detect_jailbreak(text: str) -> bool:
     """
@@ -27,7 +28,7 @@ def detect_jailbreak(text: str) -> bool:
     for signature in JAILBREAK_SIGNATURES:
         if signature in text_lower:
             # Increment prometheus counter
-            GUARDRAIL_VIOLATIONS_TOTAL.labels(guardrail_type="jailbreak").inc()
+            GUARDRAIL_VIOLATIONS_TOTAL.add(1, {"guardrail_type": "jailbreak"})
             return True
 
     return False

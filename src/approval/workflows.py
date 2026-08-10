@@ -14,15 +14,14 @@ from src.observability.metrics import HUMAN_APPROVALS_TOTAL
 logger = logging.getLogger("supportgpt.approval.workflows")
 tracer = get_tracer(__name__)
 
+
 class HumanInTheLoopService:
     """
     Manages AI response validation, edits, approvals, and latency tracking.
     """
+
     async def create_pending_approval(
-        self, 
-        db: AsyncSession, 
-        ticket_id: int, 
-        drafted_response: str
+        self, db: AsyncSession, ticket_id: int, drafted_response: str
     ) -> ResponseApproval:
         """Create a pending response approval ticket."""
         with tracer.start_as_current_span("approval.create_pending") as span:
@@ -34,7 +33,9 @@ class HumanInTheLoopService:
                     "approval.draft_length": len(drafted_response or ""),
                 },
             )
-            approval = await self._create_pending_approval_impl(db, ticket_id, drafted_response)
+            approval = await self._create_pending_approval_impl(
+                db, ticket_id, drafted_response
+            )
             set_span_attributes(span, {"approval.id": approval.id})
             return approval
 
@@ -58,29 +59,33 @@ class HumanInTheLoopService:
             ticket_id=ticket_id,
             drafted_response=drafted_response,
             status="pending",
-            created_at=datetime.datetime.utcnow()
+            created_at=datetime.datetime.utcnow(),
         )
         db.add(approval)
         await db.commit()
         await db.refresh(approval)
         try:
-            HUMAN_APPROVALS_TOTAL.labels(status="created").inc()
+            HUMAN_APPROVALS_TOTAL.add(1, {"status": "created"})
         except Exception:
             logger.debug("Unable to record human approval creation metric")
-        logger.info(f"Created pending approval ID {approval.id} for ticket ID {ticket_id}")
+        logger.info(
+            f"Created pending approval ID {approval.id} for ticket ID {ticket_id}"
+        )
         return approval
 
     async def get_pending_approvals(self, db: AsyncSession) -> list[ResponseApproval]:
         """Fetch all response approvals currently pending review."""
-        result = await db.execute(select(ResponseApproval).filter(ResponseApproval.status == "pending"))
+        result = await db.execute(
+            select(ResponseApproval).filter(ResponseApproval.status == "pending")
+        )
         return list(result.scalars().all())
 
     async def process_agent_approval(
-        self, 
-        db: AsyncSession, 
-        approval_id: int, 
+        self,
+        db: AsyncSession,
+        approval_id: int,
         agent_id: int,
-        req: ResponseApprovalRequest
+        req: ResponseApprovalRequest,
     ) -> ResponseApproval:
         """
         Approve, reject, or edit an AI draft.
@@ -96,7 +101,9 @@ class HumanInTheLoopService:
                     "approval.modified": bool(req.modified_response),
                 },
             )
-            approval = await self._process_agent_approval_impl(db, approval_id, agent_id, req)
+            approval = await self._process_agent_approval_impl(
+                db, approval_id, agent_id, req
+            )
             set_span_attributes(
                 span,
                 {
@@ -114,19 +121,21 @@ class HumanInTheLoopService:
         agent_id: int,
         req: ResponseApprovalRequest,
     ) -> ResponseApproval:
-        result = await db.execute(select(ResponseApproval).filter(ResponseApproval.id == approval_id))
+        result = await db.execute(
+            select(ResponseApproval).filter(ResponseApproval.id == approval_id)
+        )
         approval = result.scalars().first()
-        
+
         if not approval:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Approval record {approval_id} not found."
+                detail=f"Approval record {approval_id} not found.",
             )
-            
+
         if approval.status != "pending":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Approval record {approval_id} has already been processed (status: {approval.status})."
+                detail=f"Approval record {approval_id} has already been processed (status: {approval.status}).",
             )
 
         # Calculate latency in seconds
@@ -138,13 +147,15 @@ class HumanInTheLoopService:
         approval.status = req.status
         approval.agent_id = agent_id
         approval.latency_seconds = latency
-        
+
         if req.modified_response:
             approval.modified_response = req.modified_response
         else:
             approval.modified_response = approval.drafted_response
 
-        ticket_result = await db.execute(select(Ticket).filter(Ticket.id == approval.ticket_id))
+        ticket_result = await db.execute(
+            select(Ticket).filter(Ticket.id == approval.ticket_id)
+        )
         ticket = ticket_result.scalars().first()
         if ticket:
             if ticket.status in {TicketStatus.OPEN, TicketStatus.IN_PROGRESS}:
@@ -159,10 +170,13 @@ class HumanInTheLoopService:
         await db.commit()
         await db.refresh(approval)
         try:
-            HUMAN_APPROVALS_TOTAL.labels(status=req.status).inc()
+            HUMAN_APPROVALS_TOTAL.add(1, {"status": req.status})
         except Exception:
             logger.debug("Unable to record human approval result metric")
-        logger.info(f"Processed approval ID {approval_id} with status {req.status} by agent {agent_id}.")
+        logger.info(
+            f"Processed approval ID {approval_id} with status {req.status} by agent {agent_id}."
+        )
         return approval
+
 
 human_it_loop_service = HumanInTheLoopService()

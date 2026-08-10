@@ -1,128 +1,67 @@
-from prometheus_client import Counter, Histogram, Gauge, REGISTRY
-from src.config import settings
+"""Application metrics backed exclusively by the OpenTelemetry Metrics API."""
 
-# Prevent double registration of metrics if reloading
-def safe_register(metric_cls, name, *args, **kwargs):
-    try:
-        return metric_cls(name, *args, **kwargs)
-    except ValueError:
-        # If already registered, find in registry
-        for collector in REGISTRY._names_to_collectors.values():
-            if hasattr(collector, "_name") and collector._name == name:
-                return collector
-            # Gauge/Counter names might map slightly differently
-            if name in REGISTRY._names_to_collectors:
-                return REGISTRY._names_to_collectors[name]
-        # Fallback to recreate if anything fails
-        return metric_cls(name, *args, **kwargs)
+from opentelemetry import metrics
 
-# HTTP metrics
-HTTP_REQUESTS_TOTAL = safe_register(
-    Counter, "http_requests_total",
-    "Total HTTP requests received",
-    ["method", "endpoint", "status"]
+
+meter = metrics.get_meter("supportgpt.observability.metrics", "1.0.0")
+
+# Counter names omit ``_total`` because the Collector Prometheus exporter adds
+# the conventional suffix when translating OpenTelemetry monotonic sums.
+HTTP_REQUESTS_TOTAL = meter.create_counter(
+    "http_requests", description="Total HTTP requests received"
 )
-
-HTTP_REQUEST_DURATION_SECONDS = safe_register(
-    Histogram, "http_request_duration_seconds",
-    "HTTP request duration in seconds",
-    ["method", "endpoint"]
+HTTP_REQUEST_DURATION_SECONDS = meter.create_histogram(
+    "http_request_duration_seconds", unit="s", description="HTTP request duration"
 )
-
-# LLM metrics
-LLM_TOKENS_TOTAL = safe_register(
-    Counter, "llm_tokens_total",
-    "Total tokens consumed by LLM transactions",
-    ["model", "type"]  # input, output
+LLM_TOKENS_TOTAL = meter.create_counter(
+    "llm_tokens", unit="{token}", description="Total tokens consumed by LLM calls"
 )
-
-LLM_COST_TOTAL = safe_register(
-    Counter, "llm_cost_total",
-    "Total estimated cost in USD of LLM transactions",
-    ["model"]
+LLM_COST_TOTAL = meter.create_counter(
+    "llm_cost", unit="USD", description="Total estimated LLM cost"
 )
-
-LLM_LATENCY_SECONDS = safe_register(
-    Histogram, "llm_latency_seconds",
-    "LLM API latency in seconds",
-    ["model", "operation"]
+LLM_LATENCY_SECONDS = meter.create_histogram(
+    "llm_latency_seconds", unit="s", description="LLM API latency"
 )
-
-# Agent Execution metrics
-AGENT_EXECUTION_DURATION_SECONDS = safe_register(
-    Histogram, "agent_execution_duration_seconds",
-    "Agent execution time in seconds",
-    ["agent_name"]
+AGENT_EXECUTION_DURATION_SECONDS = meter.create_histogram(
+    "agent_execution_duration_seconds", unit="s", description="Agent execution time"
 )
-
-AGENT_EXECUTION_COUNT = safe_register(
-    Counter, "agent_execution_total",
-    "Total agent executions count",
-    ["agent_name", "status"]
+AGENT_EXECUTION_COUNT = meter.create_counter(
+    "agent_execution", description="Total agent executions"
 )
-
-AGENT_REQUESTS_TOTAL = safe_register(
-    Counter, "agent_requests_total",
-    "Total end-to-end Agent workflow requests",
-    ["status"]
+AGENT_REQUESTS_TOTAL = meter.create_counter(
+    "agent_requests", description="Total end-to-end Agent workflow requests"
 )
-
-AGENT_NODE_EXECUTIONS_TOTAL = safe_register(
-    Counter, "agent_node_executions_total",
-    "Total Agent node executions",
-    ["node", "status"]
+AGENT_NODE_EXECUTIONS_TOTAL = meter.create_counter(
+    "agent_node_executions", description="Total Agent node executions"
 )
-
-AGENT_NODE_DURATION_SECONDS = safe_register(
-    Histogram, "agent_node_duration_seconds",
-    "Agent node execution duration in seconds",
-    ["node"]
+AGENT_NODE_DURATION_SECONDS = meter.create_histogram(
+    "agent_node_duration_seconds",
+    unit="s",
+    description="Agent node execution duration",
 )
-
-TOOL_CALLS_TOTAL = safe_register(
-    Counter, "agent_tool_calls_total",
-    "Total ToolRegistry calls by tool and result status",
-    ["tool_name", "status"]
+TOOL_CALLS_TOTAL = meter.create_counter(
+    "agent_tool_calls", description="Total ToolRegistry calls"
 )
-
-TOOL_CALL_DURATION_SECONDS = safe_register(
-    Histogram, "agent_tool_call_duration_seconds",
-    "ToolRegistry call duration in seconds",
-    ["tool_name"]
+TOOL_CALL_DURATION_SECONDS = meter.create_histogram(
+    "agent_tool_call_duration_seconds",
+    unit="s",
+    description="ToolRegistry call duration",
 )
-
-HUMAN_APPROVALS_TOTAL = safe_register(
-    Counter, "human_approvals_total",
-    "Total human approval workflow events",
-    ["status"]
+HUMAN_APPROVALS_TOTAL = meter.create_counter(
+    "human_approvals", description="Total human approval workflow events"
 )
-
-# Business-level metrics
-TICKET_SENTIMENT_TOTAL = safe_register(
-    Counter, "ticket_sentiment_total",
-    "Total processed tickets by detected sentiment",
-    ["sentiment"]
+TICKET_SENTIMENT_TOTAL = meter.create_counter(
+    "ticket_sentiment", description="Total processed tickets by sentiment"
 )
-
-TICKET_ESCALATIONS_TOTAL = safe_register(
-    Counter, "ticket_escalations_total",
-    "Total ticket escalations recommended",
-    ["department", "priority"]
+TICKET_ESCALATIONS_TOTAL = meter.create_counter(
+    "ticket_escalations", description="Total ticket escalations"
 )
-
-ACTIVE_SESSIONS = safe_register(
-    Gauge, "active_sessions_count",
-    "Number of active user sessions in memory"
+ACTIVE_SESSIONS = meter.create_up_down_counter(
+    "active_sessions_count", description="Number of active user sessions in memory"
 )
-
-QA_SCORE_HISTOGRAM = safe_register(
-    Histogram, "qa_score_ratio",
-    "Distribution of quality assurance scores",
-    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+QA_SCORE_HISTOGRAM = meter.create_histogram(
+    "qa_score_ratio", description="Distribution of quality assurance scores"
 )
-
-GUARDRAIL_VIOLATIONS_TOTAL = safe_register(
-    Counter, "guardrail_violations_total",
-    "Total guardrail violations caught",
-    ["guardrail_type"] # pii, prompt_injection, jailbreak, response_filter
+GUARDRAIL_VIOLATIONS_TOTAL = meter.create_counter(
+    "guardrail_violations", description="Total guardrail violations"
 )

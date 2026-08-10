@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
+
 class Settings(BaseSettings):
     # API Settings
     APP_NAME: str = Field(default="SupportGPT-Enterprise")
@@ -35,7 +36,6 @@ class Settings(BaseSettings):
     CHROMA_PORT: Optional[int] = Field(default=None)
 
     # Observability
-    PROMETHEUS_METRICS_ENABLED: bool = Field(default=True)
     LANGSMITH_TRACING: bool = Field(default=False)
     LANGSMITH_API_KEY: Optional[str] = Field(default=None)
     LANGSMITH_PROJECT: str = Field(default="supportgpt-enterprise")
@@ -50,10 +50,12 @@ class Settings(BaseSettings):
     OTEL_ENABLED: bool = Field(default=True)
     OTEL_SERVICE_NAME: str = Field(default="supportgpt-backend")
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Optional[str] = Field(default=None)
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: Optional[str] = Field(default=None)
+    OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS: int = Field(default=15000, ge=1000)
     OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS: float = Field(default=3.0)
     OTEL_CONSOLE_EXPORTER: bool = Field(default=False)
     OTEL_TRACE_SAMPLE_RATIO: float = Field(default=1.0, ge=0.0, le=1.0)
-    OTEL_EXCLUDED_URLS: str = Field(default="health,metrics")
+    OTEL_EXCLUDED_URLS: str = Field(default="health")
 
     # Guardrails Settings
     PII_ANONYMIZATION_ENABLED: bool = Field(default=True)
@@ -65,5 +67,6 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+
 
 settings = Settings()

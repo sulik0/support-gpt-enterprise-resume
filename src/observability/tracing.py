@@ -72,8 +72,9 @@ def mark_span_error(span: Any, error: BaseException) -> None:
     except Exception:
         return
 
+
 def init_tracing() -> None:
-    """Initialize OpenTelemetry and LangChain LangSmith tracing settings."""
+    """Initialize OpenTelemetry traces/metrics and LangSmith settings."""
     global _initialized
     # LangSmith config
     langsmith_enabled = settings.LANGSMITH_TRACING or settings.LANGCHAIN_TRACING_V2
@@ -107,32 +108,48 @@ def init_tracing() -> None:
 
     # OpenTelemetry SDK initialization is deliberately fail-open.
     try:
-        from opentelemetry import trace
         from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
-        current_provider = trace.get_tracer_provider()
-        if isinstance(current_provider, TracerProvider):
-            provider = current_provider
+        resource = Resource.create(
+            {
+                "service.name": settings.OTEL_SERVICE_NAME,
+                "service.version": "1.0.0",
+                "deployment.environment": settings.APP_ENV,
+            }
+        )
+
+    except Exception as e:
+        logger.warning("Could not create OpenTelemetry resource: %s", e)
+        _initialized = True
+        return
+
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+            ConsoleSpanExporter,
+        )
+        from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+
+        current_tracer_provider = trace.get_tracer_provider()
+        if isinstance(current_tracer_provider, TracerProvider):
+            tracer_provider = current_tracer_provider
         else:
-            provider = TracerProvider(
-                resource=Resource.create(
-                    {
-                        "service.name": settings.OTEL_SERVICE_NAME,
-                        "service.version": "1.0.0",
-                        "deployment.environment": settings.APP_ENV,
-                    }
+            tracer_provider = TracerProvider(
+                resource=resource,
+                sampler=ParentBased(
+                    TraceIdRatioBased(settings.OTEL_TRACE_SAMPLE_RATIO)
                 ),
-                sampler=ParentBased(TraceIdRatioBased(settings.OTEL_TRACE_SAMPLE_RATIO)),
             )
-            trace.set_tracer_provider(provider)
+            trace.set_tracer_provider(tracer_provider)
 
         if settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                OTLPSpanExporter,
+            )
 
-            provider.add_span_processor(
+            tracer_provider.add_span_processor(
                 BatchSpanProcessor(
                     OTLPSpanExporter(
                         endpoint=settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
@@ -141,13 +158,73 @@ def init_tracing() -> None:
                 )
             )
         if settings.OTEL_CONSOLE_EXPORTER:
-            provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+            tracer_provider.add_span_processor(
+                BatchSpanProcessor(ConsoleSpanExporter())
+            )
+    except Exception as exc:
+        logger.warning("Could not initialize OpenTelemetry traces: %s", exc)
 
-        _initialized = True
-        logger.info(
-            "OpenTelemetry initialized: service=%s, otlp=%s",
-            settings.OTEL_SERVICE_NAME,
-            bool(settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
+    try:
+        from opentelemetry import metrics
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.sdk.metrics.view import (
+            ExplicitBucketHistogramAggregation,
+            View,
         )
-    except Exception as e:
-        logger.warning("Could not initialize OpenTelemetry exporter: %s", e)
+
+        current_meter_provider = metrics.get_meter_provider()
+        if not isinstance(current_meter_provider, MeterProvider):
+            metric_readers = []
+            if settings.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:
+                from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+                    OTLPMetricExporter,
+                )
+
+                metric_readers.append(
+                    PeriodicExportingMetricReader(
+                        OTLPMetricExporter(
+                            endpoint=settings.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+                            timeout=settings.OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS,
+                        ),
+                        export_interval_millis=(
+                            settings.OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS
+                        ),
+                    )
+                )
+
+            metrics.set_meter_provider(
+                MeterProvider(
+                    resource=resource,
+                    metric_readers=metric_readers,
+                    views=[
+                        View(
+                            instrument_name="qa_score_ratio",
+                            aggregation=ExplicitBucketHistogramAggregation(
+                                boundaries=(
+                                    0.1,
+                                    0.2,
+                                    0.3,
+                                    0.4,
+                                    0.5,
+                                    0.6,
+                                    0.7,
+                                    0.8,
+                                    0.9,
+                                    1.0,
+                                )
+                            ),
+                        )
+                    ],
+                )
+            )
+    except Exception as exc:
+        logger.warning("Could not initialize OpenTelemetry metrics: %s", exc)
+
+    _initialized = True
+    logger.info(
+        "OpenTelemetry initialized: service=%s, traces_otlp=%s, metrics_otlp=%s",
+        settings.OTEL_SERVICE_NAME,
+        bool(settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
+        bool(settings.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT),
+    )

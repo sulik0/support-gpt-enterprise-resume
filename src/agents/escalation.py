@@ -2,18 +2,25 @@ import time
 import logging
 from typing import Dict, Any
 
-from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS, TICKET_ESCALATIONS_TOTAL
+from src.observability.metrics import (
+    AGENT_EXECUTION_DURATION_SECONDS,
+    TICKET_ESCALATIONS_TOTAL,
+)
 
 logger = logging.getLogger("supportgpt.agents.escalation")
 
+
 class EscalationAgent:
     """
-    Evaluates SLA parameters, inspects QA evaluation scores, and suggests routing 
+    Evaluates SLA parameters, inspects QA evaluation scores, and suggests routing
     escalation if the AI resolution fails confidence checks.
     """
+
     async def evaluate(self, state: Dict[str, Any]) -> Dict[str, Any]:
         start_time = time.time()
-        logger.info(f"Escalation Agent started verifying state rules for ticket: {state.get('ticket_id')}")
+        logger.info(
+            f"Escalation Agent started verifying state rules for ticket: {state.get('ticket_id')}"
+        )
 
         priority = state.get("priority", "medium").lower()
         sentiment = state.get("sentiment", "neutral").lower()
@@ -49,23 +56,25 @@ class EscalationAgent:
         elif qa_score < 0.8 or hallucination_detected:
             escalate = True
             reason = f"AI quality assurance score ({qa_score}) below threshold (0.8) or hallucination detected."
-        
+
         # 3. Handle telemetry updates
         if escalate:
-            TICKET_ESCALATIONS_TOTAL.labels(
-                department=department,
-                priority=priority
-            ).inc()
+            TICKET_ESCALATIONS_TOTAL.add(
+                1, {"department": department, "priority": priority}
+            )
             logger.info(f"Escalation recommended for ticket: {reason}")
 
         duration = time.time() - start_time
-        AGENT_EXECUTION_DURATION_SECONDS.labels(agent_name="escalation_agent").observe(duration)
+        AGENT_EXECUTION_DURATION_SECONDS.record(
+            duration, {"agent_name": "escalation_agent"}
+        )
 
         return {
             **state,
             "escalation_recommended": escalate,
             "escalation_reason": reason if escalate else None,
-            "sla_hours": sla_hours
+            "sla_hours": sla_hours,
         }
+
 
 escalation_agent = EscalationAgent()

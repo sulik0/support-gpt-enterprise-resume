@@ -43,7 +43,7 @@ supportgpt-enterprise/
 │   ├── approval/              # Human-in-the-Loop workflows
 │   ├── memory/                # Conversation & session state stores
 │   ├── tools/                 # CRM, Ticketing, and Invoice tools
-│   ├── observability/         # Tracing, Prometheus, Cost estimators
+│   ├── observability/         # OpenTelemetry tracing/metrics, Cost estimators
 │   ├── evaluation/            # Unified metrics engines
 │   └── llm/                   # Pluggable LLM Providers (Mock / OpenAI)
 ├── frontend/                  # Vite + React Dashboard UI
@@ -113,7 +113,7 @@ docker-compose -f deployment/docker-compose.yml up --build
 ## 📊 Telemetry and Observability Dashboard
 When the stack is running, you can access monitoring panels:
 - **API Health**: [http://localhost:8000/health](http://localhost:8000/health)
-- **Prometheus Scraper**: [http://localhost:8000/metrics](http://localhost:8000/metrics)
+- **Collector Metrics Exporter**: [http://localhost:8889/metrics](http://localhost:8889/metrics)
 - **Prometheus Dashboard**: [http://localhost:9090](http://localhost:9090)
 - **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
 

@@ -7,23 +7,41 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from prometheus_client import make_asgi_app
 
 from src.config import settings
 from src.database import engine, init_db, get_db
 from src.models.db_models import User, Ticket, SessionMemory, ResponseApproval
 from src.models.schemas import (
-    UserCreate, UserResponse, LoginRequest, Token,
-    ChatRequest, ChatResponse, Citation, CostMetadata,
-    TicketCreate, TicketResponse, TicketSummaryResponse,
-    TicketSentimentResponse, TicketEscalationResponse,
-    SuggestResponseRequest, SuggestResponseResponse,
-    CustomerContextRequest, CustomerContextResponse, OrderInfo,
-    EvaluateResponseRequest, EvaluateResponseResponse,
-    ResponseApprovalRequest, ResponseApprovalResponse
+    UserCreate,
+    UserResponse,
+    LoginRequest,
+    Token,
+    ChatRequest,
+    ChatResponse,
+    Citation,
+    CostMetadata,
+    TicketCreate,
+    TicketResponse,
+    TicketSummaryResponse,
+    TicketSentimentResponse,
+    TicketEscalationResponse,
+    SuggestResponseRequest,
+    SuggestResponseResponse,
+    CustomerContextRequest,
+    CustomerContextResponse,
+    OrderInfo,
+    EvaluateResponseRequest,
+    EvaluateResponseResponse,
+    ResponseApprovalRequest,
+    ResponseApprovalResponse,
 )
 from src.auth.jwt import verify_password, get_password_hash, create_access_token
-from src.auth.rbac import get_current_user, require_admin, require_agent, require_manager
+from src.auth.rbac import (
+    get_current_user,
+    require_admin,
+    require_agent,
+    require_manager,
+)
 from src.agents.graph import run_agent_workflow
 from src.approval.workflows import human_it_loop_service
 from src.tools.crm import crm_tool
@@ -46,16 +64,25 @@ from src.evaluation.framework import run_deeval_evaluation
 tracer = get_tracer(__name__)
 
 
-def _record_http_metrics(method: str, endpoint: str, status_code: str, duration: float) -> None:
+def _record_http_metrics(
+    method: str, endpoint: str, status_code: str, duration: float
+) -> None:
     try:
-        HTTP_REQUESTS_TOTAL.labels(
-            method=method, endpoint=endpoint, status=status_code
-        ).inc()
-        HTTP_REQUEST_DURATION_SECONDS.labels(
-            method=method, endpoint=endpoint
-        ).observe(duration)
+        HTTP_REQUESTS_TOTAL.add(
+            1, {"method": method, "endpoint": endpoint, "status": status_code}
+        )
+        HTTP_REQUEST_DURATION_SECONDS.record(
+            duration, {"method": method, "endpoint": endpoint}
+        )
     except Exception:
         return
+
+
+def _route_template(request: Request) -> str:
+    """Return the matched route template without exporting raw path identifiers."""
+    route = request.scope.get("route")
+    return getattr(route, "path", "unmatched")
+
 
 # --- FastAPI Lifespan Handler ---
 @asynccontextmanager
@@ -66,11 +93,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     yield
 
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     description="Enterprise Customer Support AI Copilot Platform",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Configure CORS for Frontend connectivity
@@ -82,9 +110,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Prometheus Metrics Exporter (exposes metrics at GET /metrics)
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
 
 # --- Observability Request Latency Middleware ---
 @app.middleware("http")
@@ -92,21 +117,19 @@ async def track_http_telemetry(request: Request, call_next):
     start_time = time.time()
     endpoint = request.url.path
     method = request.method
-    
-    # Avoid logging metrics calls to avoid pollution
-    if endpoint == "/metrics" or endpoint == "/health":
+
+    # Avoid polluting application metrics with health probes.
+    if endpoint == "/health":
         return await call_next(request)
-        
+
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request_token = bind_request_id(request_id)
     try:
-        with tracer.start_as_current_span(f"api.{method} {endpoint}") as span:
+        with tracer.start_as_current_span(f"api.{method}") as span:
             set_span_attributes(
                 span,
                 {
                     "http.method": method,
-                    "http.route": endpoint,
-                    "http.target": endpoint,
                     "request.id": request_id,
                 },
             )
@@ -115,10 +138,13 @@ async def track_http_telemetry(request: Request, call_next):
                 status_code = str(response.status_code)
 
                 duration = time.time() - start_time
-                _record_http_metrics(method, endpoint, status_code, duration)
+                route_template = _route_template(request)
+                span.update_name(f"api.{method} {route_template}")
+                _record_http_metrics(method, route_template, status_code, duration)
                 set_span_attributes(
                     span,
                     {
+                        "http.route": route_template,
                         "http.status_code": response.status_code,
                         "http.duration_seconds": round(duration, 4),
                     },
@@ -129,7 +155,10 @@ async def track_http_telemetry(request: Request, call_next):
                     response.headers["X-Trace-ID"] = trace_id
                 return response
             except Exception as e:
-                _record_http_metrics(method, endpoint, "500", time.time() - start_time)
+                route_template = _route_template(request)
+                _record_http_metrics(
+                    method, route_template, "500", time.time() - start_time
+                )
                 set_span_attributes(span, {"http.status_code": 500, "error": str(e)})
                 raise
     finally:
@@ -139,29 +168,35 @@ async def track_http_telemetry(request: Request, call_next):
 # Auto-instrument infrastructure once; each integration fails open when unavailable.
 instrument_dependencies(app, engine)
 
+
 # --- AUTH ENDPOINTS ---
-@app.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
 async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     # Check if username exists
     existing = await db.execute(select(User).filter(User.username == user_in.username))
     if existing.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail="Username already registered",
         )
-    
+
     new_user = User(
         username=user_in.username,
         hashed_password=get_password_hash(user_in.password),
-        role=user_in.role
+        role=user_in.role,
     )
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
     return new_user
 
+
 @app.post("/auth/token", response_model=Token)
-async def login_for_access_token(form_data: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login_for_access_token(
+    form_data: LoginRequest, db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(select(User).filter(User.username == form_data.username))
     user = result.scalars().first()
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -170,9 +205,10 @@ async def login_for_access_token(form_data: LoginRequest, db: AsyncSession = Dep
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     access_token = create_access_token(data={"sub": user.username, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer", "role": user.role}
+
 
 @app.get("/auth/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
@@ -183,6 +219,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.datetime.utcnow().isoformat()}
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
@@ -195,26 +232,30 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         customer_id=req.customer_id,
         subject="Active Chat Conversation",
         description=req.message,
-        status="open"
+        status="open",
     )
     db.add(ticket)
     await db.commit()
     await db.refresh(ticket)
 
     # 2. Retrieve history memory from db
-    history_res = await db.execute(select(SessionMemory).filter(SessionMemory.session_id == req.session_id))
+    history_res = await db.execute(
+        select(SessionMemory).filter(SessionMemory.session_id == req.session_id)
+    )
     session_mem = history_res.scalars().first()
     if not session_mem:
         session_mem = SessionMemory(
             session_id=req.session_id,
             customer_id=req.customer_id,
-            conversation_history=[]
+            conversation_history=[],
         )
         db.add(session_mem)
 
     # Use Redis as short-term working memory when available; SQL remains durable history.
     redis_history = await redis_memory.load_messages(req.session_id)
-    session_history = list(redis_history if redis_history is not None else session_mem.conversation_history)
+    session_history = list(
+        redis_history if redis_history is not None else session_mem.conversation_history
+    )
     session_history.append({"role": "user", "content": req.message})
 
     # 3. Invoke multi-agent graph
@@ -223,9 +264,9 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         "customer_id": req.customer_id,
         "subject": ticket.subject,
         "description": req.message,
-        "kb_version": req.kb_version
+        "kb_version": req.kb_version,
     }
-    
+
     agent_output = await run_agent_workflow(initial_agent_state)
 
     # Update ticket details in SQL DB
@@ -233,22 +274,24 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     ticket.priority = agent_output.get("priority")
     ticket.department = agent_output.get("department")
     ticket.sla_hours = agent_output.get("sla_hours")
-    
+
     # 4. Save to Response Approval if HITL is required
     approval_id = None
     if agent_output.get("approval_required"):
         appr_obj = await human_it_loop_service.create_pending_approval(
             db=db,
             ticket_id=ticket.id,
-            drafted_response=agent_output.get("suggested_response", "")
+            drafted_response=agent_output.get("suggested_response", ""),
         )
         approval_id = appr_obj.id
 
     # Append assistant message
-    session_history.append({"role": "assistant", "content": agent_output.get("suggested_response", "")})
+    session_history.append(
+        {"role": "assistant", "content": agent_output.get("suggested_response", "")}
+    )
     session_mem.conversation_history = session_history
     await redis_memory.save_messages(req.session_id, session_history)
-    
+
     await db.commit()
 
     # Build schema output
@@ -256,12 +299,12 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         Citation(source=c.source, text=c.text, score=c.score, version=c.version)
         for c in agent_output.get("context_citations", [])
     ]
-    
+
     cost_meta = CostMetadata(
         tokens_input=agent_output.get("tokens_input", 0),
         tokens_output=agent_output.get("tokens_output", 0),
         cost_usd=agent_output.get("cost_usd", 0.0),
-        latency_seconds=agent_output.get("latency_seconds", 0.0)
+        latency_seconds=agent_output.get("latency_seconds", 0.0),
     )
 
     return ChatResponse(
@@ -276,11 +319,14 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         escalation_reason=agent_output.get("escalation_reason"),
         cost_metadata=cost_meta,
         approval_required=agent_output.get("approval_required", False),
-        approval_id=approval_id
+        approval_id=approval_id,
     )
 
+
 @app.post("/summarize-ticket", response_model=TicketSummaryResponse)
-async def summarize_ticket(req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)):
+async def summarize_ticket(
+    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+):
     """Analyze a ticket description and summarize key issues."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
     ticket = ticket_res.scalars().first()
@@ -292,7 +338,7 @@ async def summarize_ticket(req: SuggestResponseRequest, db: AsyncSession = Depen
         "customer_id": ticket.customer_id,
         "subject": ticket.subject,
         "description": ticket.description,
-        "kb_version": req.kb_version
+        "kb_version": req.kb_version,
     }
     agent_output = await run_agent_workflow(initial_state)
 
@@ -305,11 +351,14 @@ async def summarize_ticket(req: SuggestResponseRequest, db: AsyncSession = Depen
         key_issues=key_issues,
         sentiment=agent_output.get("sentiment", "neutral"),
         priority=agent_output.get("priority", "medium"),
-        urgency_score=0.9 if agent_output.get("priority") == "urgent" else 0.5
+        urgency_score=0.9 if agent_output.get("priority") == "urgent" else 0.5,
     )
 
+
 @app.post("/suggest-response", response_model=SuggestResponseResponse)
-async def suggest_response(req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)):
+async def suggest_response(
+    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+):
     """Provide a response suggestion with citations and QA verification details."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
     ticket = ticket_res.scalars().first()
@@ -321,7 +370,7 @@ async def suggest_response(req: SuggestResponseRequest, db: AsyncSession = Depen
         "customer_id": ticket.customer_id,
         "subject": ticket.subject,
         "description": ticket.description,
-        "kb_version": req.kb_version
+        "kb_version": req.kb_version,
     }
     agent_output = await run_agent_workflow(initial_state)
 
@@ -329,12 +378,12 @@ async def suggest_response(req: SuggestResponseRequest, db: AsyncSession = Depen
         Citation(source=c.source, text=c.text, score=c.score, version=c.version)
         for c in agent_output.get("context_citations", [])
     ]
-    
+
     cost_meta = CostMetadata(
         tokens_input=agent_output.get("tokens_input", 0),
         tokens_output=agent_output.get("tokens_output", 0),
         cost_usd=agent_output.get("cost_usd", 0.0),
-        latency_seconds=agent_output.get("latency_seconds", 0.0)
+        latency_seconds=agent_output.get("latency_seconds", 0.0),
     )
 
     return SuggestResponseResponse(
@@ -345,11 +394,14 @@ async def suggest_response(req: SuggestResponseRequest, db: AsyncSession = Depen
         citations=citations,
         qa_score=agent_output.get("qa_score", 1.0),
         hallucination_detected=agent_output.get("hallucination_detected", False),
-        cost_metadata=cost_meta
+        cost_metadata=cost_meta,
     )
 
+
 @app.post("/analyze-sentiment", response_model=TicketSentimentResponse)
-async def analyze_sentiment(req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)):
+async def analyze_sentiment(
+    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+):
     """Evaluate customer ticket tone and urgency levels."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
     ticket = ticket_res.scalars().first()
@@ -361,7 +413,7 @@ async def analyze_sentiment(req: SuggestResponseRequest, db: AsyncSession = Depe
         "customer_id": ticket.customer_id,
         "subject": ticket.subject,
         "description": ticket.description,
-        "kb_version": req.kb_version
+        "kb_version": req.kb_version,
     }
     agent_output = await run_agent_workflow(initial_state)
 
@@ -370,11 +422,14 @@ async def analyze_sentiment(req: SuggestResponseRequest, db: AsyncSession = Depe
         sentiment=agent_output.get("sentiment", "neutral"),
         confidence_score=0.95,
         detected_emotions=[agent_output.get("sentiment", "neutral")],
-        priority=agent_output.get("priority", "medium")
+        priority=agent_output.get("priority", "medium"),
     )
 
+
 @app.post("/recommend-escalation", response_model=TicketEscalationResponse)
-async def recommend_escalation(req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)):
+async def recommend_escalation(
+    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+):
     """SLA routing prediction."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
     ticket = ticket_res.scalars().first()
@@ -386,7 +441,7 @@ async def recommend_escalation(req: SuggestResponseRequest, db: AsyncSession = D
         "customer_id": ticket.customer_id,
         "subject": ticket.subject,
         "description": ticket.description,
-        "kb_version": req.kb_version
+        "kb_version": req.kb_version,
     }
     agent_output = await run_agent_workflow(initial_state)
 
@@ -395,8 +450,9 @@ async def recommend_escalation(req: SuggestResponseRequest, db: AsyncSession = D
         escalation_recommended=agent_output.get("escalation_recommended", False),
         escalation_reason=agent_output.get("escalation_reason", "Standard flow"),
         suggested_department=agent_output.get("department", "general"),
-        sla_hours=agent_output.get("sla_hours", 24.0)
+        sla_hours=agent_output.get("sla_hours", 24.0),
     )
+
 
 @app.post("/customer-context", response_model=CustomerContextResponse)
 async def get_customer_context(req: CustomerContextRequest):
@@ -411,7 +467,7 @@ async def get_customer_context(req: CustomerContextRequest):
             status=o["status"],
             items=o["items"],
             total_amount=o["total_amount"],
-            order_date=o["order_date"]
+            order_date=o["order_date"],
         )
         for o in orders
     ]
@@ -422,16 +478,15 @@ async def get_customer_context(req: CustomerContextRequest):
         tier=profile["tier"],
         open_tickets_count=profile["open_tickets_count"],
         recent_orders=order_schemas,
-        last_interaction=datetime.datetime.utcnow() - datetime.timedelta(days=2)
+        last_interaction=datetime.datetime.utcnow() - datetime.timedelta(days=2),
     )
+
 
 @app.post("/evaluate-response", response_model=EvaluateResponseResponse)
 async def evaluate_response(req: EvaluateResponseRequest):
     """Run evaluation scores comparing drafted answers against context."""
     results = await run_deeval_evaluation(
-        query=req.query,
-        context=req.context,
-        response=req.response
+        query=req.query, context=req.context, response=req.response
     )
     return results
 
@@ -439,64 +494,66 @@ async def evaluate_response(req: EvaluateResponseRequest):
 # --- HUMAN IN THE LOOP APPROVAL APIS ---
 @app.get("/approvals/pending", response_model=list[ResponseApprovalResponse])
 async def list_pending_approvals(
-    current_user: User = Depends(require_agent),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_agent), db: AsyncSession = Depends(get_db)
 ):
     """Secure endpoint: list all response drafts needing validation."""
     records = await human_it_loop_service.get_pending_approvals(db)
-    
+
     # Map to schema
     output = []
     for r in records:
-        output.append(ResponseApprovalResponse(
-            id=r.id,
-            ticket_id=r.ticket_id,
-            status=r.status,
-            final_response=r.drafted_response,
-            latency_seconds=r.latency_seconds or 0.0,
-            approved_at=r.created_at
-        ))
+        output.append(
+            ResponseApprovalResponse(
+                id=r.id,
+                ticket_id=r.ticket_id,
+                status=r.status,
+                final_response=r.drafted_response,
+                latency_seconds=r.latency_seconds or 0.0,
+                approved_at=r.created_at,
+            )
+        )
     return output
+
 
 @app.post("/approvals/{approval_id}", response_model=ResponseApprovalResponse)
 async def process_approval(
     approval_id: int,
     req: ResponseApprovalRequest,
     current_user: User = Depends(require_agent),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Secure endpoint: approve, reject, or edit a response draft."""
     record = await human_it_loop_service.process_agent_approval(
-        db=db,
-        approval_id=approval_id,
-        agent_id=current_user.id,
-        req=req
+        db=db, approval_id=approval_id, agent_id=current_user.id, req=req
     )
-    
+
     return ResponseApprovalResponse(
         id=record.id,
         ticket_id=record.ticket_id,
         status=record.status,
         final_response=record.modified_response or record.drafted_response,
         latency_seconds=record.latency_seconds or 0.0,
-        approved_at=datetime.datetime.utcnow()
+        approved_at=datetime.datetime.utcnow(),
     )
 
 
 # --- GENERAL TICKETING APIS ---
-@app.post("/tickets", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/tickets", response_model=TicketResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_ticket(req: TicketCreate, db: AsyncSession = Depends(get_db)):
     ticket = Ticket(
         customer_id=req.customer_id,
         subject=req.subject,
         description=req.description,
         status="open",
-        priority="medium"
+        priority="medium",
     )
     db.add(ticket)
     await db.commit()
     await db.refresh(ticket)
     return ticket
+
 
 @app.post("/tickets/{ticket_id}/close", response_model=TicketResponse)
 async def close_ticket(ticket_id: int, db: AsyncSession = Depends(get_db)):
@@ -509,6 +566,7 @@ async def close_ticket(ticket_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(ticket)
     return ticket
+
 
 @app.get("/tickets", response_model=list[TicketResponse])
 async def list_tickets(db: AsyncSession = Depends(get_db)):

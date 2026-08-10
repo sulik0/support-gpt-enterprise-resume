@@ -18,34 +18,50 @@ from src.observability.tracing import (
     reset_request_id,
     set_span_attributes,
 )
+from src.main import _route_template
+
 
 def test_token_estimation():
     assert estimate_tokens("") == 0
     assert estimate_tokens("hello") > 0
     # Approx 4 characters per token check
-    assert estimate_tokens("hello world supportgpt") == len("hello world supportgpt") // 4
+    assert (
+        estimate_tokens("hello world supportgpt") == len("hello world supportgpt") // 4
+    )
+
 
 def test_cost_calculation():
     # gpt-4 cost: $0.03 input, $0.06 output per 1k tokens
     cost = calculate_llm_cost("gpt-4", 1000, 1000)
     assert cost == 0.09
-    
+
     # gpt-4-turbo cost: $0.01 input, $0.03 output per 1k tokens
     cost_turbo = calculate_llm_cost("gpt-4-turbo", 1000, 1000)
     assert cost_turbo == 0.04
-    
+
     # Mock cost: $0
     cost_mock = calculate_llm_cost("mock", 1000, 1000)
     assert cost_mock == 0.0
 
-def test_prometheus_metrics_registry():
-    # Verify metric label dimensions are defined
-    assert "model" in LLM_TOKENS_TOTAL._labelnames
-    assert "type" in LLM_TOKENS_TOTAL._labelnames
-    assert "status" in AGENT_REQUESTS_TOTAL._labelnames
-    assert "node" in AGENT_NODE_DURATION_SECONDS._labelnames
-    assert set(TOOL_CALLS_TOTAL._labelnames) == {"tool_name", "status"}
-    assert "status" in HUMAN_APPROVALS_TOTAL._labelnames
+
+def test_otel_metric_instruments_record_natively():
+    assert LLM_TOKENS_TOTAL.name == "llm_tokens"
+    assert AGENT_REQUESTS_TOTAL.name == "agent_requests"
+    assert AGENT_NODE_DURATION_SECONDS.name == "agent_node_duration_seconds"
+    assert TOOL_CALLS_TOTAL.name == "agent_tool_calls"
+    assert HUMAN_APPROVALS_TOTAL.name == "human_approvals"
+    AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
+    AGENT_NODE_DURATION_SECONDS.record(0.01, {"node": "retriever"})
+
+
+def test_metric_route_uses_template_instead_of_raw_identifier():
+    class Route:
+        path = "/tickets/{ticket_id}"
+
+    class Request:
+        scope = {"route": Route()}
+
+    assert _route_template(Request()) == "/tickets/{ticket_id}"
 
 
 def test_observability_sanitizes_pii_secrets_and_business_fields():
@@ -84,14 +100,19 @@ def test_request_id_context_is_scoped():
 
 def test_otel_attribute_values_are_compatible():
     attributes = sanitize_attributes(
-        {"tool.payload_keys": ["customer_id", "order_id"], "context": {"email": "a@b.com"}}
+        {
+            "tool.payload_keys": ["customer_id", "order_id"],
+            "context": {"email": "a@b.com"},
+        }
     )
     assert attributes["tool.payload_keys"] == ["customer_id", "order_id"]
     assert "a@b.com" not in attributes["context"]
 
 
 def test_grafana_dashboard_covers_phase_one_metrics():
-    dashboard_path = Path(__file__).resolve().parents[1] / "monitoring" / "grafana-dashboard.json"
+    dashboard_path = (
+        Path(__file__).resolve().parents[1] / "monitoring" / "grafana-dashboard.json"
+    )
     dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
     expressions = " ".join(
         target["expr"]
@@ -108,3 +129,19 @@ def test_grafana_dashboard_covers_phase_one_metrics():
         "human_approvals_total",
     ):
         assert metric in expressions
+
+
+def test_metrics_flow_only_through_otel_collector():
+    root = Path(__file__).resolve().parents[1]
+    prometheus_config = (root / "monitoring" / "prometheus.yml").read_text(
+        encoding="utf-8"
+    )
+    compose_config = (root / "deployment" / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+    requirements = (root / "requirements" / "base.txt").read_text(encoding="utf-8")
+
+    assert "backend:8000" not in prometheus_config
+    assert "otel-collector:8889" in prometheus_config
+    assert "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" in compose_config
+    assert "prometheus-client" not in requirements

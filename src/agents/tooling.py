@@ -51,7 +51,14 @@ class ToolingAgent:
 
             should_fetch_orders = department in {"billing", "shipping"} or any(
                 token in intent.lower()
-                for token in ["billing", "refund", "order", "shipping", "payment", "invoice"]
+                for token in [
+                    "billing",
+                    "refund",
+                    "order",
+                    "shipping",
+                    "payment",
+                    "invoice",
+                ]
             )
             order_call = None
             if should_fetch_orders:
@@ -93,7 +100,9 @@ class ToolingAgent:
             }
 
             duration = time.time() - start_time
-            AGENT_EXECUTION_DURATION_SECONDS.labels(agent_name="tooling_agent").observe(duration)
+            AGENT_EXECUTION_DURATION_SECONDS.record(
+                duration, {"agent_name": "tooling_agent"}
+            )
 
             return {
                 **state,
@@ -106,7 +115,8 @@ class ToolingAgent:
                 **state,
                 "tool_context": {},
                 "tool_calls": [],
-                "errors": state.get("errors", []) + [f"Tooling agent error: {str(exc)}"],
+                "errors": state.get("errors", [])
+                + [f"Tooling agent error: {str(exc)}"],
             }
 
 

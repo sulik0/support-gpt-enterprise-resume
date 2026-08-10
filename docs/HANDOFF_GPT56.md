@@ -251,7 +251,7 @@ POST /approvals/{approval_id}
 POST /tickets
 POST /tickets/{ticket_id}/close
 GET  /tickets
-GET  /metrics
+Metrics 通过 OTLP 上报 OpenTelemetry Collector，由 Collector 的 `:8889/metrics` 供 Prometheus 抓取；Backend 不直接提供 `/metrics`。
 ```
 
 关键接口：

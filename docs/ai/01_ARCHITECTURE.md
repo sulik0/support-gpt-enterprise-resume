@@ -25,14 +25,12 @@ flowchart TB
         Gateway
         Auth[JWT 与 RBAC]
         Chat[聊天 / 工单 / 审批 / 评测 API]
-        Metrics[/metrics]
-        HTTPTrace[HTTP Metrics 与 Trace]
+        HTTPTrace[OpenTelemetry Metrics 与 Trace]
     end
 
     Gateway --> Graph
     Gateway --> SQL
     Gateway --> Redis
-    Gateway --> Metrics
 
     subgraph Graph[LangGraph 工作流]
         Analyzer[Analyzer + Guardrails]
@@ -67,7 +65,10 @@ flowchart TB
     SQL[(SQLite / PostgreSQL)]
     Redis[(Redis，可选)]
 
-    Gateway --> Obs[Prometheus + OpenTelemetry]
+    Gateway --> Obs[OpenTelemetry Collector]
+    Obs --> LangSmith[LangSmith Trace]
+    Obs --> Prometheus[Prometheus Metrics]
+    Prometheus --> Grafana[Grafana]
     Graph --> Obs
     Registry --> Obs
     RAG --> Obs

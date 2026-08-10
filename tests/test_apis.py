@@ -1,6 +1,7 @@
 import pytest
 from httpx import AsyncClient
 
+
 @pytest.mark.asyncio
 async def test_general_endpoints(client: AsyncClient):
     # Health check
@@ -8,9 +9,6 @@ async def test_general_endpoints(client: AsyncClient):
     assert h_res.status_code == 200
     assert h_res.json()["status"] == "healthy"
 
-    # Prometheus metrics check
-    m_res = await client.get("/metrics/")
-    assert m_res.status_code == 200
 
 @pytest.mark.asyncio
 async def test_copilot_service_routes(client: AsyncClient):
@@ -25,7 +23,7 @@ async def test_copilot_service_routes(client: AsyncClient):
         "session_id": "sess_test",
         "customer_id": "cust_101",
         "message": "I want a refund for my charge.",
-        "kb_version": "v1"
+        "kb_version": "v1",
     }
     chat_res = await client.post("/chat", json=chat_payload)
     assert chat_res.status_code == 200
@@ -41,8 +39,10 @@ async def test_copilot_service_routes(client: AsyncClient):
     # 3. Running offline metrics evaluations
     eval_payload = {
         "query": "policy refund",
-        "context": ["Corporate policy states refunds must be requested within 30 days."],
-        "response": "Corporate policy states refunds must be requested within 30 days."
+        "context": [
+            "Corporate policy states refunds must be requested within 30 days."
+        ],
+        "response": "Corporate policy states refunds must be requested within 30 days.",
     }
     eval_res = await client.post("/evaluate-response", json=eval_payload)
     assert eval_res.status_code == 200
@@ -50,13 +50,19 @@ async def test_copilot_service_routes(client: AsyncClient):
     assert eval_data["passed_evaluation"] is True
     assert eval_data["faithfulness_score"] == 1.0
 
+
 @pytest.mark.asyncio
 async def test_human_in_loop_approvals(client: AsyncClient):
     # 1. Create agent credentials
-    reg_res = await client.post("/auth/register", json={"username": "agent_larry", "password": "larrypassword", "role": "agent"})
+    reg_res = await client.post(
+        "/auth/register",
+        json={"username": "agent_larry", "password": "larrypassword", "role": "agent"},
+    )
     assert reg_res.status_code == 201
 
-    login_res = await client.post("/auth/token", json={"username": "agent_larry", "password": "larrypassword"})
+    login_res = await client.post(
+        "/auth/token", json={"username": "agent_larry", "password": "larrypassword"}
+    )
     token = login_res.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -65,7 +71,7 @@ async def test_human_in_loop_approvals(client: AsyncClient):
         "session_id": "sess_larry",
         "customer_id": "cust_101",
         "message": "I need a billing refund.",
-        "kb_version": "v1"
+        "kb_version": "v1",
     }
     chat_res = await client.post("/chat", json=chat_payload)
     approval_id = chat_res.json()["approval_id"]
@@ -80,9 +86,11 @@ async def test_human_in_loop_approvals(client: AsyncClient):
     process_payload = {
         "approval_id": approval_id,
         "modified_response": "Fully approved billing refund.",
-        "status": "approved"
+        "status": "approved",
     }
-    appr_res = await client.post(f"/approvals/{approval_id}", json=process_payload, headers=headers)
+    appr_res = await client.post(
+        f"/approvals/{approval_id}", json=process_payload, headers=headers
+    )
     assert appr_res.status_code == 200
     assert appr_res.json()["status"] == "approved"
     assert appr_res.json()["final_response"] == "Fully approved billing refund."

@@ -6,10 +6,9 @@
 
 ```mermaid
 flowchart LR
-    APP["SupportGPT Application"] -->|"OTLP/HTTP Trace"| COL["OpenTelemetry Collector"]
+    APP["SupportGPT Application"] -->|"OTLP/HTTP Trace + Metrics"| COL["OpenTelemetry Collector"]
     COL -->|"OTLP Trace"| LS["LangSmith"]
-    COL -->|"Collector Metrics"| PROM["Prometheus"]
-    APP -->|"/metrics"| PROM
+    COL -->|"Prometheus Exporter :8889"| PROM["Prometheus"]
     PROM --> GRAF["Grafana"]
 ```
 
@@ -73,7 +72,12 @@ X-Trace-ID: <32 character OpenTelemetry trace id>
 
 脱敏函数只创建 telemetry-safe 副本，不修改 Agent State 或业务数据。
 
-## Prometheus Metrics
+## OpenTelemetry Metrics
+
+应用业务指标统一使用 OpenTelemetry Metrics API/SDK 创建，由
+`OTLPMetricExporter` 周期性发送到 OpenTelemetry Collector。Collector 的
+Prometheus exporter 在 `:8889` 暴露聚合结果，Prometheus 只抓取 Collector，
+后端不再依赖 `prometheus_client`，也不再提供 `/metrics` 路由。
 
 | 指标 | 含义 |
 |---|---|
@@ -116,11 +120,13 @@ LANGSMITH_PROJECT=supportgpt-enterprise
 OTEL_ENABLED=true
 OTEL_SERVICE_NAME=supportgpt-backend
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics
+OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS=15000
 OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS=3
 OTEL_TRACE_SAMPLE_RATIO=1.0
 ```
 
-Docker Compose 默认将 Application Trace 发送到 Collector，Collector 再发送到 LangSmith OTLP endpoint。若同时启用 `LANGSMITH_TRACING=true`，还会开启旧版 LangSmith SDK 直连 Trace；Phase 1 推荐在 Compose 中保持其为 `false`，避免重复上报。
+Docker Compose 默认将 Application Trace 和 Metrics 统一发送到 Collector。Collector 将 Trace 发送到 LangSmith，并将 Metrics 转换为 Prometheus exposition format。若同时启用 `LANGSMITH_TRACING=true`，还会开启旧版 LangSmith SDK 直连 Trace；Phase 1 推荐在 Compose 中保持其为 `false`，避免重复上报。
 
 ## 运行
 
@@ -130,7 +136,7 @@ docker compose -f deployment/docker-compose.yml up --build
 
 组件地址：
 
-- Backend metrics：`http://localhost:8000/metrics`
+- Collector 应用指标：`http://localhost:8889/metrics`
 - Prometheus：`http://localhost:9090`
 - Grafana：`http://localhost:3000`
 - Grafana 默认账号：`admin` / `admin`（应通过 `GRAFANA_ADMIN_PASSWORD` 修改）
@@ -144,6 +150,6 @@ Grafana 启动后会自动加载 `SupportGPT Agent Observability` dashboard，�
 1. 携带 `X-Request-ID` 调用 `/chat`。
 2. 确认响应头包含 `X-Request-ID` 和 `X-Trace-ID`。
 3. 在 LangSmith project 中按 `request.id` 或 `ticket.id` 检索 workflow，检查 Retriever、Tool 和 LLM 子 Run。
-4. 在 Prometheus 查询 `agent_requests_total`、`agent_tool_calls_total` 和 `llm_tokens_total`。
+4. 在 Collector `:8889/metrics` 或 Prometheus 查询 `agent_requests_total`、`agent_tool_calls_total` 和 `llm_tokens_total`。
 5. 在 Grafana 检查九个预置面板。
 6. 停止 Collector 后再发送客服请求，确认 Agent 仍正常返回业务结果。
