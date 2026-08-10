@@ -145,3 +145,16 @@ def test_metrics_flow_only_through_otel_collector():
     assert "otel-collector:8889" in prometheus_config
     assert "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" in compose_config
     assert "prometheus-client" not in requirements
+
+
+def test_trace_flow_has_no_langsmith_sdk_dual_path():
+    root = Path(__file__).resolve().parents[1]
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in (root / "src").rglob("*.py")
+    )
+    requirements = (root / "requirements" / "base.txt").read_text(encoding="utf-8")
+
+    assert not (root / "src" / "observability" / "langsmith_tracing.py").exists()
+    assert "from langsmith import traceable" not in source
+    assert "LANGCHAIN_TRACING_V2" not in source
+    assert not any(line.startswith("langsmith") for line in requirements.splitlines())

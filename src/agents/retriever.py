@@ -4,8 +4,7 @@ from typing import Dict, Any
 
 from src.rag.vector_store import vector_store
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
-from src.observability.tracing import get_tracer, set_span_attributes
-from src.observability.langsmith_tracing import traceable
+from src.observability.tracing import get_tracer, observed_span, set_span_attributes
 
 logger = logging.getLogger("supportgpt.agents.retriever")
 tracer = get_tracer(__name__)
@@ -17,7 +16,6 @@ class KnowledgeRetrievalAgent:
     from the vector database.
     """
 
-    @traceable(name="supportgpt.rag.hybrid_retriever", run_type="retriever")
     async def retrieve(self, state: Dict[str, Any]) -> Dict[str, Any]:
         start_time = time.time()
         logger.info(f"Retriever Node started for version: {state.get('kb_version')}")
@@ -38,18 +36,19 @@ class KnowledgeRetrievalAgent:
 
         try:
             # Run semantic query on our ChromaDB manager
-            with tracer.start_as_current_span("rag.query") as span:
-                set_span_attributes(
-                    span,
-                    {
-                        "ticket.id": state.get("ticket_id"),
-                        "customer.id": state.get("customer_id"),
-                        "kb.version": kb_version,
-                        "rag.category_filter": category_filter,
-                        "rag.query_length": len(query_str),
-                        "rag.top_k": 3,
-                    },
-                )
+            with observed_span(
+                tracer,
+                "supportgpt.rag.hybrid_retriever",
+                {
+                    "request.id": state.get("request_id"),
+                    "ticket.id": state.get("ticket_id"),
+                    "customer.id": state.get("customer_id"),
+                    "kb.version": kb_version,
+                    "rag.category_filter": category_filter,
+                    "rag.query_length": len(query_str),
+                    "rag.top_k": 3,
+                },
+            ) as span:
                 citations = await vector_store.query_kb(
                     query=query_str,
                     version=kb_version,
@@ -63,16 +62,17 @@ class KnowledgeRetrievalAgent:
             # Fallback query without category filter if no documents found
             if not citations and category_filter != "general":
                 logger.info("Retrying query without category filter...")
-                with tracer.start_as_current_span("rag.query_fallback") as span:
-                    set_span_attributes(
-                        span,
-                        {
-                            "ticket.id": state.get("ticket_id"),
-                            "kb.version": kb_version,
-                            "rag.original_category_filter": category_filter,
-                            "rag.top_k": 3,
-                        },
-                    )
+                with observed_span(
+                    tracer,
+                    "rag.query_fallback",
+                    {
+                        "request.id": state.get("request_id"),
+                        "ticket.id": state.get("ticket_id"),
+                        "kb.version": kb_version,
+                        "rag.original_category_filter": category_filter,
+                        "rag.top_k": 3,
+                    },
+                ) as span:
                     citations = await vector_store.query_kb(
                         query=query_str, version=kb_version, top_k=3
                     )

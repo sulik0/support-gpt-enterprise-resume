@@ -84,7 +84,7 @@ flowchart TB
 | 工具层 | 获取结构化业务上下文并进行调用治理 | 客户标识、操作角色、工单标识 | 工具结果和审计信息 | ToolRegistry 统一权限、Schema、超时和 Mock 标记 | 直接调用 Adapter 简单但不可审计；Function Calling / MCP 尚未采用 |
 | 知识层 | 管理知识文档、版本、检索与 citation | 查询、版本、类别 | Top-K citation | Hybrid RAG 兼顾语义与精确词匹配 | 纯向量检索较简单但对规则编号、时间窗口和产品词不稳定 |
 | 数据层 | 保存用户、工单、会话、文档和审批数据 | 领域实体 | 事务性持久化记录 | SQLAlchemy Async 同时兼容 SQLite 与 PostgreSQL | 纯 NoSQL 模式更灵活但不利于工单状态和审批事务约束 |
-| 可观测层 | 记录全局指标和单次调用路径 | 请求、节点、工具、检索、审批事件 | Prometheus Metrics、OpenTelemetry Span | Metrics 看趋势、Trace 定位单次慢点 | 仅日志无法稳定聚合；当前 Console Exporter 仍需替换为生产链路 |
+| 可观测层 | 统一采集全局指标和单次调用路径 | 请求、节点、工具、检索、审批事件 | OTel Trace / Metrics，经 Collector 转发 LangSmith 与 Prometheus | Metrics 看趋势、Trace 定位单次慢点 | Collector 增加一层运维成本，但消除了应用双轨采集 |
 
 ## 3. LangGraph Workflow
 
@@ -460,7 +460,7 @@ flowchart TD
 | 业务系统 | ToolRegistry + Adapter | 工具定义、输入 Schema、输出 Schema、角色、超时、审计 | 可把 Mock CRM/OMS/Ticketing 替换为真实 Client |
 | 知识库版本 | 文档与向量 Metadata 的 `version` | 查询必须带版本，citation 返回版本 | 支持规则灰度、对比与回滚 |
 | 数据库 | SQLAlchemy Async URL 配置 | 统一 ORM 模型和 Session | 本地 SQLite 与 PostgreSQL 间切换 |
-| 观测后端 | OpenTelemetry 初始化点 | Span 与属性 | 可由 Console Exporter 切换至 OTLP/Jaeger/Tempo |
+| 观测后端 | OpenTelemetry SDK + OTLP Collector | Trace、Metrics 与脱敏属性 | Collector 可扩展 LangSmith、Jaeger、Tempo 等 exporter |
 | 部署 | Docker Compose、Kubernetes manifests | 环境变量与容器配置 | 可从本地栈演进至容器平台 |
 
 ### 15.2 尚未实现但需要预留的扩展
@@ -488,6 +488,6 @@ flowchart TD
 | 记忆 | SQL 持久化 + 可选 Redis | Redis 故障不阻断流程 | Redis 强依赖、向量长期记忆 |
 | 质量保障 | QA + Response Filter + HITL | 高风险回答优先保守处理 | 自动 Reflection 循环、全自动闭环 |
 | 恢复 | 受限回退与人工接管 | 避免无限 Retry 和重复副作用 | 无边界自动重试 |
-| 可观测 | Prometheus + OpenTelemetry Console | 兼顾趋势与调用路径 | 仅日志；OTLP 集中追踪待后续接入 |
+| 可观测 | OpenTelemetry + OTLP Collector | 统一采集 Trace / Metrics，转发 LangSmith 与 Prometheus | 应用直连多个后端会形成双轨并增加数据治理成本 |
 
 后续任何架构变更都必须遵守本文件中的安全短路、ToolRegistry、状态机、Mock 边界与 Redis 可选性约束；如果这些约束本身发生变化，应先更新 `00_PROJECT_CONTEXT.md`，再更新本文和相关测试。

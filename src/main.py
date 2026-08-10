@@ -55,6 +55,7 @@ from src.observability.tracing import (
     get_current_trace_id,
     get_tracer,
     init_tracing,
+    observed_span,
     reset_request_id,
     set_span_attributes,
 )
@@ -87,7 +88,7 @@ def _route_template(request: Request) -> str:
 # --- FastAPI Lifespan Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize OpenTelemetry/LangSmith tracing configurations
+    # 初始化统一 OpenTelemetry Trace 与 Metrics。
     init_tracing()
     # Create DB schemas (SQLite or PostgreSQL)
     await init_db()
@@ -125,7 +126,7 @@ async def track_http_telemetry(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request_token = bind_request_id(request_id)
     try:
-        with tracer.start_as_current_span(f"api.{method}") as span:
+        with observed_span(tracer, f"api.{method}") as span:
             set_span_attributes(
                 span,
                 {
@@ -159,7 +160,10 @@ async def track_http_telemetry(request: Request, call_next):
                 _record_http_metrics(
                     method, route_template, "500", time.time() - start_time
                 )
-                set_span_attributes(span, {"http.status_code": 500, "error": str(e)})
+                set_span_attributes(
+                    span,
+                    {"http.status_code": 500, "error.type": e.__class__.__name__},
+                )
                 raise
     finally:
         reset_request_id(request_token)

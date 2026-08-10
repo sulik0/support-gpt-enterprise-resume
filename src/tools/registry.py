@@ -8,8 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
-from src.observability.tracing import get_tracer, set_span_attributes
-from src.observability.langsmith_tracing import traceable
+from src.observability.tracing import get_tracer, observed_span, set_span_attributes
 from src.observability.metrics import TOOL_CALLS_TOTAL, TOOL_CALL_DURATION_SECONDS
 
 
@@ -70,7 +69,6 @@ class ToolRegistry:
     def get_audit_log(self) -> List[Dict[str, Any]]:
         return list(self._audit_log)
 
-    @traceable(name="supportgpt.tool.call", run_type="tool")
     async def call_tool(
         self,
         name: str,
@@ -78,16 +76,16 @@ class ToolRegistry:
         role: str = "agent",
         ticket_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        with tracer.start_as_current_span(f"tool.{name}") as span:
-            set_span_attributes(
-                span,
-                {
-                    "tool.name": name,
-                    "tool.role": role,
-                    "ticket.id": ticket_id,
-                    "tool.payload_keys": sorted(payload.keys()),
-                },
-            )
+        with observed_span(
+            tracer,
+            "supportgpt.tool.call",
+            {
+                "tool.name": name,
+                "tool.role": role,
+                "ticket.id": ticket_id,
+                "tool.payload_keys": sorted(payload.keys()),
+            },
+        ) as span:
             result = await self._call_tool_impl(name, payload, role, ticket_id)
             set_span_attributes(
                 span,
@@ -96,7 +94,7 @@ class ToolRegistry:
                     "tool.status": result.get("status"),
                     "tool.mocked": result.get("mocked"),
                     "tool.latency_ms": result.get("latency_ms"),
-                    "tool.error": result.get("error"),
+                    "tool.has_error": bool(result.get("error")),
                 },
             )
             return result

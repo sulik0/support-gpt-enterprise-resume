@@ -11,9 +11,6 @@ services:
       - LLM_PROVIDER=mock
       - APP_ENV=production
       - VECTOR_DB_PERSIST_DIR=/app/chromadb_store
-      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-supportgpt-enterprise}
       - OTEL_ENABLED=true
       - OTEL_SERVICE_NAME=supportgpt-backend
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
@@ -55,9 +52,9 @@ services:
     image: otel/opentelemetry-collector-contrib:0.157.0
     command: ["--config=/etc/otelcol-contrib/config.yml"]
     environment:
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-supportgpt-enterprise}
-      - LANGSMITH_OTEL_ENDPOINT=${LANGSMITH_OTEL_ENDPOINT:-https://api.smith.langchain.com/otel/v1/traces}
+      - LANGSMITH_API_KEY=${OTEL_COLLECTOR_LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${OTEL_COLLECTOR_LANGSMITH_PROJECT:-supportgpt-enterprise}
+      - LANGSMITH_OTEL_ENDPOINT=${OTEL_COLLECTOR_LANGSMITH_ENDPOINT:-https://api.smith.langchain.com/otel/v1/traces}
     volumes:
       - ../monitoring/otel-collector.yml:/etc/otelcol-contrib/config.yml:ro
     ports:

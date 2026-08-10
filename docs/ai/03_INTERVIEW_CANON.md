@@ -274,7 +274,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 | 工具、LLM 或 QA 异常 | 外部能力或 Provider 可能失败 | 记录错误、使用安全降级、触发人工审批 | 不要说已实现 Circuit Breaker、消息队列或通用 Retry |
 | 会话历史未进入推理 | 历史当前只保存和读取 | 将其作为后续改造项 | 不要说系统已经具备多轮上下文推理 |
 | 工具审计不持久化 | 审计记录当前驻留进程内并可随响应返回 | 作为后续审计表改造项 | 不要说已有完整合规审计平台 |
-| Trace 仅控制台输出 | 已有 Span，但默认是 Console Exporter | 后续接 OTLP / Jaeger / Tempo | 不要说已有集中式 APM 或全链路生产追踪 |
+| Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；恢复后继续上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |
 
 ## 22. 未来规划
 
@@ -286,7 +286,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 4. 增加 `ticket_status_events` 和持久化 Tool Calling 审计记录。
 5. 完成客服工作台，展示工单、AI 草稿、Tool Context、citation、QA、风险原因与审批动作。
 6. 将 Prompt 版本化，并在 Golden Set 基础上记录版本、审批率、QA、延迟和 token 成本。
-7. 将 OpenTelemetry 从 Console Exporter 演进至 OTLP，并接入 Jaeger、Tempo 或云 APM。
+7. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
 8. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
 
 ## 23. 长期一致性规则

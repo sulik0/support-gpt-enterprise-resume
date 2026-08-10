@@ -99,7 +99,7 @@ closed -> in_progress            # 重新打开
 ### Observability
 
 - Prometheus 指标在 `src/observability/metrics.py`。
-- OpenTelemetry 初始化和 helper 在 `src/observability/tracing.py`。
+- OpenTelemetry 初始化、统一 Span helper 和 OTLP exporter 在 `src/observability/tracing.py`；应用不使用 LangSmith `traceable` 直连。
 - 已增加 spans：
   - `api.{method} {path}`
   - `agent.workflow`
@@ -227,7 +227,7 @@ closed -> in_progress            # 重新打开
 - **Redis 可选**：Redis 不应成为本地 demo 的硬依赖。
 - **LLM 默认 mock**：默认 `LLM_PROVIDER=mock`，保证本地可复现。
 - **Python 版本**：项目推荐 Python 3.11。当前本机 `.venv` 是 Python 3.13，pytest 有 native dependency crash 风险。
-- **Trace 生产边界**：当前 OpenTelemetry 使用 Console Exporter，生产应接 OTLP exporter / Jaeger / Tempo。
+- **Trace 导出边界**：应用只通过 OpenTelemetry OTLP 向 Collector 上报；Collector 当前将 Trace 转发 LangSmith，不启用 LangSmith SDK 直连。
 - **简历叙事**：强调生产风格架构、业务闭环、可观测性、可替换真实业务系统。不要伪造真实上线或真实客户数据。
 
 ## 7. APIs and Interfaces

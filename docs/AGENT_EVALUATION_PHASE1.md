@@ -25,13 +25,11 @@ Trace 序列化会对 email、电话号码和 secret/token 类字段做脱敏，
 在 `.env` 中配置：
 
 ```dotenv
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=<your-key>
-LANGSMITH_PROJECT=supportgpt-enterprise
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
 ```
 
-项目继续兼容 `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` 旧变量。LangSmith 不可用或未启用时，业务调用保持原样运行。
+Agent Evaluation 与线上请求使用同一套 OpenTelemetry Trace。应用不启用 LangSmith SDK 直连；如需在 LangSmith 查看 Trace，由 OpenTelemetry Collector 通过 OTLP 统一转发。
 
 ## 离线评测数据集
 

@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from src.models.db_models import ResponseApproval, Ticket
 from src.models.schemas import ResponseApprovalRequest
 from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine
-from src.observability.tracing import get_tracer, set_span_attributes
+from src.observability.tracing import get_tracer, observed_span, set_span_attributes
 from src.observability.metrics import HUMAN_APPROVALS_TOTAL
 
 logger = logging.getLogger("supportgpt.approval.workflows")
@@ -24,7 +24,7 @@ class HumanInTheLoopService:
         self, db: AsyncSession, ticket_id: int, drafted_response: str
     ) -> ResponseApproval:
         """Create a pending response approval ticket."""
-        with tracer.start_as_current_span("approval.create_pending") as span:
+        with observed_span(tracer, "approval.create_pending") as span:
             set_span_attributes(
                 span,
                 {
@@ -91,7 +91,7 @@ class HumanInTheLoopService:
         Approve, reject, or edit an AI draft.
         Tracks response latency between AI generation and human review.
         """
-        with tracer.start_as_current_span("approval.process") as span:
+        with observed_span(tracer, "approval.process") as span:
             set_span_attributes(
                 span,
                 {

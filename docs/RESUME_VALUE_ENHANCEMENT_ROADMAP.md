@@ -126,9 +126,9 @@ LLM 应用出现慢请求或错误时，需要知道耗时花在检索、工具�
 
 ### 后续可增强
 
-- 替换 Console Exporter 为 OTLP exporter。
-- 接入 Jaeger、Tempo 或云厂商 APM。
-- 将 trace id 返回给前端，方便客服反馈问题时定位单次请求。
+- 为 Collector 增加 Jaeger、Tempo 或其他 APM exporter。
+- 完善 Trace sampling、Collector 高可用与容量告警。
+- 在前端展示响应中的 trace id，方便客服定位单次请求。
 
 ### 简历可写法
 

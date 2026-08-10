@@ -2,7 +2,7 @@
 
 ## 目标
 
-本阶段在不改变 Agent 业务路由、Tool 权限和 HITL 规则的前提下，建立 LangSmith + OpenTelemetry + Prometheus/Grafana 可观测体系。
+本阶段在不改变 Agent 业务路由、Tool 权限和 HITL 规则的前提下，建立以 OpenTelemetry 为唯一采集标准、以 LangSmith 和 Prometheus/Grafana 为观测后端的可观测体系。
 
 ```mermaid
 flowchart LR
@@ -12,20 +12,20 @@ flowchart LR
     PROM --> GRAF["Grafana"]
 ```
 
-LangSmith 用于 Agent 语义级 Trace，OpenTelemetry 负责一次请求的通用分布式链路，Prometheus/Grafana 负责聚合指标、趋势与告警视图。
+应用仅使用 OpenTelemetry SDK 采集 Trace 与 Metrics，并统一通过 OTLP 发送到 Collector。Collector 将 Trace 转发至 LangSmith，将 Metrics 转换为 Prometheus 格式；应用不使用 LangSmith `traceable` 或 LangChain tracing 环境变量直连。
 
 ## Trace 范围
 
 ### Agent Trace
 
-| 运行步骤 | OTel Span | LangSmith Run Type |
+| 运行步骤 | OTel Span | 组件类型 |
 |---|---|---|
-| LangGraph Workflow | `supportgpt.langgraph.workflow` | `chain` |
-| Ticket Analyzer | `agent.analyzer` | workflow child |
-| Retriever | `supportgpt.rag.hybrid_retriever` | `retriever` |
-| Tool Calling | `supportgpt.tool.call` | `tool` |
-| LLM Generation / QA | `supportgpt.llm.*` | `llm` |
-| HITL | `approval.create_pending` / `approval.process` | OTel child span |
+| LangGraph Workflow | `supportgpt.langgraph.workflow` | Workflow |
+| Ticket Analyzer | `agent.analyzer` | Agent Node |
+| Retriever | `supportgpt.rag.hybrid_retriever` | Retriever |
+| Tool Calling | `supportgpt.tool.call` | Tool |
+| LLM Generation / QA | `supportgpt.llm.*` | LLM |
+| HITL | `approval.create_pending` / `approval.process` | Approval |
 
 Agent Span 记录低基数关联字段：
 
@@ -114,9 +114,6 @@ histogram_quantile(
 ## 配置
 
 ```dotenv
-LANGSMITH_API_KEY=<your-key>
-LANGSMITH_PROJECT=supportgpt-enterprise
-
 OTEL_ENABLED=true
 OTEL_SERVICE_NAME=supportgpt-backend
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
@@ -126,7 +123,15 @@ OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS=3
 OTEL_TRACE_SAMPLE_RATIO=1.0
 ```
 
-Docker Compose 默认将 Application Trace 和 Metrics 统一发送到 Collector。Collector 将 Trace 发送到 LangSmith，并将 Metrics 转换为 Prometheus exposition format。若同时启用 `LANGSMITH_TRACING=true`，还会开启旧版 LangSmith SDK 直连 Trace；Phase 1 推荐在 Compose 中保持其为 `false`，避免重复上报。
+Collector 转发 LangSmith 时单独使用以下环境变量，它们不会注入 Backend：
+
+```dotenv
+OTEL_COLLECTOR_LANGSMITH_API_KEY=<your-key>
+OTEL_COLLECTOR_LANGSMITH_PROJECT=supportgpt-enterprise
+OTEL_COLLECTOR_LANGSMITH_ENDPOINT=https://api.smith.langchain.com/otel/v1/traces
+```
+
+Docker Compose 默认将 Application Trace 和 Metrics 统一发送到 Collector。代码中不存在 LangSmith SDK `traceable` 双轨路径，Collector 或下游不可用时，应用遥测保持 fail-open，不影响客服业务主流程。
 
 ## 运行
 

@@ -117,7 +117,7 @@ When the stack is running, you can access monitoring panels:
 - **Prometheus Dashboard**: [http://localhost:9090](http://localhost:9090)
 - **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
 
-Phase 1 的 LangSmith + OpenTelemetry + Prometheus/Grafana 配置、指标和验收流程参见 [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md)。
+Phase 1 的 OpenTelemetry 统一采集、Collector → LangSmith/Prometheus 导出和 Grafana 验收流程参见 [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md)。
 
 ---
 

@@ -35,18 +35,7 @@ class Settings(BaseSettings):
     CHROMA_HOST: Optional[str] = Field(default=None)
     CHROMA_PORT: Optional[int] = Field(default=None)
 
-    # Observability
-    LANGSMITH_TRACING: bool = Field(default=False)
-    LANGSMITH_API_KEY: Optional[str] = Field(default=None)
-    LANGSMITH_PROJECT: str = Field(default="supportgpt-enterprise")
-    LANGSMITH_ENDPOINT: str = Field(default="https://api.smith.langchain.com")
-    LANGSMITH_WORKSPACE_ID: Optional[str] = Field(default=None)
-    # Legacy LangChain names remain supported for backwards compatibility.
-    LANGCHAIN_TRACING_V2: bool = Field(default=False)
-    LANGCHAIN_API_KEY: Optional[str] = Field(default=None)
-    LANGCHAIN_PROJECT: str = Field(default="supportgpt-enterprise")
-
-    # OpenTelemetry
+    # Observability：应用仅通过 OpenTelemetry SDK 采集并使用 OTLP 导出。
     OTEL_ENABLED: bool = Field(default=True)
     OTEL_SERVICE_NAME: str = Field(default="supportgpt-backend")
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Optional[str] = Field(default=None)
@@ -56,6 +45,14 @@ class Settings(BaseSettings):
     OTEL_CONSOLE_EXPORTER: bool = Field(default=False)
     OTEL_TRACE_SAMPLE_RATIO: float = Field(default=1.0, ge=0.0, le=1.0)
     OTEL_EXCLUDED_URLS: str = Field(default="health")
+    # 仅用于共享 .env 校验和 Collector 容器替换，业务代码不会使用或直连。
+    OTEL_COLLECTOR_LANGSMITH_API_KEY: Optional[str] = Field(default=None)
+    OTEL_COLLECTOR_LANGSMITH_PROJECT: str = Field(
+        default="supportgpt-enterprise"
+    )
+    OTEL_COLLECTOR_LANGSMITH_ENDPOINT: str = Field(
+        default="https://api.smith.langchain.com/otel/v1/traces"
+    )
 
     # Guardrails Settings
     PII_ANONYMIZATION_ENABLED: bool = Field(default=True)

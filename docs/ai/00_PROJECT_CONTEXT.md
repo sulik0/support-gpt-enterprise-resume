@@ -294,7 +294,7 @@ resolved / closed --reopen--> in_progress
 - Mock / OpenAI / Azure OpenAI LLM Provider 适配。
 - SQLAlchemy 持久化模型、Redis 可选会话存储与 SQL 降级。
 - Human-in-the-Loop 审批与工单状态机。
-- Prometheus Metrics 和 OpenTelemetry Console Trace。
+- OpenTelemetry 统一 Trace / Metrics 采集、OTLP Collector、LangSmith Trace 后端和 Prometheus / Grafana 指标展示。
 - Docker Compose、Kubernetes manifests、分层 requirements 和 Python 3.11 GitHub Actions smoke CI。
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - 覆盖 Agent、API、Auth、Guardrails、RAG、Evaluation、Observability、Tool Registry 和工单状态机的 pytest 测试模块。
@@ -303,7 +303,7 @@ resolved / closed --reopen--> in_progress
 
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
 - **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
-- **Trace**：核心 Span 已接入，但默认仅使用 Console Exporter，尚未接 OTLP / Jaeger / Tempo。
+- **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
 - **评测**：指标 Adapter 和报告管道已存在，但缺少 Golden Set、人工标注与稳定回归基线。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
@@ -342,7 +342,7 @@ resolved / closed --reopen--> in_progress
 
 - 新增 `ticket_status_events` 持久化状态流转历史。
 - 持久化 Tool Calling 审计记录。
-- 将 OpenTelemetry Console Exporter 替换为 OTLP Exporter，并接入 Jaeger、Tempo 或云 APM。
+- 根据部署需要为 Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样与告警策略。
 
 ### P2：客服工作台
 

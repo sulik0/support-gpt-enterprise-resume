@@ -1,15 +1,16 @@
-import os
 import sys
 from unittest.mock import MagicMock, AsyncMock
 
 # Inject mock modules before any imports to prevent real dependency loading issues
 mock_ragas = MagicMock()
-mock_ragas.evaluate = MagicMock(return_value={
-    "faithfulness": 0.95,
-    "answer_relevance": 0.90,
-    "context_precision": 0.88,
-    "context_recall": 0.85
-})
+mock_ragas.evaluate = MagicMock(
+    return_value={
+        "faithfulness": 0.95,
+        "answer_relevance": 0.90,
+        "context_precision": 0.88,
+        "context_recall": 0.85,
+    }
+)
 sys.modules["ragas"] = mock_ragas
 sys.modules["ragas.metrics"] = MagicMock()
 
@@ -25,11 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.rbac import RoleChecker
 from src.models.db_models import User, Ticket
 from src.database import init_db, get_db
-from src.rag.ingestion import extract_text_from_file, extract_pdf_text, extract_docx_text
+from src.rag.ingestion import (
+    extract_text_from_file,
+    extract_pdf_text,
+    extract_docx_text,
+)
 from src.approval.workflows import human_it_loop_service
 from src.models.schemas import ResponseApprovalRequest
 from src.observability.tracing import init_tracing
-from src.config import settings
+
 
 # --- INGESTION MOCKING ---
 def test_pdf_docx_parsers(mocker):
@@ -53,12 +58,15 @@ def test_pdf_docx_parsers(mocker):
     extracted_docx = extract_docx_text("dummy.docx")
     assert extracted_docx == "Mocked DOCX paragraph"
 
+
 # --- TRACING COVERAGE ---
-def test_tracing_initialization(mocker):
-    mocker.patch("src.config.settings.LANGCHAIN_TRACING_V2", True)
-    mocker.patch("src.config.settings.LANGCHAIN_API_KEY", "dummykey")
+def test_tracing_initialization():
+    from opentelemetry import metrics, trace
+
     init_tracing()
-    assert os.environ.get("LANGCHAIN_TRACING_V2") == "true"
+    assert trace.get_tracer_provider() is not None
+    assert metrics.get_meter_provider() is not None
+
 
 # --- EVALUATION MOCKING ---
 @pytest.mark.asyncio
@@ -70,29 +78,40 @@ async def test_ragas_deepeval_adapters_try_blocks(mocker):
     mock_metric_inst = MagicMock()
     mock_metric_inst.score = 0.1
     mock_metric_inst.is_successful.return_value = True
-    
+
     sys.modules["deepeval.metrics"].HallucinationMetric.return_value = mock_metric_inst
-    sys.modules["deepeval.metrics"].AnswerRelevancyMetric.return_value = mock_metric_inst
+    sys.modules["deepeval.metrics"].AnswerRelevancyMetric.return_value = (
+        mock_metric_inst
+    )
 
     # Force api_key properties directly to bypass getenv cache check
     ragas_evaluator.api_key = "real-key-123"
     deepeval_evaluator.api_key = "real-key-123"
 
     try:
-        res_ragas = await ragas_evaluator.run_evaluation("query", ["context"], "response")
+        res_ragas = await ragas_evaluator.run_evaluation(
+            "query", ["context"], "response"
+        )
         assert res_ragas["faithfulness"] == 0.95
 
-        res_deep = await deepeval_evaluator.run_evaluation("query", ["context"], "response")
+        res_deep = await deepeval_evaluator.run_evaluation(
+            "query", ["context"], "response"
+        )
         assert res_deep["hallucination_score"] == 0.1
     finally:
         # Reset keys to avoid side effects in other test suites
         ragas_evaluator.api_key = None
         deepeval_evaluator.api_key = None
 
+
 # --- LLM PROVIDER & EMBEDDING MOCKING ---
 @pytest.mark.asyncio
 async def test_providers_mocking(mocker):
-    from src.llm.provider import OpenAILLMProvider, AzureOpenAILLMProvider, MockLLMProvider
+    from src.llm.provider import (
+        OpenAILLMProvider,
+        AzureOpenAILLMProvider,
+        MockLLMProvider,
+    )
     from src.rag.embedding import OpenAIEmbeddingProvider
 
     # 1. Mock completions object
@@ -102,7 +121,7 @@ async def test_providers_mocking(mocker):
     mock_message.content = '{"sentiment": "positive", "priority": "low", "department": "general", "intent": "greet", "detected_emotions": ["calm"], "confidence_score": 0.99}'
     mock_choice.message = mock_message
     mock_chat_completion.choices = [mock_choice]
-    
+
     mock_usage = MagicMock()
     mock_usage.prompt_tokens = 100
     mock_usage.completion_tokens = 50
@@ -111,7 +130,9 @@ async def test_providers_mocking(mocker):
     mock_async_client = MagicMock()
     mock_async_client.chat = MagicMock()
     mock_async_client.chat.completions = MagicMock()
-    mock_async_client.chat.completions.create = AsyncMock(return_value=mock_chat_completion)
+    mock_async_client.chat.completions.create = AsyncMock(
+        return_value=mock_chat_completion
+    )
 
     # Mock OpenAI client construction
     mocker.patch("openai.AsyncOpenAI", return_value=mock_async_client)
@@ -135,7 +156,9 @@ async def test_providers_mocking(mocker):
 
     # Test Mock LLM provider run_chat method (for coverage)
     mock_provider = MockLLMProvider()
-    chat_res, _, _ = await mock_provider.run_chat([{"role": "user", "content": "hi"}], "context")
+    chat_res, _, _ = await mock_provider.run_chat(
+        [{"role": "user", "content": "hi"}], "context"
+    )
     assert "automated response" in chat_res.lower()
 
     # 2. Mock OpenAI Embeddings
@@ -152,6 +175,7 @@ async def test_providers_mocking(mocker):
     embs = await emb_provider.get_embeddings(["text1", "text2"])
     assert len(embs) == 2
 
+
 # --- DATABASE DEPENDENCY SCOPE ---
 @pytest.mark.asyncio
 async def test_database_get_db_yield():
@@ -165,17 +189,25 @@ async def test_database_get_db_yield():
     except StopAsyncIteration:
         pass
 
+
 # --- APPROVAL WORKFLOWS DATABASE LOGS ---
 @pytest.mark.asyncio
 async def test_approval_workflows_database_commits(db_session: AsyncSession):
     # 1. Create a dummy ticket
-    ticket = Ticket(customer_id="cust_999", subject="Workflow check", description="issue desc", status="open")
+    ticket = Ticket(
+        customer_id="cust_999",
+        subject="Workflow check",
+        description="issue desc",
+        status="open",
+    )
     db_session.add(ticket)
     await db_session.commit()
     await db_session.refresh(ticket)
 
     # 2. Create pending approval
-    appr = await human_it_loop_service.create_pending_approval(db_session, ticket.id, "AI proposed answer")
+    appr = await human_it_loop_service.create_pending_approval(
+        db_session, ticket.id, "AI proposed answer"
+    )
     assert appr.id is not None
     assert appr.status == "pending"
 
@@ -187,10 +219,7 @@ async def test_approval_workflows_database_commits(db_session: AsyncSession):
     # 4. Process agent approval (success flow)
     req = ResponseApprovalRequest(approval_id=appr.id, status="approved")
     processed = await human_it_loop_service.process_agent_approval(
-        db=db_session,
-        approval_id=appr.id,
-        agent_id=1,
-        req=req
+        db=db_session, approval_id=appr.id, agent_id=1, req=req
     )
     assert processed.status == "approved"
     assert processed.modified_response == "AI proposed answer"
@@ -198,17 +227,19 @@ async def test_approval_workflows_database_commits(db_session: AsyncSession):
     # Test error processing non-pending approval
     with pytest.raises(Exception):
         await human_it_loop_service.process_agent_approval(
-            db=db_session,
-            approval_id=appr.id,
-            agent_id=1,
-            req=req
+            db=db_session, approval_id=appr.id, agent_id=1, req=req
         )
+
 
 # --- FASTAPI REMAINING ROUTES ---
 @pytest.mark.asyncio
 async def test_remaining_fastapi_routes(client: AsyncClient):
     # 1. Create a ticket to register ID 1
-    ticket_payload = {"customer_id": "cust_101", "subject": "Slow performance", "description": "System is laggy"}
+    ticket_payload = {
+        "customer_id": "cust_101",
+        "subject": "Slow performance",
+        "description": "System is laggy",
+    }
     create_res = await client.post("/tickets", json=ticket_payload)
     assert create_res.status_code == 201
     ticket_id = create_res.json()["id"]
@@ -219,21 +250,29 @@ async def test_remaining_fastapi_routes(client: AsyncClient):
     assert len(list_res.json()) > 0
 
     # 3. Summarize ticket
-    sum_res = await client.post("/summarize-ticket", json={"ticket_id": ticket_id, "kb_version": "v1"})
+    sum_res = await client.post(
+        "/summarize-ticket", json={"ticket_id": ticket_id, "kb_version": "v1"}
+    )
     assert sum_res.status_code == 200
     assert sum_res.json()["ticket_id"] == ticket_id
 
     # 4. Suggest response
-    sug_res = await client.post("/suggest-response", json={"ticket_id": ticket_id, "kb_version": "v1"})
+    sug_res = await client.post(
+        "/suggest-response", json={"ticket_id": ticket_id, "kb_version": "v1"}
+    )
     assert sug_res.status_code == 200
     assert sug_res.json()["ticket_id"] == ticket_id
 
     # 5. Analyze sentiment
-    sent_res = await client.post("/analyze-sentiment", json={"ticket_id": ticket_id, "kb_version": "v1"})
+    sent_res = await client.post(
+        "/analyze-sentiment", json={"ticket_id": ticket_id, "kb_version": "v1"}
+    )
     assert sent_res.status_code == 200
     assert sent_res.json()["ticket_id"] == ticket_id
 
     # 6. Recommend escalation
-    esc_res = await client.post("/recommend-escalation", json={"ticket_id": ticket_id, "kb_version": "v1"})
+    esc_res = await client.post(
+        "/recommend-escalation", json={"ticket_id": ticket_id, "kb_version": "v1"}
+    )
     assert esc_res.status_code == 200
     assert esc_res.json()["ticket_id"] == ticket_id

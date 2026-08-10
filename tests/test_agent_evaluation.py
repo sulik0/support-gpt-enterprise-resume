@@ -8,7 +8,7 @@ from src.evaluation.offline_rag import (
     run_offline_evaluation,
 )
 from src.llm.provider import MockLLMProvider
-from src.observability.langsmith_tracing import sanitize_trace_value
+from src.observability.sanitization import sanitize_value
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +25,7 @@ def test_golden_dataset_is_valid_and_unique():
 
 
 def test_trace_sanitizer_redacts_secrets_and_pii():
-    sanitized = sanitize_trace_value(
+    sanitized = sanitize_value(
         {
             "message": "Contact alice@example.com or +86 138 0013 8000",
             "api_key": "secret-value",

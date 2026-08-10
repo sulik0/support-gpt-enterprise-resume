@@ -1,7 +1,10 @@
-import os
+import functools
+import inspect
 import logging
+import time
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 from src.config import settings
 from src.observability.sanitization import sanitize_attributes, redact_text
@@ -59,50 +62,106 @@ def mark_span_error(span: Any, error: BaseException) -> None:
     try:
         from opentelemetry.trace import Status, StatusCode
 
-        safe_message = redact_text(str(error))[:256]
         span.add_event(
             "exception",
             {
                 "exception.type": error.__class__.__name__,
-                "exception.message": safe_message,
                 "exception.escaped": True,
             },
         )
-        span.set_status(Status(StatusCode.ERROR, safe_message))
+        span.set_status(Status(StatusCode.ERROR))
     except Exception:
         return
 
 
+@contextmanager
+def observed_span(
+    tracer: Any, name: str, attributes: Optional[Dict[str, Any]] = None
+) -> Iterator[Any]:
+    """创建统一 OTel Span，并以脱敏属性记录耗时和异常。"""
+    started = time.perf_counter()
+    with tracer.start_as_current_span(
+        name, record_exception=False, set_status_on_exception=False
+    ) as span:
+        set_span_attributes(
+            span,
+            {
+                **(attributes or {}),
+                "request.id": (attributes or {}).get("request.id") or get_request_id(),
+            },
+        )
+        try:
+            yield span
+        except BaseException as exc:
+            set_span_attributes(span, {"operation.status": "error"})
+            mark_span_error(span, exc)
+            raise
+        else:
+            set_span_attributes(
+                span,
+                {
+                    "operation.status": "success",
+                    "operation.duration_seconds": time.perf_counter() - started,
+                },
+            )
+
+
+def trace_operation(*, name: str, component: str) -> Callable:
+    """使用纯 OpenTelemetry 装饰同步或异步操作，不采集输入输出正文。"""
+
+    def decorator(function: Callable) -> Callable:
+        tracer = get_tracer(function.__module__)
+
+        if inspect.iscoroutinefunction(function):
+
+            @functools.wraps(function)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                # 仅记录低敏元数据，避免 Prompt 和业务结果进入观测系统。
+                with observed_span(
+                    tracer,
+                    name,
+                    {
+                        "observability.component": component,
+                        "code.function.name": function.__qualname__,
+                    },
+                ) as span:
+                    result = await function(*args, **kwargs)
+                    if (
+                        component == "llm"
+                        and isinstance(result, tuple)
+                        and len(result) >= 3
+                    ):
+                        set_span_attributes(
+                            span,
+                            {
+                                "gen_ai.usage.input_tokens": result[-2],
+                                "gen_ai.usage.output_tokens": result[-1],
+                            },
+                        )
+                    return result
+
+            return async_wrapper
+
+        @functools.wraps(function)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            with observed_span(
+                tracer,
+                name,
+                {
+                    "observability.component": component,
+                    "code.function.name": function.__qualname__,
+                },
+            ):
+                return function(*args, **kwargs)
+
+        return sync_wrapper
+
+    return decorator
+
+
 def init_tracing() -> None:
-    """Initialize OpenTelemetry traces/metrics and LangSmith settings."""
+    """初始化 OpenTelemetry Trace、Metrics 和统一 OTLP exporter。"""
     global _initialized
-    # LangSmith config
-    langsmith_enabled = settings.LANGSMITH_TRACING or settings.LANGCHAIN_TRACING_V2
-    if settings.LANGSMITH_TRACING:
-        langsmith_api_key = settings.LANGSMITH_API_KEY or settings.LANGCHAIN_API_KEY
-        langsmith_project = settings.LANGSMITH_PROJECT
-    else:
-        langsmith_api_key = settings.LANGCHAIN_API_KEY or settings.LANGSMITH_API_KEY
-        langsmith_project = settings.LANGCHAIN_PROJECT
-
-    if langsmith_enabled:
-        os.environ["LANGSMITH_TRACING"] = "true"
-        os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        if langsmith_api_key:
-            os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
-            os.environ["LANGCHAIN_API_KEY"] = langsmith_api_key
-        os.environ["LANGSMITH_PROJECT"] = langsmith_project
-        os.environ["LANGCHAIN_PROJECT"] = langsmith_project
-        os.environ["LANGSMITH_ENDPOINT"] = settings.LANGSMITH_ENDPOINT
-        os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGSMITH_ENDPOINT
-        if settings.LANGSMITH_WORKSPACE_ID:
-            os.environ["LANGSMITH_WORKSPACE_ID"] = settings.LANGSMITH_WORKSPACE_ID
-        logger.info("LangSmith tracing enabled and environment variables configured.")
-    else:
-        os.environ["LANGSMITH_TRACING"] = "false"
-        os.environ["LANGCHAIN_TRACING_V2"] = "false"
-        logger.info("LangSmith tracing is disabled.")
-
     if _initialized or not settings.OTEL_ENABLED:
         return
 

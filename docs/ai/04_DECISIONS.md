@@ -658,7 +658,7 @@ LangGraph Checkpoint 可以保存执行中状态，用于长流程恢复、中�
 
 ### 最终方案
 
-采用 Prometheus 记录请求、节点、token、成本、QA、Guardrail 和升级指标；采用 OpenTelemetry 串联 API、Workflow、工具、RAG 和审批 Span。
+采用 OpenTelemetry 统一采集请求、节点、token、成本、QA、Guardrail 等 Metrics，并串联 API、Workflow、LLM、工具、RAG 和审批 Span；通过 OTLP Collector 分别转发 LangSmith 与 Prometheus。
 
 ### 为什么选择
 
@@ -666,7 +666,7 @@ Agent 系统既需要运营指标，也需要排查“哪一步慢、哪一步�
 
 ### 工程权衡
 
-当前 Trace 默认使用 Console Exporter，尚未对接 OTLP、Jaeger 或 Tempo；工具审计也尚未持久化。
+统一 Collector 降低应用侧多套 SDK 的维护和脱敏成本，但 Collector 成为需要监控与容量规划的基础设施；工具审计仍尚未持久化。
 
 ## 决策 21：采用 Docker Compose、分层依赖和 Python 3.11 CI
 
@@ -780,5 +780,5 @@ RAG 质量不能只依靠主观体验，需要评估 Faithfulness、Context Prec
 | 记忆 | Redis 可选 + SQL 兜底 | 历史未注入生成 Prompt |
 | 审批 | 风险驱动 HITL + 状态机 | 阈值固定、状态事件未持久化 |
 | 恢复 | 受限回退、人工接管 | 无通用 Retry / Queue / Circuit Breaker |
-| 观测 | Prometheus + OpenTelemetry | Trace 仅 Console Exporter |
+| 观测 | OpenTelemetry + OTLP Collector + LangSmith / Prometheus | Collector 尚未高可用，未接 Jaeger / Tempo |
 | 评测 | Adapter + 本地降级 | 无 Golden Set 和生产基线 |

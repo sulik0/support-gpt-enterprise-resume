@@ -564,7 +564,7 @@ Agent 请求跨越分类、工具、检索、生成、QA 和审批，仅看总�
 
 OpenTelemetry 是一套厂商中立的可观测标准和 SDK，用于生成、传播与导出 Trace、Metrics 和 Logs 相关遥测数据。
 
-本项目主要使用它创建 Trace Span，默认导出到控制台；尚未接入 OTLP Collector、Jaeger 或 Tempo。
+本项目使用它统一创建 Trace Span 和 Metrics，并通过 OTLP 导出到 Collector。Collector 将 Trace 转发 LangSmith，将 Metrics 暴露给 Prometheus；应用不使用 LangSmith SDK 双轨采集。
 
 ### 87. Trace 和 Span 是什么？
 
@@ -576,7 +576,7 @@ Trace 表示一次端到端请求的完整调用链；Span 表示其中一个有
 
 当前 Span 包括：API 请求、Agent Workflow、Analyzer、Tooling、Retriever、Resolver、QA、Escalation、每个 Tool、RAG 主查询与回退、审批创建与审批处理。
 
-属性包括 ticket_id、customer_id、kb_version、department、priority、operator_role、工具状态和耗时、citation 数量、token、成本与审批结论。当前 LLM 没有单独的 Provider Span，主要通过节点 Span 和 token/成本元数据观察，这是改进点。
+属性包括经过脱敏的 ticket_id、customer_id、kb_version、department、priority、operator_role、工具状态和耗时、citation 数量、token、成本与审批结论。LLM Provider 使用独立 Span 记录操作、状态、耗时和 token，不记录 Prompt 或 Completion 正文。
 
 ### 89. 为什么不用普通日志？
 
@@ -594,11 +594,11 @@ Agent 还需要注意不能把客户 PII、完整 Prompt 或敏感 Tool 参数�
 
 先从 HTTP 延迟 Histogram 判断是否存在整体慢请求，再查看对应 Trace 的 Agent 节点 Span，比较 Tool、RAG、Resolver、QA 和审批耗时。结合 citation 数量、工具状态、token 数量判断是外部调用、检索候选还是模型上下文导致。
 
-当前默认只有 Console Trace，生产上需要 OTLP 后端、Trace ID 关联和采样策略才能高效查询。
+当前可通过响应头 `X-Trace-ID` 在 LangSmith 中关联查询；生产化还需要完善 Collector 高可用、采样策略、容量和告警。
 
 ### 92. 如何统计 Token 成本？
 
-各 LLM Provider 返回输入和输出 token，Workflow 汇总后按模型价格表估算 USD 成本，并写入响应元数据、Prometheus Counter 和 Trace 属性。Mock Provider 的成本为 0。
+各 LLM Provider 返回输入和输出 token，Workflow 汇总后按模型价格表估算 USD 成本，并写入响应元数据、OpenTelemetry Counter 和 Trace 属性。Mock Provider 的成本为 0。
 
 当前价格表是静态估算，不保证与供应商最新账单一致；Azure 部署名和实际价格也需要单独映射。
 

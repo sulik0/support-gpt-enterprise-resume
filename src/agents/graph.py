@@ -18,8 +18,7 @@ from src.observability.metrics import (
     LLM_COST_TOTAL,
     LLM_TOKENS_TOTAL,
 )
-from src.observability.tracing import get_request_id, get_tracer, set_span_attributes
-from src.observability.langsmith_tracing import traceable
+from src.observability.tracing import get_request_id, get_tracer, observed_span
 
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
@@ -80,38 +79,36 @@ async def _run_node(
 
 
 async def analyze_node(state: AgentState) -> Dict[str, Any]:
-    with tracer.start_as_current_span("agent.analyzer") as span:
-        set_span_attributes(span, _trace_attrs(state, node="analyzer"))
+    with observed_span(tracer, "agent.analyzer", _trace_attrs(state, node="analyzer")):
         return await _run_node("ticket_analyzer", ticket_analyzer_agent.analyze, state)
 
 
 async def retrieve_node(state: AgentState) -> Dict[str, Any]:
-    with tracer.start_as_current_span("agent.retriever") as span:
-        set_span_attributes(span, _trace_attrs(state, node="retriever"))
+    with observed_span(
+        tracer, "agent.retriever", _trace_attrs(state, node="retriever")
+    ):
         return await _run_node("retriever", knowledge_retriever_agent.retrieve, state)
 
 
 async def tooling_node(state: AgentState) -> Dict[str, Any]:
-    with tracer.start_as_current_span("agent.tooling") as span:
-        set_span_attributes(span, _trace_attrs(state, node="tooling"))
+    with observed_span(tracer, "agent.tooling", _trace_attrs(state, node="tooling")):
         return await _run_node("tool_call", tooling_agent.enrich, state)
 
 
 async def resolve_node(state: AgentState) -> Dict[str, Any]:
-    with tracer.start_as_current_span("agent.resolver") as span:
-        set_span_attributes(span, _trace_attrs(state, node="resolver"))
+    with observed_span(tracer, "agent.resolver", _trace_attrs(state, node="resolver")):
         return await _run_node("llm_generation", resolution_agent.resolve, state)
 
 
 async def qa_node(state: AgentState) -> Dict[str, Any]:
-    with tracer.start_as_current_span("agent.qa") as span:
-        set_span_attributes(span, _trace_attrs(state, node="qa"))
+    with observed_span(tracer, "agent.qa", _trace_attrs(state, node="qa")):
         return await _run_node("qa", quality_assurance_agent.verify, state)
 
 
 async def escalate_node(state: AgentState) -> Dict[str, Any]:
-    with tracer.start_as_current_span("agent.escalation") as span:
-        set_span_attributes(span, _trace_attrs(state, node="escalation"))
+    with observed_span(
+        tracer, "agent.escalation", _trace_attrs(state, node="escalation")
+    ):
         return await _run_node("escalation", escalation_agent.evaluate, state)
 
 
@@ -120,8 +117,6 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "agent.node": node,
         "request.id": state.get("request_id"),
         "ticket.id": state.get("ticket_id"),
-        "langsmith.metadata.request_id": state.get("request_id"),
-        "langsmith.metadata.ticket_id": state.get("ticket_id"),
         "kb.version": state.get("kb_version"),
         "ticket.department": state.get("department"),
         "ticket.priority": state.get("priority"),
@@ -170,7 +165,6 @@ def create_agent_graph() -> StateGraph:
 compiled_graph = create_agent_graph()
 
 
-@traceable(name="supportgpt.langgraph.workflow", run_type="chain")
 async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes the multi-agent workflow sequentially using LangGraph.
@@ -211,8 +205,11 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info(f"Invoking LangGraph flow for ticket ID {state_input['ticket_id']}")
     try:
-        with tracer.start_as_current_span("agent.workflow") as span:
-            set_span_attributes(span, _trace_attrs(state_input, node="workflow"))
+        with observed_span(
+            tracer,
+            "supportgpt.langgraph.workflow",
+            _trace_attrs(state_input, node="workflow"),
+        ):
             final_output = await compiled_graph.ainvoke(state_input)
         try:
             AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
@@ -253,8 +250,8 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         final_output["approval_required"] = True
         span_attrs["agent.approval_required"] = True
 
-    with tracer.start_as_current_span("agent.workflow.summary") as span:
-        set_span_attributes(span, span_attrs)
+    with observed_span(tracer, "agent.workflow.summary", span_attrs):
+        pass
 
     # Record OpenTelemetry usage metrics.
     try:
