@@ -46,7 +46,7 @@ async def get_current_user(
 
 
 class RoleChecker:
-    """Enforces specific RBAC roles for endpoints."""
+    """负责校验当前用户是否具备接口要求的 RBAC 角色。"""
     def __init__(self, allowed_roles: List[str]):
         self.allowed_roles = allowed_roles
 

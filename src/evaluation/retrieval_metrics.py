@@ -1,9 +1,7 @@
 from typing import List
 
 class RetrievalMetricsEvaluator:
-    """
-    Computes RAG retrieval metrics: Context Precision and Context Recall.
-    """
+    """计算检索上下文的 Context Precision 和 Context Recall。"""
     def calculate_precision(self, query: str, context: List[str]) -> float:
         """
         Context Precision: check if retrieved chunks contain query keywords.

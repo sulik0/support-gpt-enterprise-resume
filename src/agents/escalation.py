@@ -11,9 +11,9 @@ logger = logging.getLogger("supportgpt.agents.escalation")
 
 
 class EscalationAgent:
-    """
-    Evaluates SLA parameters, inspects QA evaluation scores, and suggests routing
-    escalation if the AI resolution fails confidence checks.
+    """负责根据优先级、情绪和 QA 结果判断是否升级人工。
+
+    同时计算当前工单对应的 SLA 处理时限。
     """
 
     async def evaluate(self, state: Dict[str, Any]) -> Dict[str, Any]:

@@ -5,6 +5,8 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
+    """集中定义应用运行配置，并支持通过环境变量覆盖默认值。"""
+
     # API Settings
     APP_NAME: str = Field(default="SupportGPT-Enterprise")
     APP_ENV: str = Field(default="development")
@@ -61,6 +63,8 @@ class Settings(BaseSettings):
     RESPONSE_FILTERING_ENABLED: bool = Field(default=True)
 
     class Config:
+        """定义 Pydantic Settings 读取 `.env` 的规则。"""
+
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True

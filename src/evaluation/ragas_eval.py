@@ -7,9 +7,9 @@ from src.evaluation.retrieval_metrics import retrieval_metrics_evaluator
 logger = logging.getLogger("supportgpt.evaluation.ragas")
 
 class RagasEvaluator:
-    """
-    RAGAS evaluation adapter. Connects to real Ragas framework if OPENAI_API_KEY
-    is configured, else defaults to local semantic scorers.
+    """封装 Ragas 的 RAG 质量评测流程。
+
+    缺少真实模型凭据时回退本地语义指标。
     """
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")

@@ -16,9 +16,9 @@ STOPWORDS = {
 }
 
 class VectorStoreManager:
-    """
-    Manages vector storage and retrieval using ChromaDB.
-    Supports version filtering, semantic search, and metadata querying.
+    """负责 ChromaDB 向量存储和 Hybrid RAG 检索。
+
+    支持知识库版本、类别过滤、词法融合和轻量 rerank。
     """
     def __init__(self):
         # Configure Chroma client based on config settings

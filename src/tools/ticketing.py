@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 logger = logging.getLogger("supportgpt.tools.ticketing")
 
 class TicketingTool:
-    """Mock Ticketing Tool mimicking an issue tracking system (Jira/ServiceNow)."""
+    """模拟工单系统的历史记录查询能力。"""
     def __init__(self):
         # Stub data for past tickets
         self.ticket_history: Dict[str, List[Dict[str, Any]]] = {

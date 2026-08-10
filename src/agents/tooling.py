@@ -9,12 +9,9 @@ logger = logging.getLogger("supportgpt.agents.tooling")
 
 
 class ToolingAgent:
-    """
-    Collects structured business context from support tools.
+    """负责调用受 ToolRegistry 管理的工具补全业务上下文。
 
-    The current tool implementations are mock adapters. They intentionally mimic
-    CRM, order-management, and ticketing systems so the Agent workflow can be
-    demonstrated locally without private enterprise integrations.
+    当前 CRM、订单和工单工具均为本地 Mock Adapter。
     """
 
     async def enrich(self, state: Dict[str, Any]) -> Dict[str, Any]:

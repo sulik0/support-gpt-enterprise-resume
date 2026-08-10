@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 logger = logging.getLogger("supportgpt.tools.order_mgmt")
 
 class OrderManagementTool:
-    """Mock Order Management Tool simulating retrieval of inventory and e-commerce transactions."""
+    """模拟 OMS 订单查询和退款资格初筛能力。"""
     def __init__(self):
         # Sample order histories
         self.orders: Dict[str, List[Dict[str, Any]]] = {

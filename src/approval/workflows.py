@@ -16,8 +16,9 @@ tracer = get_tracer(__name__)
 
 
 class HumanInTheLoopService:
-    """
-    Manages AI response validation, edits, approvals, and latency tracking.
+    """负责创建和处理人工审批记录。
+
+    审批结果会同步驱动工单状态机，并记录处理耗时。
     """
 
     async def create_pending_approval(

@@ -8,6 +8,8 @@ from src.models.db_models import Ticket
 
 
 class TicketStatus:
+    """集中定义工单生命周期中的合法状态常量。"""
+
     OPEN = "open"
     IN_PROGRESS = "in_progress"
     PENDING_APPROVAL = "pending_approval"
@@ -16,6 +18,8 @@ class TicketStatus:
 
 
 class TicketAction:
+    """集中定义可触发工单状态变更的业务动作。"""
+
     START_WORK = "start_work"
     REQUEST_APPROVAL = "request_approval"
     APPROVE_RESPONSE = "approve_response"
@@ -27,13 +31,15 @@ class TicketAction:
 
 @dataclass(frozen=True)
 class Transition:
+    """描述一次已执行的工单状态迁移。"""
+
     source: str
     target: str
     action: str
 
 
 class TicketStateMachine:
-    """Controls legal ticket status transitions for the support workflow."""
+    """统一校验并执行客服工单的合法状态流转。"""
 
     transitions: Dict[str, Dict[str, str]] = {
         TicketStatus.OPEN: {

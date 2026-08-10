@@ -11,9 +11,9 @@ tracer = get_tracer(__name__)
 
 
 class KnowledgeRetrievalAgent:
-    """
-    Retrieves supporting context, documentation guides, policies, and FAQs
-    from the vector database.
+    """负责从版本化知识库中检索政策、流程和 FAQ。
+
+    支持类别过滤与无类别回退，并将结果作为 citation 返回。
     """
 
     async def retrieve(self, state: Dict[str, Any]) -> Dict[str, Any]:

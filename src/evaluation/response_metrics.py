@@ -2,9 +2,7 @@ from typing import List
 from src.evaluation.hallucination import hallucination_evaluator
 
 class ResponseMetricsEvaluator:
-    """
-    Computes response metrics: Faithfulness and Answer Relevance.
-    """
+    """计算回答的 Faithfulness 和 Answer Relevance 指标。"""
     def calculate_faithfulness(self, context: List[str], response: str) -> float:
         """
         Faithfulness is the inverse of hallucination.

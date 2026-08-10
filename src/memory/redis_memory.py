@@ -8,11 +8,9 @@ logger = logging.getLogger("supportgpt.memory.redis")
 
 
 class RedisConversationMemory:
-    """
-    Optional Redis-backed short-term conversation memory.
+    """提供基于 Redis 的短期会话缓存。
 
-    SQL `SessionMemory` remains the durable store. Redis is used as a fast
-    working-memory cache when `REDIS_URL` is configured.
+    Redis 不可用时由上层回退 SQL `SessionMemory`，不阻断主流程。
     """
 
     def __init__(self, max_turns: int = 12):

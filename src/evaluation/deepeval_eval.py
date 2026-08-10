@@ -7,9 +7,9 @@ from src.evaluation.response_metrics import response_metrics_evaluator
 logger = logging.getLogger("supportgpt.evaluation.deepeval")
 
 class DeepEvalEvaluator:
-    """
-    DeepEval evaluation adapter. Connects to real DeepEval test-cases if API
-    keys are present, else defaults to local semantic scorers.
+    """封装 DeepEval 回复质量评测流程。
+
+    外部条件不满足时回退本地确定性评测器。
     """
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")

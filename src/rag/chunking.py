@@ -2,9 +2,9 @@ import re
 from typing import List
 
 class RecursiveTextSplitter:
-    """
-    A lightweight, robust text splitter that recursively splits text by paragraph, 
-    sentence, and whitespace separator boundaries, respecting maximum chunk size.
+    """按段落、句子和空白递归切分知识文档。
+
+    在限制 Chunk 长度的同时保留适量重叠上下文。
     """
     def __init__(self, chunk_size: int = 600, chunk_overlap: int = 120):
         self.chunk_size = chunk_size

@@ -6,6 +6,8 @@ from src.observability.tracing import trace_operation
 
 
 class BaseLLMProvider(ABC):
+    """定义工单分析、回复生成、QA 和对话能力的统一接口。"""
+
     @abstractmethod
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         """
@@ -46,6 +48,8 @@ class BaseLLMProvider(ABC):
 
 
 class MockLLMProvider(BaseLLMProvider):
+    """提供无需外部凭据的确定性 Mock LLM，便于本地演示与测试。"""
+
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         text_lower = text.lower()
@@ -152,6 +156,8 @@ class MockLLMProvider(BaseLLMProvider):
 
 
 class OpenAILLMProvider(BaseLLMProvider):
+    """通过 OpenAI Chat Completions 实现统一 LLM Provider 接口。"""
+
     def __init__(self):
         from openai import AsyncOpenAI
 
@@ -253,6 +259,8 @@ class OpenAILLMProvider(BaseLLMProvider):
 
 
 class AzureOpenAILLMProvider(BaseLLMProvider):
+    """通过 Azure OpenAI 部署实现统一 LLM Provider 接口。"""
+
     def __init__(self):
         from openai import AsyncAzureOpenAI
 

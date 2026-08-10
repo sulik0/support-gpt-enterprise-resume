@@ -5,6 +5,8 @@ from typing import List
 from src.config import settings
 
 class BaseEmbeddingProvider(ABC):
+    """定义单条和批量文本向量化的统一接口。"""
+
     @abstractmethod
     async def get_embedding(self, text: str) -> List[float]:
         """Generate vector embedding for a single text string."""
@@ -17,6 +19,8 @@ class BaseEmbeddingProvider(ABC):
 
 
 class MockEmbeddingProvider(BaseEmbeddingProvider):
+    """生成稳定的本地 Mock 向量，支持无外部模型运行。"""
+
     def _generate_mock_vector(self, text: str) -> List[float]:
         # Generate stable mock vector based on text hash
         val = hash(text)
@@ -34,6 +38,8 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
 
 
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
+    """调用 OpenAI Embedding API 生成文本向量。"""
+
     def __init__(self):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)

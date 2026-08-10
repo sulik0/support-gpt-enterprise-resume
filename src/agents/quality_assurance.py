@@ -13,9 +13,9 @@ logger = logging.getLogger("supportgpt.agents.quality_assurance")
 
 
 class QualityAssuranceAgent:
-    """
-    Evaluates response faithfulness, detects hallucinations, matches content with citations,
-    and applies leakage response filters.
+    """负责校验回复质量、事实一致性和潜在幻觉。
+
+    在输出前执行内容泄露过滤，并生成 QA 评分与风险结论。
     """
 
     async def verify(self, state: Dict[str, Any]) -> Dict[str, Any]:

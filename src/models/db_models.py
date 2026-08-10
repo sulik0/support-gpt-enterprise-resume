@@ -4,6 +4,8 @@ from sqlalchemy.orm import relationship
 from src.database import Base
 
 class User(Base):
+    """保存系统用户、登录凭据摘要及 RBAC 角色。"""
+
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -16,6 +18,8 @@ class User(Base):
 
 
 class Ticket(Base):
+    """保存客服工单主体、分析结果和当前处理状态。"""
+
     __tablename__ = "tickets"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -34,6 +38,8 @@ class Ticket(Base):
 
 
 class SessionMemory(Base):
+    """持久化会话标识及多轮对话历史，作为 Redis 降级存储。"""
+
     __tablename__ = "session_memories"
 
     session_id = Column(String(100), primary_key=True, index=True)
@@ -43,6 +49,8 @@ class SessionMemory(Base):
 
 
 class KnowledgeDoc(Base):
+    """保存可版本化、可分类检索的知识库文档。"""
+
     __tablename__ = "knowledge_docs"
 
     id = Column(String(100), primary_key=True, index=True)
@@ -55,6 +63,8 @@ class KnowledgeDoc(Base):
 
 
 class ResponseApproval(Base):
+    """保存 AI 回复草稿、人工审批结果及处理耗时。"""
+
     __tablename__ = "response_approvals"
 
     id = Column(Integer, primary_key=True, index=True)

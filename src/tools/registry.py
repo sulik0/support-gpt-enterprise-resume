@@ -22,16 +22,22 @@ tracer = get_tracer(__name__)
 
 
 class CustomerToolInput(BaseModel):
+    """定义只需要客户标识的 Tool 输入参数。"""
+
     customer_id: str = Field(..., min_length=1)
 
 
 class RefundEligibilityInput(BaseModel):
+    """定义退款资格查询所需的客户和订单标识。"""
+
     customer_id: str = Field(..., min_length=1)
     order_id: str = Field(..., min_length=1)
 
 
 @dataclass(frozen=True)
 class ToolDefinition:
+    """描述 Tool 的协议、权限、超时和执行入口。"""
+
     name: str
     description: str
     input_schema: type[BaseModel]
@@ -43,7 +49,10 @@ class ToolDefinition:
 
 
 class ToolRegistry:
-    """Central registry for schema-validated, permission-checked tool calls."""
+    """统一注册和治理 Agent 可调用的业务工具。
+
+    每次调用执行 Schema、RBAC、超时控制并生成审计记录。
+    """
 
     def __init__(self) -> None:
         self._tools: Dict[str, ToolDefinition] = {}

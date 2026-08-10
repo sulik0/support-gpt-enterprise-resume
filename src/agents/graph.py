@@ -25,6 +25,11 @@ tracer = get_tracer(__name__)
 
 
 class AgentState(TypedDict):
+    """定义 LangGraph 各节点共享的客服任务状态。
+
+    字段覆盖请求标识、分析结果、检索上下文、回复质量和升级决策。
+    """
+
     request_id: str
     ticket_id: int
     customer_id: str

@@ -1,10 +1,7 @@
 from typing import List
 
 class HallucinationEvaluator:
-    """
-    Evaluates hallucination rates in model responses.
-    Checks if words/sentences in response represent information not found in the context.
-    """
+    """通过回答与上下文的词项覆盖率估算幻觉风险。"""
     def _get_stem(self, word: str) -> str:
         """Lightweight stemmer to normalize plurals and basic verb inflections."""
         w = word.lower()

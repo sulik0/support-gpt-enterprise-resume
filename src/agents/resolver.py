@@ -10,9 +10,9 @@ logger = logging.getLogger("supportgpt.agents.resolver")
 
 
 class ResolutionAgent:
-    """
-    Synthesizes historical context, customer problem description, and retrieved
-    KB citations to write a professional customer support message.
+    """负责结合工单、Tool Context 和知识库引用生成回复草稿。
+
+    该节点只生成建议回复，不直接执行高风险业务操作。
     """
 
     async def resolve(self, state: Dict[str, Any]) -> Dict[str, Any]:

@@ -23,6 +23,8 @@ METRIC_KEYS = (
 
 @dataclass(frozen=True)
 class EvaluationCase:
+    """定义一条离线 RAG 评测样本及其标准答案和期望来源。"""
+
     id: str
     query: str
     reference_answer: str
@@ -34,6 +36,8 @@ class EvaluationCase:
 
 @dataclass
 class EvaluationRecord:
+    """保存单条样本的 Workflow 输出、检索上下文和指标结果。"""
+
     case: EvaluationCase
     response: str
     contexts: List[str]

@@ -10,9 +10,9 @@ from src.rag.chunking import RecursiveTextSplitter
 logger = logging.getLogger("supportgpt.rag.kb_versioning")
 
 class KBVersioningService:
-    """
-    Manages Knowledge Base document versions in the SQL database 
-    and mirrors version boundaries in ChromaDB.
+    """负责知识文档的版本登记、切分和向量索引同步。
+
+    SQL 保存文档元数据，ChromaDB 保存对应版本的检索向量。
     """
     def __init__(self):
         self.splitter = RecursiveTextSplitter()

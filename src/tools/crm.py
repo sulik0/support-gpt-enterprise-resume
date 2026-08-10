@@ -4,7 +4,7 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger("supportgpt.tools.crm")
 
 class CRMTool:
-    """Mock CRM Tool simulating retrieval of enterprise customer profile information."""
+    """模拟 CRM 客户画像查询，返回等级和历史概况。"""
     def __init__(self):
         # In-memory customer directory
         self.customers: Dict[str, Dict[str, Any]] = {

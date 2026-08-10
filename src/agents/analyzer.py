@@ -15,9 +15,9 @@ logger = logging.getLogger("supportgpt.agents.analyzer")
 
 
 class TicketAnalyzerAgent:
-    """
-    Scans incoming support requests, filters via guardrails (PII, Injection, Jailbreaks),
-    and determines sentiment, urgency, classification category, and routing.
+    """负责分析客服请求并执行输入侧安全检查。
+
+    输出情绪、优先级、意图和业务部门，供后续节点路由使用。
     """
 
     async def analyze(self, state: Dict[str, Any]) -> Dict[str, Any]:
