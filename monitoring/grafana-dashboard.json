@@ -85,6 +85,24 @@
       "targets": [
         {"expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_spans_total[5m]))", "legendFormat": "{{exporter}}", "refId": "A"}
       ]
+    },
+    {
+      "id": 10,
+      "title": "Feedback Events",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [
+        {"expr": "sum by (source, type, training_eligible) (increase(feedback_events_total[1h]))", "legendFormat": "{{source}} / {{type}} / eligible={{training_eligible}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Training Candidate Exports",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [
+        {"expr": "sum by (dataset_type) (increase(training_candidates_total[1h]))", "legendFormat": "{{dataset_type}}", "refId": "A"}
+      ]
     }
   ],
   "refresh": "15s",

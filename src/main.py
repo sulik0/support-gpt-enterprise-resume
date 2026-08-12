@@ -1,16 +1,23 @@
 import time
 import datetime
 import uuid
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
 
 from src.config import settings
 from src.database import engine, init_db, get_db
-from src.models.db_models import User, Ticket, SessionMemory, ResponseApproval
+from src.models.db_models import (
+    AgentRun,
+    ResponseApproval,
+    SessionMemory,
+    Ticket,
+    User,
+)
 from src.models.schemas import (
     UserCreate,
     UserResponse,
@@ -34,10 +41,14 @@ from src.models.schemas import (
     EvaluateResponseResponse,
     ResponseApprovalRequest,
     ResponseApprovalResponse,
+    UserFeedbackRequest,
+    FeedbackEventResponse,
+    AgentRunResponse,
 )
 from src.auth.jwt import verify_password, get_password_hash, create_access_token
 from src.auth.rbac import (
     get_current_user,
+    get_optional_current_user,
     require_admin,
     require_agent,
     require_manager,
@@ -61,8 +72,93 @@ from src.observability.tracing import (
 )
 from src.observability.metrics import HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
 from src.evaluation.framework import run_deeval_evaluation
+from src.feedback.service import feedback_service
 
 tracer = get_tracer(__name__)
+logger = logging.getLogger("supportgpt.main")
+
+
+async def _record_agent_run_fail_open(
+    *,
+    primary_db: AsyncSession,
+    agent_output: dict,
+    input_text: str,
+    endpoint: str,
+    session_id: str | None = None,
+) -> AgentRun | None:
+    """使用独立事务保存 Agent Run，失败时不影响客服主流程。"""
+    try:
+        feedback_sessions = async_sessionmaker(
+            bind=primary_db.bind,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        async with feedback_sessions() as feedback_db:
+            agent_run = await feedback_service.record_agent_run(
+                feedback_db,
+                agent_output=agent_output,
+                input_text=input_text,
+                endpoint=endpoint,
+                session_id=session_id,
+                trace_id=get_current_trace_id(),
+            )
+            await feedback_db.commit()
+            return agent_run
+    except Exception as exc:
+        logger.warning("Unable to persist Agent Run for feedback: %s", exc)
+        return None
+
+
+async def _link_approval_fail_open(
+    primary_db: AsyncSession, agent_run_id: str, approval_id: int
+) -> None:
+    """使用独立事务关联审批记录，关联失败只写日志。"""
+    try:
+        feedback_sessions = async_sessionmaker(
+            bind=primary_db.bind,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        async with feedback_sessions() as feedback_db:
+            await feedback_service.link_entity(
+                feedback_db,
+                agent_run_id=agent_run_id,
+                entity_type="approval",
+                entity_id=approval_id,
+            )
+            await feedback_db.commit()
+    except Exception as exc:
+        logger.warning("Unable to link approval to Agent Run: %s", exc)
+
+
+async def _record_evaluation_fail_open(
+    primary_db: AsyncSession,
+    *,
+    agent_run_id: str,
+    metrics: dict,
+    passed: bool,
+    external_ref: str | None,
+) -> None:
+    """使用独立事务回写可信评测，写入失败不影响评测结果。"""
+    try:
+        feedback_sessions = async_sessionmaker(
+            bind=primary_db.bind,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        async with feedback_sessions() as feedback_db:
+            await feedback_service.record_evaluation(
+                feedback_db,
+                agent_run_id=agent_run_id,
+                metrics=metrics,
+                passed=passed,
+                external_ref=external_ref,
+            )
+            await feedback_db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Unable to persist evaluation feedback: %s", exc)
 
 
 def _record_http_metrics(
@@ -298,6 +394,17 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     await db.commit()
 
+    # Feedback Pipeline 使用独立事务，失败时不阻断客服主流程。
+    agent_run = await _record_agent_run_fail_open(
+        primary_db=db,
+        agent_output=agent_output,
+        input_text=req.message,
+        endpoint="/chat",
+        session_id=req.session_id,
+    )
+    if agent_run and approval_id:
+        await _link_approval_fail_open(db, agent_run.id, approval_id)
+
     # Build schema output
     citations = [
         Citation(source=c.source, text=c.text, score=c.score, version=c.version)
@@ -324,6 +431,10 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         cost_metadata=cost_meta,
         approval_required=agent_output.get("approval_required", False),
         approval_id=approval_id,
+        agent_run_id=agent_run.id if agent_run else None,
+        feedback_token=(
+            getattr(agent_run, "_feedback_token", None) if agent_run else None
+        ),
     )
 
 
@@ -378,6 +489,15 @@ async def suggest_response(
     }
     agent_output = await run_agent_workflow(initial_state)
 
+    # 先结束读取事务，再使用隔离事务写入反馈域。
+    await db.commit()
+    agent_run = await _record_agent_run_fail_open(
+        primary_db=db,
+        agent_output=agent_output,
+        input_text=ticket.description,
+        endpoint="/suggest-response",
+    )
+
     citations = [
         Citation(source=c.source, text=c.text, score=c.score, version=c.version)
         for c in agent_output.get("context_citations", [])
@@ -399,6 +519,10 @@ async def suggest_response(
         qa_score=agent_output.get("qa_score", 1.0),
         hallucination_detected=agent_output.get("hallucination_detected", False),
         cost_metadata=cost_meta,
+        agent_run_id=agent_run.id if agent_run else None,
+        feedback_token=(
+            getattr(agent_run, "_feedback_token", None) if agent_run else None
+        ),
     )
 
 
@@ -487,12 +611,72 @@ async def get_customer_context(req: CustomerContextRequest):
 
 
 @app.post("/evaluate-response", response_model=EvaluateResponseResponse)
-async def evaluate_response(req: EvaluateResponseRequest):
+async def evaluate_response(
+    req: EvaluateResponseRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+):
     """Run evaluation scores comparing drafted answers against context."""
+    if req.agent_run_id and (
+        current_user is None or current_user.role not in {"admin", "manager"}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manager role is required to link evaluation feedback.",
+        )
     results = await run_deeval_evaluation(
         query=req.query, context=req.context, response=req.response
     )
+    if req.agent_run_id:
+        await db.commit()
+        await _record_evaluation_fail_open(
+            db,
+            agent_run_id=req.agent_run_id,
+            metrics={
+                "faithfulness": results.faithfulness_score,
+                "context_precision": results.context_precision,
+                "context_recall": results.context_recall,
+                "hallucination_rate": results.hallucination_rate,
+                "answer_relevance": results.answer_relevance,
+                "overall_quality_score": results.overall_quality_score,
+            },
+            passed=results.passed_evaluation,
+            external_ref=req.external_ref,
+        )
     return results
+
+
+# --- FEEDBACK PIPELINE APIS ---
+@app.post(
+    "/feedback/user",
+    response_model=FeedbackEventResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_user_feedback(
+    req: UserFeedbackRequest, db: AsyncSession = Depends(get_db)
+):
+    """采集用户评分，并关联对应 Agent Run 与 OpenTelemetry Trace。"""
+    event = await feedback_service.record_user_feedback(
+        db,
+        agent_run_id=req.agent_run_id,
+        feedback_token=req.feedback_token,
+        rating=req.rating,
+        comment=req.comment,
+        idempotency_key=req.idempotency_key,
+    )
+    await db.commit()
+    await db.refresh(event)
+    return event
+
+
+@app.get("/feedback/runs/{agent_run_id}", response_model=AgentRunResponse)
+async def get_feedback_run(
+    agent_run_id: str,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """供主管按 Agent Run 查看 Trace、版本快照和全部反馈。"""
+    return await feedback_service.get_agent_run(db, agent_run_id)
 
 
 # --- HUMAN IN THE LOOP APPROVAL APIS ---

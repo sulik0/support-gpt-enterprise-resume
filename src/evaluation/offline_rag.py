@@ -46,6 +46,7 @@ class EvaluationCase:
     risk_level: str
     kb_version: str = "v1"
     agent_expectations: Dict[str, Any] = field(default_factory=dict)
+    agent_run_id: Optional[str] = None
 
 
 @dataclass
@@ -189,9 +190,7 @@ async def score_records(records: Sequence[EvaluationRecord], engine: str) -> Non
         record.metrics = row
 
 
-async def score_agent_records(
-    records: Sequence[EvaluationRecord], engine: str
-) -> None:
+async def score_agent_records(records: Sequence[EvaluationRecord], engine: str) -> None:
     """使用 DeepEval 或本地代理指标评估 Workflow 行为。"""
     for record in records:
         result = await score_agent_behavior(
@@ -199,9 +198,7 @@ async def score_agent_records(
             reference_answer=record.case.reference_answer,
             contexts=record.contexts,
             workflow_output=record.workflow_output,
-            expectations=AgentExpectations.from_mapping(
-                record.case.agent_expectations
-            ),
+            expectations=AgentExpectations.from_mapping(record.case.agent_expectations),
             engine=engine,
         )
         record.agent_metrics = result.metrics
@@ -341,9 +338,7 @@ def build_report(
                 "agent_evaluation": {
                     "passed": record.agent_passed,
                     "metrics": record.agent_metrics,
-                    "overall_score": round(
-                        mean(record.agent_metrics.values()), 4
-                    ),
+                    "overall_score": round(mean(record.agent_metrics.values()), 4),
                     "failures": record.agent_failures,
                 },
                 "workflow_errors": record.workflow_errors,
@@ -352,8 +347,7 @@ def build_report(
 
     citation_hit_rate = round(
         mean(
-            1.0 if row["rag_evaluation"]["citation_hit"] else 0.0
-            for row in case_rows
+            1.0 if row["rag_evaluation"]["citation_hit"] else 0.0 for row in case_rows
         ),
         4,
     )

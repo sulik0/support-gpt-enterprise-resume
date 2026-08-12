@@ -7,9 +7,11 @@ from src.observability.cost_tracking import calculate_llm_cost
 from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
     AGENT_REQUESTS_TOTAL,
+    FEEDBACK_EVENTS_TOTAL,
     HUMAN_APPROVALS_TOTAL,
     LLM_TOKENS_TOTAL,
     TOOL_CALLS_TOTAL,
+    TRAINING_CANDIDATES_TOTAL,
 )
 from src.observability.sanitization import sanitize_attributes, sanitize_value
 from src.observability.tracing import (
@@ -50,6 +52,8 @@ def test_otel_metric_instruments_record_natively():
     assert AGENT_NODE_DURATION_SECONDS.name == "agent_node_duration_seconds"
     assert TOOL_CALLS_TOTAL.name == "agent_tool_calls"
     assert HUMAN_APPROVALS_TOTAL.name == "human_approvals"
+    assert FEEDBACK_EVENTS_TOTAL.name == "feedback_events"
+    assert TRAINING_CANDIDATES_TOTAL.name == "training_candidates"
     AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
     AGENT_NODE_DURATION_SECONDS.record(0.01, {"node": "retriever"})
 
@@ -67,7 +71,10 @@ def test_metric_route_uses_template_instead_of_raw_identifier():
 def test_observability_sanitizes_pii_secrets_and_business_fields():
     payload = sanitize_value(
         {
-            "message": "Email alice@example.com, card 4111 1111 1111 1111",
+            "message": (
+                "Email alice@example.com, card 4111 1111 1111 1111, "
+                "api_key=sk-abcdefghijklmnopqrstuvwxyz"
+            ),
             "authorization": "Bearer secret",
             "total_amount": 199.0,
             "tokens_input": 42,
@@ -76,6 +83,7 @@ def test_observability_sanitizes_pii_secrets_and_business_fields():
 
     assert "alice@example.com" not in payload["message"]
     assert "4111 1111 1111 1111" not in payload["message"]
+    assert "sk-abcdefghijklmnopqrstuvwxyz" not in payload["message"]
     assert payload["authorization"] == "[FILTERED]"
     assert payload["total_amount"] == "[FILTERED]"
     assert payload["tokens_input"] == 42
@@ -127,6 +135,8 @@ def test_grafana_dashboard_covers_phase_one_metrics():
         "agent_tool_calls_total",
         "qa_score_ratio_bucket",
         "human_approvals_total",
+        "feedback_events_total",
+        "training_candidates_total",
     ):
         assert metric in expressions
 

@@ -221,7 +221,7 @@ resolved / closed --reopen--> in_progress
 
 ### 总体原则
 
-- Prompt 当前集中在 `src/llm/provider.py` 的 Provider 实现中，没有独立 Prompt Registry 或 Prompt 版本管理。
+- Prompt 当前集中在 `src/llm/provider.py` 的 Provider 实现中。Agent Run 会保存配置型 `prompt_version`，但没有独立 Prompt Registry、Prompt 内容快照或发布管理。
 - `BaseLLMProvider` 定义 `analyze_ticket`、`generate_resolution`、`evaluate_qa` 和 `run_chat` 四类统一接口。
 - 默认 `LLM_PROVIDER=mock`，保证无 API Key 的本地开发、测试和演示可复现。
 - OpenAI 和 Azure OpenAI 使用 `temperature=0.0`；Analyzer 和 QA 要求 JSON Mode，Resolver 返回自然语言。
@@ -252,7 +252,7 @@ resolved / closed --reopen--> in_progress
 - 不得在 Prompt 中宣称 Mock Adapter 可以执行真实退款、取消订单或修改 CRM 数据。
 - 不得删除“上下文不足时升级”的核心约束。
 - 新增 Prompt 字段时必须同步更新 Provider 接口、Mock Provider、外部 Provider 和相关测试。
-- Prompt 版本管理与 A/B 灰度尚未实现，不得将其写成已有能力。
+- 配置型 `prompt_version` 已用于运行归因；Prompt Registry、内容快照、发布管理与 A/B 灰度尚未实现，不得将其写成已有能力。
 
 ## 评测体系
 
@@ -267,20 +267,18 @@ resolved / closed --reopen--> in_progress
 
 ### 离线评测
 
-- 统一入口是 `run_deeval_evaluation()` 和 `POST /evaluate-response`。
-- RAGAS Adapter 输出 Faithfulness、Context Precision、Context Recall 和 Answer Relevance。
-- DeepEval Adapter 输出 Hallucination Score 和 Answer Relevance。
-- 没有可用 API Key 或外部评测失败时，使用本地文本重合、关键词召回和上下文覆盖率等启发式指标。
-- 综合质量分数是 Faithfulness、Context Precision、Context Recall 和 Answer Relevance 的平均值。
-- 当前通过条件为综合质量分数 `>= 0.75` 且 Hallucination Rate `< 0.35`。
-- 每次评测尝试在 `evaluation/reports/` 写入 JSON 报告。
+- 在线单条评测入口是 `run_deeval_evaluation()` 和 `POST /evaluate-response`。
+- 离线统一入口是 Dataset + Workflow Replay Pipeline，RAG 采用 RAGAS，Agent 行为采用 DeepEval。
+- 正式离线报告同时输出 Faithfulness、Answer Relevancy、Context Precision、Context Recall、Agent 行为指标、citation hit rate、Workflow Path 和 Trace ID。
+- 没有可用 API Key 时可显式选择 `local` 确定性指标进行 CI 烟测；正式 RAGAS / DeepEval 模式缺少依赖或密钥会直接失败，不会自动伪装为正式结果。
+- 报告写入 `evaluation/reports/evaluation_latest.json` 和 `evaluation_latest.md`。
 
 ### 评测边界
 
-- 当前尚无 30–50 条客服 Golden Set，也没有 citation hit rate 回归报告。
-- RAGAS 当前的 `ground_truths` 是简化占位映射，不是经人工标注的标准答案。
+- 当前有 13 条 Synthetic Golden Dataset，但仍未达到规划的 30–50 条规模。
+- Synthetic 参考答案不是经真实客服专家审核的生产标准答案。
 - 本地启发式指标适合验证评测链路和做基础回归，不能代表生产环境真实准确率。
-- 在完成 Golden Set 之前，不得将本项目表述为已建立“生产级 RAG 评测体系”。
+- 在完成人工标注、稳定基线和真实环境校准前，不得将本项目表述为已有生产质量结论。
 
 ## 当前完成情况
 
@@ -297,6 +295,8 @@ resolved / closed --reopen--> in_progress
 - OpenTelemetry 统一 Trace / Metrics 采集、OTLP Collector、LangSmith Trace 后端和 Prometheus / Grafana 指标展示。
 - Docker Compose、Kubernetes manifests、分层 requirements 和 Python 3.11 GitHub Actions smoke CI。
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
+- Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent 指标并关联 Trace ID。
+- Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
 - 覆盖 Agent、API、Auth、Guardrails、RAG、Evaluation、Observability、Tool Registry 和工单状态机的 pytest 测试模块。
 
 ### 部分完成
@@ -304,7 +304,8 @@ resolved / closed --reopen--> in_progress
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
 - **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
-- **评测**：指标 Adapter 和报告管道已存在，但缺少 Golden Set、人工标注与稳定回归基线。
+- **评测**：已具备 Golden Dataset、Workflow Replay 和统一报告，但样本规模、人工标注与稳定回归基线仍需继续扩充。
+- **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
 
@@ -319,7 +320,13 @@ resolved / closed --reopen--> in_progress
 
 按当前优先级推进，未在代码中完成前不得将以下项目表述为已有能力。
 
-### P0：RAG Golden Set 与离线回归报告
+### P0：Feedback Dataset 治理与训练准备
+
+- 增加 Dataset Registry、数据版本、Review 状态和训练集快照。
+- 建立训练样本人工复核、数据删除、数据保留周期和来源授权策略。
+- 增加 SFT / DPO 数据分层、Train / Validation / Test 划分和数据漂移检查。
+
+### P1：扩充 Golden Set 与回归基线
 
 - 构造 30–50 条 Synthetic Customer Support 样本，覆盖退款、保修、物流、订单取消、账户和技术支持。
 - 每条样本包含 Query、Expected Answer Points、Expected Sources、Risk Level 和 Category。

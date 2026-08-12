@@ -136,6 +136,18 @@ pip install -r requirements/eval.txt
 python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
+### Feedback Pipeline
+
+`/chat` 和 `/suggest-response` 返回 `agent_run_id`。用户评分、人工审批修正和质量评测可据此关联 OpenTelemetry Trace、Prompt / Workflow / Model 版本与执行快照。
+
+导出经过 PII 脱敏和质量门控的训练候选：
+
+```bash
+python scripts/export_training_candidates.py
+```
+
+详细设计见 [Feedback Pipeline 第一阶段](docs/FEEDBACK_PIPELINE_PHASE1.md)。
+
 ---
 
 ## 📄 Detailed Specifications

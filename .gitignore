@@ -13,6 +13,7 @@ htmlcov/
 chromadb_store/
 supportgpt.db
 *.db
+evaluation/training_candidates/
 
 # Node / React Frontend
 node_modules/

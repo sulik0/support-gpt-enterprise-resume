@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from src.evaluation.offline_rag import (
+    EvaluationCase,
     load_evaluation_dataset,
     run_offline_evaluation,
 )
@@ -23,6 +24,15 @@ def test_golden_dataset_is_valid_and_unique():
     assert all(case.reference_answer for case in cases)
     assert all(isinstance(case.expected_sources, list) for case in cases)
     assert all(case.agent_expectations for case in cases)
+
+
+def test_evaluation_case_accepts_optional_agent_run_link():
+    payload = load_evaluation_dataset(DATASET_PATH)[0].__dict__.copy()
+    payload["agent_run_id"] = "run-123"
+
+    case = EvaluationCase(**payload)
+
+    assert case.agent_run_id == "run-123"
 
 
 def test_trace_sanitizer_redacts_secrets_and_pii():
@@ -49,9 +59,7 @@ async def test_traced_llm_method_preserves_provider_contract():
 
 
 @pytest.mark.asyncio
-async def test_offline_evaluation_writes_unified_report(
-    tmp_path, monkeypatch
-):
+async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "src.evaluation.offline_rag.get_current_trace_id", lambda: "a" * 32
     )
@@ -113,6 +121,7 @@ async def test_offline_evaluation_writes_unified_report(
     assert report["cases"][0]["rag_evaluation"]["citation_hit"] is True
     assert report["cases"][0]["agent_evaluation"]["passed"] is True
     assert report["cases"][0]["trace_id"] == "a" * 32
+    assert "agent_run_id" in report["cases"][0]
     assert "RAG + Agent Evaluation 统一评测报告" in markdown
     assert "OTel Trace ID" in markdown
 

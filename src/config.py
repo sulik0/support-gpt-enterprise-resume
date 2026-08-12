@@ -26,6 +26,9 @@ class Settings(BaseSettings):
 
     # LLM Configuration
     LLM_PROVIDER: str = Field(default="mock")  # mock, openai, azure
+    LLM_MODEL_NAME: Optional[str] = Field(default=None)
+    PROMPT_VERSION: str = Field(default="support-v1")
+    AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     OPENAI_API_KEY: Optional[str] = Field(default=None)
     AZURE_OPENAI_API_KEY: Optional[str] = Field(default=None)
     AZURE_OPENAI_ENDPOINT: Optional[str] = Field(default=None)
@@ -49,9 +52,7 @@ class Settings(BaseSettings):
     OTEL_EXCLUDED_URLS: str = Field(default="health")
     # 仅用于共享 .env 校验和 Collector 容器替换，业务代码不会使用或直连。
     OTEL_COLLECTOR_LANGSMITH_API_KEY: Optional[str] = Field(default=None)
-    OTEL_COLLECTOR_LANGSMITH_PROJECT: str = Field(
-        default="supportgpt-enterprise"
-    )
+    OTEL_COLLECTOR_LANGSMITH_PROJECT: str = Field(default="supportgpt-enterprise")
     OTEL_COLLECTOR_LANGSMITH_ENDPOINT: str = Field(
         default="https://api.smith.langchain.com/otel/v1/traces"
     )
@@ -61,6 +62,11 @@ class Settings(BaseSettings):
     PROMPT_INJECTION_PROTECTION_ENABLED: bool = Field(default=True)
     JAILBREAK_DETECTION_ENABLED: bool = Field(default=True)
     RESPONSE_FILTERING_ENABLED: bool = Field(default=True)
+
+    # Feedback Pipeline
+    FEEDBACK_TRAINING_MIN_RATING: int = Field(default=4, ge=1, le=5)
+    FEEDBACK_TRAINING_MIN_QA_SCORE: float = Field(default=0.8, ge=0.0, le=1.0)
+    FEEDBACK_TRAINING_MIN_RAG_SCORE: float = Field(default=0.75, ge=0.0, le=1.0)
 
     class Config:
         """定义 Pydantic Settings 读取 `.env` 的规则。"""

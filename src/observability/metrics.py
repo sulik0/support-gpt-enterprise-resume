@@ -65,3 +65,9 @@ QA_SCORE_HISTOGRAM = meter.create_histogram(
 GUARDRAIL_VIOLATIONS_TOTAL = meter.create_counter(
     "guardrail_violations", description="Total guardrail violations"
 )
+FEEDBACK_EVENTS_TOTAL = meter.create_counter(
+    "feedback_events", description="Total online feedback events"
+)
+TRAINING_CANDIDATES_TOTAL = meter.create_counter(
+    "training_candidates", description="Total SFT or DPO candidate samples exported"
+)

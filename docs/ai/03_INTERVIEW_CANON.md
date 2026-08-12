@@ -47,6 +47,7 @@ CRM、OMS、历史工单和退款资格初筛当前均通过本地 Mock Adapter 
 - 增加 Tool Calling 的 Schema、RBAC、超时和审计约束。
 - 增加 Hybrid RAG、知识库版本/类别过滤和 citation。
 - 增加可选 Redis 记忆、SQL 持久化、HITL 审批、工单状态机、Prometheus 与 OpenTelemetry。
+- 增加 Agent Run、用户评价、人工修正和评测结果关联，以及脱敏后的 SFT / DPO 训练候选导出。
 - 增加中文项目、架构、Mock 边界和 AI 接手文档。
 
 如需使用第一人称“我负责”，应仅陈述回答者实际参与且能在追问中解释的部分，不得把“项目具备”自动等同于“我独立完成”。
@@ -158,7 +159,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 13. Prompt
 
-当前 Prompt 分散维护在 LLM Provider 中，没有独立 Prompt Registry、Prompt 版本号、灰度发布或 A/B 实验。
+当前 Prompt 分散维护在 LLM Provider 中。Feedback Pipeline 会在 Agent Run 快照中记录配置型 `prompt_version`，但系统没有独立 Prompt Registry、Prompt 内容快照、灰度发布或 A/B 实验。
 
 | Prompt 阶段 | 当前约束 |
 |---|---|
@@ -178,7 +179,7 @@ OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider
 | 本地默认 | SQLite | 降低启动门槛，支持无额外服务运行 |
 | Docker Compose | PostgreSQL | 提供更接近生产的并发与连接池环境 |
 
-持久化实体包括用户、工单、会话记忆、知识文档和回复审批记录。当前没有数据库迁移工具、读写分离、分库分表、`ticket_status_events` 审计表或多租户数据隔离。
+持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、`AgentRun`、`AgentRunLink` 和 `FeedbackEvent`。当前没有数据库迁移工具、读写分离、分库分表、`ticket_status_events` 审计表或多租户数据隔离。
 
 ## 15. Redis
 
@@ -222,24 +223,38 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 | 层次 | 当前事实 |
 |---|---|
 | 在线 QA | 每次正常草稿生成后评估 QA 分数、幻觉风险和输出泄露；低分或幻觉触发审批 |
-| 离线评测 | 提供 RAGAS、DeepEval 和本地启发式指标的统一适配入口 |
+| 离线评测 | 基于 Dataset + Workflow Replay；提供 RAGAS、DeepEval 和本地启发式指标的统一适配入口 |
 | 评测指标 | Faithfulness、Context Precision、Context Recall、Answer Relevance、Hallucination Rate、综合质量分数 |
 | 当前通过阈值 | 综合质量分数 `>= 0.75` 且 Hallucination Rate `< 0.35` |
-| 报告 | 尝试生成 JSON 评测报告 |
+| 报告 | 统一生成 JSON / Markdown 的 RAG + Agent Evaluation 报告，并记录 Trace ID |
 
-当前没有 30–50 条 Golden Set、人工标注的标准答案、citation hit rate 回归报告、稳定质量基线或真实线上评测数据。无 API Key 时的本地评测是确定性启发式降级，不能等同于真实 LLM-as-Judge 结果。
+当前有 13 条 Synthetic Golden Dataset，包含参考答案、期望来源、业务类别、风险等级和 Agent 行为预期。报告包含 citation hit rate、RAG 指标、Agent 行为指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量基线或真实线上评测数据。无 API Key 时的本地评测是确定性启发式降级，不能等同于真实 RAGAS / DeepEval 结果。
 
-## 19. 性能指标
+## 19. Feedback Pipeline
+
+第一阶段已实现线上反馈采集和训练候选沉淀：
+
+- `/chat` 与 `/suggest-response` 成功后创建 `AgentRun`，记录 `request_id`、OpenTelemetry `trace_id`、Prompt / Workflow / Model / KB 版本、脱敏后的输入输出、Workflow Path、Tool Call 摘要、citation、QA、幻觉、Token 和延迟。
+- 用户通过 `agent_run_id + feedback_token` 提交评分；数据库只保存 Token 的 SHA-256 摘要，每个 Run 只接受一条不可变用户反馈。
+- 人工审批的通过、修改和拒绝结果自动写入 `FeedbackEvent`；人工修改可形成 SFT 与 DPO 候选。
+- 可信评测结果可关联 Agent Run；离线导入同时要求 Agent Evaluation 通过、citation 命中和 RAG 平均分达到 `0.75`。
+- 导出脚本生成脱敏、去重、原子写入且权限为 `0600` 的 `sft_candidates.jsonl`、`dpo_candidates.jsonl` 和 `manifest.json`。
+- Feedback Pipeline 使用独立数据库事务并 fail-open；采集失败不回滚客服主流程。
+
+本阶段只生成训练候选，不执行 SFT / DPO 训练，不包含 Dataset Registry、人工标注平台、训练任务编排、模型自动发布或 vLLM Serving。
+
+## 20. 性能指标
 
 ### 当前已采集的指标
 
-系统通过 Prometheus 采集：
+系统通过 OpenTelemetry Metrics 统一采集并经 Collector 导出到 Prometheus：
 
 - HTTP 请求数量和请求延迟。
 - Agent 节点执行耗时。
 - LLM 输入/输出 token 与估算成本。
 - QA 分数分布。
 - 情绪分类计数、Guardrail 违规计数和工单升级计数。
+- Feedback Event 和 SFT / DPO 候选导出计数。
 
 LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有完整的更新逻辑，不能当作可用的实测监控数据。
 
@@ -251,7 +266,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 
 历史文档中出现过单次 Mock Workflow 的本地示例延迟；该值受机器、数据、Provider 和运行环境影响，不是基准测试结果，不得作为性能指标对外引用。
 
-## 20. 上线指标
+## 21. 上线指标
 
 当前**没有上线指标**，原因是项目没有已证实的真实生产部署、真实客户流量、真实 SLA、真实工单量、真实审批率或真实业务转化数据。
 
@@ -264,7 +279,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 
 可以说：Docker Compose 和 Kubernetes manifests 提供了本地或生产风格部署基础，但不代表已生产发布。
 
-## 21. 已知问题与解决方案
+## 22. 已知问题与解决方案
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
@@ -275,21 +290,24 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 | 会话历史未进入推理 | 历史当前只保存和读取 | 将其作为后续改造项 | 不要说系统已经具备多轮上下文推理 |
 | 工具审计不持久化 | 审计记录当前驻留进程内并可随响应返回 | 作为后续审计表改造项 | 不要说已有完整合规审计平台 |
 | Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；恢复后继续上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |
+| Feedback 新表迁移 | 当前使用 SQLAlchemy `create_all` 创建新表 | 本地可直接运行；生产发布前补 Alembic migration | 不要说已经具备生产 Schema Migration |
 
-## 22. 未来规划
+## 23. 未来规划
 
 以下均为规划，尚未实现：
 
-1. 构建 30–50 条 Synthetic Customer Support Golden Set，输出 citation hit rate、Faithfulness、Answer Relevance 和 Hallucination Risk 的稳定 JSON / Markdown 报告。
-2. 为知识文档与检索 metadata 增加 `tenant_id`，强制 `tenant_id + kb_version` 过滤，实现多租户隔离测试。
-3. 抽象 `SearchBackend`，保留 Chroma 本地方案并设计 OpenSearch Hybrid Search 方案。
-4. 增加 `ticket_status_events` 和持久化 Tool Calling 审计记录。
-5. 完成客服工作台，展示工单、AI 草稿、Tool Context、citation、QA、风险原因与审批动作。
-6. 将 Prompt 版本化，并在 Golden Set 基础上记录版本、审批率、QA、延迟和 token 成本。
-7. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
-8. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
+1. 建设 Dataset Registry、训练集版本、人工复核状态、数据删除和保留周期，扩充 Synthetic Golden Dataset 并建立稳定基线。
+2. 引入训练任务与模型 Registry，在人工门禁下消费 SFT / DPO 候选；模型优化尚未实现。
+3. 增加 vLLM 自托管 Serving，并采集 TTFT、TPOT、吞吐、并发和 Token 成本；当前尚未实现。
+4. 为知识文档与检索 metadata 增加 `tenant_id`，强制 `tenant_id + kb_version` 过滤，实现多租户隔离测试。
+5. 抽象 `SearchBackend`，保留 Chroma 本地方案并设计 OpenSearch Hybrid Search 方案。
+6. 增加 `ticket_status_events` 和持久化 Tool Calling 审计记录。
+7. 完成客服工作台，展示工单、AI 草稿、Tool Context、citation、QA、风险原因与审批动作。
+8. 引入 Prompt Registry、内容快照、灰度和回滚，并按版本关联质量与成本指标。
+9. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
+10. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
 
-## 23. 长期一致性规则
+## 24. 长期一致性规则
 
 未来任何回答都必须遵守以下规则：
 
@@ -302,3 +320,4 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 7. 项目没有真实生产上线数据、线上 KPI 或真实客户业务数据。
 8. 团队人数和个人贡献归属没有仓库事实依据，必须由回答者的真实经历补充，不能推测。
 9. 本文中的计数、阈值、组件和边界发生变化时，必须在同一提交中更新本文。
+10. Feedback Pipeline 已输出训练候选，但 SFT / DPO 训练、模型 Registry、自动发布和 vLLM Serving 均未实现。

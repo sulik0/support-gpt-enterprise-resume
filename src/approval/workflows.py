@@ -1,7 +1,7 @@
 import time
 import datetime
 import logging
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
 from fastapi import HTTPException, status
 
@@ -10,6 +10,7 @@ from src.models.schemas import ResponseApprovalRequest
 from src.tickets.state_machine import TicketAction, TicketStatus, ticket_state_machine
 from src.observability.tracing import get_tracer, observed_span, set_span_attributes
 from src.observability.metrics import HUMAN_APPROVALS_TOTAL
+from src.feedback.service import feedback_service
 
 logger = logging.getLogger("supportgpt.approval.workflows")
 tracer = get_tracer(__name__)
@@ -170,6 +171,24 @@ class HumanInTheLoopService:
 
         await db.commit()
         await db.refresh(approval)
+        await db.commit()
+        try:
+            feedback_sessions = async_sessionmaker(
+                bind=db.bind,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
+            async with feedback_sessions() as feedback_db:
+                await feedback_service.record_human_correction(
+                    feedback_db,
+                    approval_id=approval.id,
+                    status_value=req.status,
+                    corrected_response=approval.modified_response,
+                    user_id=agent_id,
+                )
+                await feedback_db.commit()
+        except Exception as exc:
+            logger.warning("Unable to capture human-review feedback: %s", exc)
         try:
             HUMAN_APPROVALS_TOTAL.add(1, {"status": req.status})
         except Exception:
