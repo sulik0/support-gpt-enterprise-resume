@@ -54,6 +54,7 @@ class AgentState(TypedDict):
     cost_usd: float
     latency_seconds: float
     approval_required: bool
+    workflow_path: List[str]
     errors: List[str]
 
 
@@ -67,6 +68,10 @@ async def _run_node(
     status = "success"
     try:
         result = await handler(state)
+        result = {
+            **result,
+            "workflow_path": [*state.get("workflow_path", []), node],
+        }
         if len(result.get("errors", [])) > len(state.get("errors", [])):
             status = "error"
         return result
@@ -205,6 +210,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "cost_usd": 0.0,
         "latency_seconds": 0.0,
         "approval_required": False,
+        "workflow_path": [],
         "errors": [],
     }
 

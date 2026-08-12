@@ -1,16 +1,28 @@
-"""Independent, dataset-driven offline evaluation for the support RAG workflow."""
+"""基于 Dataset + Workflow Replay 的 RAG 与 Agent 统一离线评测。"""
 
 import asyncio
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
+from src.evaluation.agent_evaluation import (
+    AGENT_METRIC_KEYS,
+    AgentExpectations,
+    score_agent_behavior,
+)
 from src.evaluation.response_metrics import response_metrics_evaluator
 from src.evaluation.retrieval_metrics import retrieval_metrics_evaluator
+from src.observability.sanitization import redact_text
+from src.observability.tracing import (
+    get_current_trace_id,
+    get_tracer,
+    observed_span,
+    set_span_attributes,
+)
 
 
 METRIC_KEYS = (
@@ -19,6 +31,7 @@ METRIC_KEYS = (
     "context_precision",
     "context_recall",
 )
+tracer = get_tracer(__name__)
 
 
 @dataclass(frozen=True)
@@ -32,6 +45,7 @@ class EvaluationCase:
     category: str
     risk_level: str
     kb_version: str = "v1"
+    agent_expectations: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -43,6 +57,12 @@ class EvaluationRecord:
     contexts: List[str]
     retrieved_sources: List[str]
     metrics: Dict[str, float]
+    agent_metrics: Dict[str, float]
+    agent_passed: bool
+    agent_failures: List[str]
+    trace_id: Optional[str]
+    workflow_path: List[str]
+    workflow_output: Dict[str, Any]
     workflow_errors: List[str]
 
 
@@ -59,6 +79,12 @@ def load_evaluation_dataset(path: Path) -> List[EvaluationCase]:
     ids = [case.id for case in cases]
     if len(ids) != len(set(ids)):
         raise ValueError("Evaluation case ids must be unique.")
+    for case in cases:
+        if not case.agent_expectations:
+            raise ValueError(
+                f"Evaluation case '{case.id}' must define agent_expectations."
+            )
+        AgentExpectations.from_mapping(case.agent_expectations)
     return cases
 
 
@@ -73,24 +99,66 @@ async def collect_workflow_records(
 
     records: List[EvaluationRecord] = []
     for index, case in enumerate(cases):
-        output = await workflow_runner(
-            {
-                "ticket_id": 10000 + index,
-                "customer_id": f"offline_eval_{case.id}",
-                "subject": f"Offline evaluation: {case.category}",
-                "description": case.query,
-                "kb_version": case.kb_version,
-                "operator_role": "agent",
+        trace_id = None
+        try:
+            with observed_span(
+                tracer,
+                "evaluation.workflow_replay",
+                {
+                    "evaluation.case_id": case.id,
+                    "evaluation.category": case.category,
+                    "evaluation.kb_version": case.kb_version,
+                    "request.id": f"offline-eval-{case.id}",
+                },
+            ) as span:
+                trace_id = get_current_trace_id()
+                output = await workflow_runner(
+                    {
+                        "request_id": f"offline-eval-{case.id}",
+                        "ticket_id": 10000 + index,
+                        "customer_id": f"offline_eval_{case.id}",
+                        "subject": f"Offline evaluation: {case.category}",
+                        "description": case.query,
+                        "kb_version": case.kb_version,
+                        "operator_role": "agent",
+                    }
+                )
+                set_span_attributes(
+                    span,
+                    {
+                        "evaluation.workflow_error_count": len(
+                            output.get("errors", [])
+                        ),
+                        "evaluation.workflow_path": output.get("workflow_path", []),
+                    },
+                )
+        except Exception as exc:
+            output = {
+                "suggested_response": "",
+                "context_citations": [],
+                "workflow_path": [],
+                "tool_calls": [],
+                "errors": [
+                    f"Workflow replay failed: {exc.__class__.__name__}: "
+                    f"{redact_text(str(exc))}"
+                ],
             }
-        )
         citations = output.get("context_citations", [])
         records.append(
             EvaluationRecord(
                 case=case,
                 response=output.get("suggested_response", ""),
                 contexts=[_citation_field(citation, "text") for citation in citations],
-                retrieved_sources=[_citation_field(citation, "source") for citation in citations],
+                retrieved_sources=[
+                    _citation_field(citation, "source") for citation in citations
+                ],
                 metrics={},
+                agent_metrics={},
+                agent_passed=False,
+                agent_failures=[],
+                trace_id=trace_id,
+                workflow_path=list(output.get("workflow_path", [])),
+                workflow_output=dict(output),
                 workflow_errors=list(output.get("errors", [])),
             )
         )
@@ -114,17 +182,39 @@ async def score_records(records: Sequence[EvaluationRecord], engine: str) -> Non
     scores = await asyncio.to_thread(_run_ragas, records)
     if len(scores) != len(records):
         raise RuntimeError(
-            f"Ragas returned {len(scores)} result rows for {len(records)} evaluation cases."
+            f"Ragas returned {len(scores)} result rows for "
+            f"{len(records)} evaluation cases."
         )
     for record, row in zip(records, scores):
         record.metrics = row
+
+
+async def score_agent_records(
+    records: Sequence[EvaluationRecord], engine: str
+) -> None:
+    """使用 DeepEval 或本地代理指标评估 Workflow 行为。"""
+    for record in records:
+        result = await score_agent_behavior(
+            query=record.case.query,
+            reference_answer=record.case.reference_answer,
+            contexts=record.contexts,
+            workflow_output=record.workflow_output,
+            expectations=AgentExpectations.from_mapping(
+                record.case.agent_expectations
+            ),
+            engine=engine,
+        )
+        record.agent_metrics = result.metrics
+        record.agent_passed = result.passed
+        record.agent_failures = result.failures
 
 
 def _validate_ragas_environment() -> None:
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key or api_key.startswith("your-"):
         raise RuntimeError(
-            "Ragas engine requires a valid OPENAI_API_KEY for its evaluator LLM and embeddings. "
+            "Ragas engine requires a valid OPENAI_API_KEY for its evaluator "
+            "LLM and embeddings. "
             "Use --engine local only for an offline smoke test."
         )
 
@@ -142,7 +232,8 @@ def _run_ragas(records: Sequence[EvaluationRecord]) -> List[Dict[str, float]]:
         )
     except ImportError as exc:
         raise RuntimeError(
-            "Ragas dependencies are unavailable or incompatible. Install requirements/eval.txt."
+            "Ragas dependencies are unavailable or incompatible. "
+            "Install requirements/eval.txt."
         ) from exc
 
     dataset = Dataset.from_dict(
@@ -201,12 +292,19 @@ def _local_scores(record: EvaluationRecord) -> Dict[str, float]:
 def build_report(
     records: Sequence[EvaluationRecord],
     *,
-    engine: str,
+    rag_engine: str,
+    agent_engine: str,
     dataset_path: Path,
 ) -> Dict[str, Any]:
-    aggregates = {
+    rag_aggregates = {
         metric: round(mean(record.metrics.get(metric, 0.0) for record in records), 4)
         for metric in METRIC_KEYS
+    }
+    agent_aggregates = {
+        metric: round(
+            mean(record.agent_metrics.get(metric, 0.0) for record in records), 4
+        )
+        for metric in AGENT_METRIC_KEYS
     }
     case_rows = []
     for record in records:
@@ -218,72 +316,155 @@ def build_report(
                 "response": record.response,
                 "contexts": record.contexts,
                 "retrieved_sources": record.retrieved_sources,
-                "citation_hit": not expected or bool(expected & actual),
-                "metrics": record.metrics,
+                "trace_id": record.trace_id,
+                "workflow_replay": {
+                    "request_id": f"offline-eval-{record.case.id}",
+                    "workflow_path": record.workflow_path,
+                    "tool_calls": record.workflow_output.get("tool_calls", []),
+                    "routing": {
+                        "department": record.workflow_output.get("department"),
+                        "intent": record.workflow_output.get("intent"),
+                        "priority": record.workflow_output.get("priority"),
+                    },
+                    "escalation_recommended": record.workflow_output.get(
+                        "escalation_recommended", False
+                    ),
+                    "approval_required": record.workflow_output.get(
+                        "approval_required", False
+                    ),
+                    "errors": record.workflow_errors,
+                },
+                "rag_evaluation": {
+                    "citation_hit": not expected or bool(expected & actual),
+                    "metrics": record.metrics,
+                },
+                "agent_evaluation": {
+                    "passed": record.agent_passed,
+                    "metrics": record.agent_metrics,
+                    "overall_score": round(
+                        mean(record.agent_metrics.values()), 4
+                    ),
+                    "failures": record.agent_failures,
+                },
                 "workflow_errors": record.workflow_errors,
             }
         )
 
+    citation_hit_rate = round(
+        mean(
+            1.0 if row["rag_evaluation"]["citation_hit"] else 0.0
+            for row in case_rows
+        ),
+        4,
+    )
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "engine": engine,
+        "engines": {"rag": rag_engine, "agent": agent_engine},
         "dataset": str(dataset_path),
         "case_count": len(records),
-        "aggregates": aggregates,
-        "citation_hit_rate": round(
-            mean(1.0 if row["citation_hit"] else 0.0 for row in case_rows), 4
-        ),
+        "rag_evaluation": {
+            "aggregates": rag_aggregates,
+            "citation_hit_rate": citation_hit_rate,
+        },
+        "agent_evaluation": {
+            "aggregates": agent_aggregates,
+            "overall_score": round(
+                mean(mean(record.agent_metrics.values()) for record in records),
+                4,
+            ),
+            "pass_rate": round(
+                mean(1.0 if record.agent_passed else 0.0 for record in records),
+                4,
+            ),
+            "trace_linked_cases": sum(
+                1 for record in records if record.trace_id is not None
+            ),
+        },
         "cases": case_rows,
     }
 
 
 def write_report(report: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "agent_eval_latest.json"
-    markdown_path = output_dir / "agent_eval_latest.md"
-    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    json_path = output_dir / "evaluation_latest.json"
+    markdown_path = output_dir / "evaluation_latest.md"
+    json_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     markdown_path.write_text(_render_markdown(report), encoding="utf-8")
     return {"json": json_path, "markdown": markdown_path}
 
 
 def _render_markdown(report: Dict[str, Any]) -> str:
-    aggregates = report["aggregates"]
+    rag = report["rag_evaluation"]
+    agent = report["agent_evaluation"]
+    rag_aggregates = rag["aggregates"]
+    agent_aggregates = agent["aggregates"]
     lines = [
-        "# Agent Evaluation 评测报告",
+        "# RAG + Agent Evaluation 统一评测报告",
         "",
         f"- 生成时间：`{report['generated_at']}`",
-        f"- 评测引擎：`{report['engine']}`",
+        f"- RAG 引擎：`{report['engines']['rag']}`",
+        f"- Agent 引擎：`{report['engines']['agent']}`",
         f"- 数据集：`{report['dataset']}`",
         f"- 用例数：`{report['case_count']}`",
         "",
-        "## 汇总指标",
+        "## RAG Evaluation",
         "",
-        "| Faithfulness | Answer Relevancy | Context Precision | Context Recall | Citation Hit Rate |",
+        (
+            "| Faithfulness | Answer Relevancy | Context Precision | "
+            "Context Recall | Citation Hit Rate |"
+        ),
         "|---:|---:|---:|---:|---:|",
         (
-            f"| {aggregates['faithfulness']:.4f} | {aggregates['answer_relevancy']:.4f} "
-            f"| {aggregates['context_precision']:.4f} | {aggregates['context_recall']:.4f} "
-            f"| {report['citation_hit_rate']:.4f} |"
+            f"| {rag_aggregates['faithfulness']:.4f} "
+            f"| {rag_aggregates['answer_relevancy']:.4f} "
+            f"| {rag_aggregates['context_precision']:.4f} "
+            f"| {rag_aggregates['context_recall']:.4f} "
+            f"| {rag['citation_hit_rate']:.4f} |"
         ),
         "",
-        "## 用例明细",
+        "## Agent Evaluation",
         "",
-        "| ID | 类别 | KB | Faithfulness | Relevancy | Precision | Recall | Citation |",
-        "|---|---|---|---:|---:|---:|---:|---|",
+        (
+            "| Overall | Task Completion | Policy | Routing | Tool | Workflow | Escalation | "
+            "Pass Rate | Trace Linked |"
+        ),
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| {agent['overall_score']:.4f} "
+            f"| {agent_aggregates['task_completion']:.4f} "
+            f"| {agent_aggregates['policy_compliance']:.4f} "
+            f"| {agent_aggregates['routing_correctness']:.4f} "
+            f"| {agent_aggregates['tool_correctness']:.4f} "
+            f"| {agent_aggregates['workflow_correctness']:.4f} "
+            f"| {agent_aggregates['escalation_correctness']:.4f} "
+            f"| {agent['pass_rate']:.4f} | {agent['trace_linked_cases']} |"
+        ),
+        "",
+        "## 用例明细与 Trace",
+        "",
+        "| ID | RAG | Agent | Workflow | OTel Trace ID | Failure |",
+        "|---|---:|---:|---|---|---|",
     ]
     for row in report["cases"]:
-        metrics = row["metrics"]
+        rag_metrics = row["rag_evaluation"]["metrics"]
+        agent_metrics = row["agent_evaluation"]["metrics"]
+        path = " → ".join(row["workflow_replay"]["workflow_path"]) or "-"
+        failures = "; ".join(row["agent_evaluation"]["failures"]) or "-"
         lines.append(
-            f"| {row['id']} | {row['category']} | {row['kb_version']} "
-            f"| {metrics['faithfulness']:.4f} | {metrics['answer_relevancy']:.4f} "
-            f"| {metrics['context_precision']:.4f} | {metrics['context_recall']:.4f} "
-            f"| {'hit' if row['citation_hit'] else 'miss'} |"
+            f"| {row['id']} | {mean(rag_metrics.values()):.4f} "
+            f"| {mean(agent_metrics.values()):.4f} | {path} "
+            f"| `{row['trace_id'] or 'unavailable'}` | {failures} |"
         )
     lines.extend(
         [
             "",
-            "> `ragas` 表示正式 Ragas 指标；`local` 仅是无网络回归烟测的确定性 proxy，不得作为 Ragas 结果对外引用。",
+            (
+                "> `ragas` 与 `deepeval` 是正式离线评测引擎；`local` 仅用于无网络 "
+                "CI 回归烟测。OTel 未启用时 Trace ID 显示为 `unavailable`。"
+            ),
             "",
         ]
     )
@@ -294,16 +475,29 @@ async def run_offline_evaluation(
     dataset_path: Path,
     output_dir: Path,
     *,
-    engine: str = "ragas",
+    rag_engine: str = "ragas",
+    agent_engine: str = "deepeval",
+    engine: Optional[str] = None,
     limit: Optional[int] = None,
     workflow_runner: Optional[WorkflowRunner] = None,
 ) -> Dict[str, Path]:
+    # 兼容第一阶段调用；local 会同时切换两个评测器。
+    if engine is not None:
+        rag_engine = engine
+        if engine == "local":
+            agent_engine = "local"
     cases = load_evaluation_dataset(dataset_path)
     if limit is not None:
         if limit < 1:
             raise ValueError("limit must be greater than zero.")
         cases = cases[:limit]
     records = await collect_workflow_records(cases, workflow_runner)
-    await score_records(records, engine)
-    report = build_report(records, engine=engine, dataset_path=dataset_path)
+    await score_records(records, rag_engine)
+    await score_agent_records(records, agent_engine)
+    report = build_report(
+        records,
+        rag_engine=rag_engine,
+        agent_engine=agent_engine,
+        dataset_path=dataset_path,
+    )
     return write_report(report, output_dir)

@@ -50,7 +50,7 @@ Golden dataset 位于 `evaluation/golden/support_qa_golden.json`，当前用例�
 pip install -r requirements/eval.txt
 python scripts/seed_kb.py
 export OPENAI_API_KEY=<your-key>
-python scripts/run_agent_eval.py --engine ragas
+python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
 正式模式使用 Ragas 评估：
@@ -65,7 +65,7 @@ python scripts/run_agent_eval.py --engine ragas
 ## 无网络回归烟测
 
 ```bash
-python scripts/run_agent_eval.py --engine local
+python scripts/run_agent_eval.py --rag-engine local --agent-engine local
 ```
 
 `local` 使用确定性文本 proxy，用于 CI 和管道连通性检查，报告中会明确标识 engine，不得作为正式 Ragas 分数引用。
@@ -74,7 +74,7 @@ python scripts/run_agent_eval.py --engine local
 
 运行后生成：
 
-- `evaluation/reports/agent_eval_latest.json`
-- `evaluation/reports/agent_eval_latest.md`
+- `evaluation/reports/evaluation_latest.json`
+- `evaluation/reports/evaluation_latest.md`
 
 报告包含四项 Ragas 指标的汇总分和用例级分数，同时附带 citation hit rate、实际检索来源和 workflow error，便于回归对比和问题定位。

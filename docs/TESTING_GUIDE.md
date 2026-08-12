@@ -85,15 +85,15 @@ locust -f tests/load_test.py
 ```bash
 python scripts/seed_kb.py
 export OPENAI_API_KEY=<your-key>
-python scripts/run_agent_eval.py --engine ragas
+python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
 命令会运行完整 LangGraph workflow，使用 `evaluation/golden/support_qa_golden.json` 评估 Faithfulness、Answer Relevancy、Context Precision 和 Context Recall，生成：
 
-- `evaluation/reports/agent_eval_latest.json`
-- `evaluation/reports/agent_eval_latest.md`
+- `evaluation/reports/evaluation_latest.json`
+- `evaluation/reports/evaluation_latest.md`
 
-无 API key 时可以使用 `python scripts/run_agent_eval.py --engine local` 验证管道和报告生成，但 local proxy 分数不等于 Ragas 分数。完整设计参见 [第一阶段 Agent Evaluation](AGENT_EVALUATION_PHASE1.md)。
+无 API key 时可以使用 `python scripts/run_agent_eval.py --rag-engine local --agent-engine local` 验证 Pipeline 和统一报告生成，但 local proxy 分数不等于 Ragas 或 DeepEval 分数。完整设计参见 [第一阶段 Agent Evaluation](AGENT_EVALUATION_PHASE1.md)。
 
 ### 旧版单条评估入口
 

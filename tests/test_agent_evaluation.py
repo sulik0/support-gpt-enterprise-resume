@@ -21,7 +21,8 @@ def test_golden_dataset_is_valid_and_unique():
     assert len(cases) >= 10
     assert len({case.id for case in cases}) == len(cases)
     assert all(case.reference_answer for case in cases)
-    assert all(case.expected_sources for case in cases)
+    assert all(isinstance(case.expected_sources, list) for case in cases)
+    assert all(case.agent_expectations for case in cases)
 
 
 def test_trace_sanitizer_redacts_secrets_and_pii():
@@ -48,7 +49,13 @@ async def test_traced_llm_method_preserves_provider_contract():
 
 
 @pytest.mark.asyncio
-async def test_offline_evaluation_writes_json_and_markdown(tmp_path):
+async def test_offline_evaluation_writes_unified_report(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "src.evaluation.offline_rag.get_current_trace_id", lambda: "a" * 32
+    )
+
     async def fake_workflow(state):
         return {
             "suggested_response": (
@@ -58,10 +65,29 @@ async def test_offline_evaluation_writes_json_and_markdown(tmp_path):
                 {
                     "source": "Corporate Refund Policy (v1)",
                     "text": (
-                        "Refund requests must be filed within 30 days and require no active disputes."
+                        "Refund requests must be filed within 30 days and "
+                        "require no active disputes."
                     ),
                 }
             ],
+            "department": "billing",
+            "intent": "billing_dispute",
+            "priority": "high",
+            "tool_calls": [
+                {"tool_name": "crm.get_customer_profile"},
+                {"tool_name": "tickets.get_past_tickets"},
+                {"tool_name": "orders.get_order_history"},
+            ],
+            "workflow_path": [
+                "ticket_analyzer",
+                "tool_call",
+                "retriever",
+                "llm_generation",
+                "qa",
+                "escalation",
+            ],
+            "escalation_recommended": True,
+            "approval_required": True,
             "errors": [],
         }
 
@@ -75,16 +101,54 @@ async def test_offline_evaluation_writes_json_and_markdown(tmp_path):
 
     report = json.loads(paths["json"].read_text(encoding="utf-8"))
     markdown = paths["markdown"].read_text(encoding="utf-8")
-    assert report["engine"] == "local"
+    assert report["schema_version"] == "2.0"
+    assert report["engines"] == {"rag": "local", "agent": "local"}
     assert report["case_count"] == 1
-    assert set(report["aggregates"]) == {
+    assert set(report["rag_evaluation"]["aggregates"]) == {
         "faithfulness",
         "answer_relevancy",
         "context_precision",
         "context_recall",
     }
-    assert report["cases"][0]["citation_hit"] is True
-    assert "Agent Evaluation 评测报告" in markdown
+    assert report["cases"][0]["rag_evaluation"]["citation_hit"] is True
+    assert report["cases"][0]["agent_evaluation"]["passed"] is True
+    assert report["cases"][0]["trace_id"] == "a" * 32
+    assert "RAG + Agent Evaluation 统一评测报告" in markdown
+    assert "OTel Trace ID" in markdown
+
+
+@pytest.mark.asyncio
+async def test_agent_failure_is_linked_to_workflow_trace(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.evaluation.offline_rag.get_current_trace_id", lambda: "b" * 32
+    )
+
+    async def wrong_workflow(state):
+        return {
+            "suggested_response": "Unsupported answer",
+            "context_citations": [],
+            "department": "general",
+            "intent": "information_request",
+            "priority": "medium",
+            "tool_calls": [],
+            "workflow_path": ["ticket_analyzer"],
+            "escalation_recommended": False,
+            "approval_required": False,
+            "errors": [],
+        }
+
+    paths = await run_offline_evaluation(
+        DATASET_PATH,
+        tmp_path,
+        engine="local",
+        limit=1,
+        workflow_runner=wrong_workflow,
+    )
+    row = json.loads(paths["json"].read_text(encoding="utf-8"))["cases"][0]
+
+    assert row["trace_id"] == "b" * 32
+    assert row["agent_evaluation"]["passed"] is False
+    assert row["agent_evaluation"]["failures"]
 
 
 @pytest.mark.asyncio
@@ -99,6 +163,30 @@ async def test_ragas_mode_requires_real_api_key(monkeypatch):
             DATASET_PATH,
             Path("unused"),
             engine="ragas",
+            limit=1,
+            workflow_runner=fake_workflow,
+        )
+
+
+@pytest.mark.asyncio
+async def test_deepeval_mode_requires_real_api_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    async def fake_workflow(state):
+        return {
+            "suggested_response": "answer",
+            "context_citations": [],
+            "workflow_path": [],
+            "tool_calls": [],
+            "errors": [],
+        }
+
+    with pytest.raises(RuntimeError, match="DeepEval engine"):
+        await run_offline_evaluation(
+            DATASET_PATH,
+            tmp_path,
+            rag_engine="local",
+            agent_engine="deepeval",
             limit=1,
             workflow_runner=fake_workflow,
         )

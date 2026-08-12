@@ -133,7 +133,7 @@ Run the independent phase-1 Agent/RAG evaluation after seeding the knowledge bas
 
 ```bash
 pip install -r requirements/eval.txt
-python scripts/run_agent_eval.py --engine ragas
+python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
 ---
