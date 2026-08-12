@@ -65,7 +65,7 @@ supportgpt-enterprise/
    ```
 2. Create and activate a virtual environment:
    ```bash
-   python -m venv .venv
+   python3.11 -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 3. Install dependencies:
@@ -77,6 +77,7 @@ supportgpt-enterprise/
    ```bash
    cp .env.example .env
    ```
+   该配置默认使用 Mock LLM、SQLite、无 Redis 降级模式和版本化的本地 ChromaDB 目录，无需外部服务即可启动。
 5. Seed the Vector Database:
    ```bash
    python scripts/seed_kb.py
@@ -86,6 +87,8 @@ supportgpt-enterprise/
    uvicorn src.main:app --reload
    ```
    Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to view the interactive API docs.
+
+   如果本地曾被其他 ChromaDB 大版本写入，请使用新的 `VECTOR_DB_PERSIST_DIR` 并重新执行 `scripts/seed_kb.py`，不要直接复用不兼容的 SQLite schema。
 
 ### 2. Local Development (Frontend)
 1. Navigate to the frontend directory:

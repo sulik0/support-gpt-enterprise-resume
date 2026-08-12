@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     AZURE_OPENAI_DEPLOYMENT: Optional[str] = Field(default="gpt-4")
 
     # Vector DB
-    VECTOR_DB_PERSIST_DIR: str = Field(default="./chromadb_store")
+    VECTOR_DB_PERSIST_DIR: str = Field(default="./.runtime/chromadb-0.5")
     CHROMA_HOST: Optional[str] = Field(default=None)
     CHROMA_PORT: Optional[int] = Field(default=None)
+    CHROMA_ANONYMIZED_TELEMETRY: bool = Field(default=False)
 
     # Observability：应用仅通过 OpenTelemetry SDK 采集并使用 OTLP 导出。
     OTEL_ENABLED: bool = Field(default=True)

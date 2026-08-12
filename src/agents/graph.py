@@ -49,6 +49,7 @@ class AgentState(TypedDict):
     hallucination_detected: bool
     escalation_recommended: bool
     escalation_reason: Optional[str]
+    sla_hours: float
     tokens_input: int
     tokens_output: int
     cost_usd: float
@@ -205,6 +206,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "hallucination_detected": False,
         "escalation_recommended": False,
         "escalation_reason": None,
+        "sla_hours": 24.0,
         "tokens_input": 0,
         "tokens_output": 0,
         "cost_usd": 0.0,

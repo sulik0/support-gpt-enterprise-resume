@@ -100,3 +100,4 @@ async def test_compiled_langgraph_flow():
     assert "suggested_response" in final_output
     assert final_output["cost_usd"] >= 0.0
     assert final_output["latency_seconds"] > 0.0
+    assert final_output["sla_hours"] == 12.0

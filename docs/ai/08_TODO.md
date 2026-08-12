@@ -11,6 +11,9 @@
 - [x] 将在线与离线 Evaluation 结果关联到 Agent Run。
 - [x] 增加 PII / 密钥过滤、Tool 字段白名单、会话 HMAC 摘要和独立事务 fail-open。
 - [x] 增加 SFT / DPO 候选质量门控、去重、原子导出和 Manifest。
+- [x] 跑通 FastAPI `/health` -> Workflow -> Ticket / AgentRun -> FeedbackEvent 的 MVP 持久化链路。
+- [x] 修复 LangGraph State 缺少 `sla_hours` 导致的 Workflow 运行失败。
+- [x] 固定核心 LangChain / LangGraph / ChromaDB 兼容版本，并使用版本化 ChromaDB 本地目录。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -31,7 +34,8 @@
 
 ## 已知问题与风险
 
-- [ ] 本机 Python 3.13 虚拟环境存在依赖冲突和 pytest `exit code 139`；CI 使用 Python 3.11。
+- [x] 在新 Python 3.12 隔离环境完成 `pip check` 和 60 条全量测试；CI / Docker 使用 Python 3.11。
+- [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
 - [ ] 反馈 Token 目前随 Agent 响应返回，前端仍需安全保存并只在评价提交时使用。

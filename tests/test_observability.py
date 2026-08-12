@@ -47,13 +47,17 @@ def test_cost_calculation():
 
 
 def test_otel_metric_instruments_record_natively():
-    assert LLM_TOKENS_TOTAL.name == "llm_tokens"
-    assert AGENT_REQUESTS_TOTAL.name == "agent_requests"
-    assert AGENT_NODE_DURATION_SECONDS.name == "agent_node_duration_seconds"
-    assert TOOL_CALLS_TOTAL.name == "agent_tool_calls"
-    assert HUMAN_APPROVALS_TOTAL.name == "human_approvals"
-    assert FEEDBACK_EVENTS_TOTAL.name == "feedback_events"
-    assert TRAINING_CANDIDATES_TOTAL.name == "training_candidates"
+    # SDK 初始化前 Instrument 是 Proxy，初始化后才暴露公开 name。
+    def instrument_name(instrument):
+        return getattr(instrument, "name", getattr(instrument, "_name", None))
+
+    assert instrument_name(LLM_TOKENS_TOTAL) == "llm_tokens"
+    assert instrument_name(AGENT_REQUESTS_TOTAL) == "agent_requests"
+    assert instrument_name(AGENT_NODE_DURATION_SECONDS) == "agent_node_duration_seconds"
+    assert instrument_name(TOOL_CALLS_TOTAL) == "agent_tool_calls"
+    assert instrument_name(HUMAN_APPROVALS_TOTAL) == "human_approvals"
+    assert instrument_name(FEEDBACK_EVENTS_TOTAL) == "feedback_events"
+    assert instrument_name(TRAINING_CANDIDATES_TOTAL) == "training_candidates"
     AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
     AGENT_NODE_DURATION_SECONDS.record(0.01, {"node": "retriever"})
 

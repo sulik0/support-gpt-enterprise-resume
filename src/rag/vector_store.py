@@ -22,20 +22,27 @@ class VectorStoreManager:
     """
     def __init__(self):
         # Configure Chroma client based on config settings
+        chroma_settings = ChromaSettings(
+            anonymized_telemetry=settings.CHROMA_ANONYMIZED_TELEMETRY
+        )
         if settings.CHROMA_HOST and settings.CHROMA_PORT:
             self.client = chromadb.HttpClient(
                 host=settings.CHROMA_HOST,
-                port=settings.CHROMA_PORT
+                port=settings.CHROMA_PORT,
+                settings=chroma_settings,
             )
         else:
             # Persistent or in-memory SQLite storage
             persist_dir = settings.VECTOR_DB_PERSIST_DIR
             if settings.APP_ENV == "testing":
                 # Always run in-memory for unit test isolation
-                self.client = chromadb.EphemeralClient()
+                self.client = chromadb.EphemeralClient(settings=chroma_settings)
             else:
                 os.makedirs(persist_dir, exist_ok=True)
-                self.client = chromadb.PersistentClient(path=persist_dir)
+                self.client = chromadb.PersistentClient(
+                    path=persist_dir,
+                    settings=chroma_settings,
+                )
 
         # Retrieve or create collection
         self.collection_name = "kb_documents"

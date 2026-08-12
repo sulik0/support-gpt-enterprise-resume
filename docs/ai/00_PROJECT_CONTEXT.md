@@ -297,6 +297,7 @@ resolved / closed --reopen--> in_progress
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent 指标并关联 Trace ID。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
+- MVP 主链路已实测通过：FastAPI `/health` -> LangGraph Workflow -> Ticket / AgentRun 持久化 -> 用户评价 -> FeedbackEvent 持久化。
 - 覆盖 Agent、API、Auth、Guardrails、RAG、Evaluation、Observability、Tool Registry 和工单状态机的 pytest 测试模块。
 
 ### 部分完成
@@ -312,9 +313,9 @@ resolved / closed --reopen--> in_progress
 ### 已知环境限制
 
 - 项目推荐 Python 3.11。
-- 当前本机 `.venv` 使用 Python 3.13，pytest 可因 native dependency / plugin 冲突以 `exit code 139` 崩溃。
-- `python -m compileall src tests` 以及直接调用核心 workflow 通常可正常运行。
-- 本地 Full pytest 的 `139` 不能直接解读为业务断言失败；应优先使用 Python 3.11 新环境或 GitHub Actions 验证。
+- 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在全新 Python 3.12 隔离环境中 `pip check` 通过，全量测试 `60 passed`，CI / Docker 继续使用 Python 3.11。
+- 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划
 

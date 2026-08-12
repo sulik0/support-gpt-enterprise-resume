@@ -13,6 +13,7 @@ mock_ragas.evaluate = MagicMock(
 )
 sys.modules["ragas"] = mock_ragas
 sys.modules["ragas.metrics"] = MagicMock()
+sys.modules["datasets"] = MagicMock()
 
 mock_deepeval = MagicMock()
 sys.modules["deepeval"] = mock_deepeval
@@ -87,6 +88,7 @@ async def test_ragas_deepeval_adapters_try_blocks(mocker):
     # Force api_key properties directly to bypass getenv cache check
     ragas_evaluator.api_key = "real-key-123"
     deepeval_evaluator.api_key = "real-key-123"
+    sys.modules["datasets"].Dataset.from_dict.return_value = MagicMock()
 
     try:
         res_ragas = await ragas_evaluator.run_evaluation(

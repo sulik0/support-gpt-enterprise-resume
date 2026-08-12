@@ -10,7 +10,7 @@ services:
       - REDIS_URL=redis://cache:6379/0
       - LLM_PROVIDER=mock
       - APP_ENV=production
-      - VECTOR_DB_PERSIST_DIR=/app/chromadb_store
+      - VECTOR_DB_PERSIST_DIR=/app/chromadb_store/0.5
       - OTEL_ENABLED=true
       - OTEL_SERVICE_NAME=supportgpt-backend
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces

@@ -5,13 +5,17 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from src.feedback.service import feedback_service
-from src.models.db_models import AgentRun, FeedbackEvent
+from src.models.db_models import AgentRun, FeedbackEvent, Ticket
 
 
 @pytest.mark.asyncio
 async def test_chat_run_and_user_feedback_are_trace_linked(
     client: AsyncClient, db_session
 ):
+    health = await client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "healthy"
+
     chat = await client.post(
         "/chat",
         json={
@@ -52,6 +56,14 @@ async def test_chat_run_and_user_feedback_are_trace_linked(
     assert run.session_id_hash == feedback_service._identifier_hash("feedback-session")
     assert run.session_id_hash != "feedback-session"
     assert row["trace_id"] == run.trace_id
+    ticket = await db_session.get(Ticket, run.ticket_id)
+    assert ticket is not None
+    assert ticket.customer_id == "cust_101"
+
+    event = await db_session.get(FeedbackEvent, row["id"])
+    assert event is not None
+    assert event.agent_run_id == run.id
+    assert event.ticket_id == ticket.id
 
     untrusted_evaluation = await client.post(
         "/evaluate-response",

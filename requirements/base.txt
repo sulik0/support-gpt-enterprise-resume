@@ -8,14 +8,19 @@ redis>=5.0.3,<6.0.0
 pyjwt[crypto]>=2.8.0,<3.0.0
 bcrypt>=4.1.2,<5.0.0
 passlib[bcrypt]>=1.7.4,<2.0.0
-chromadb>=0.4.24,<0.6.0
+chromadb==0.5.23
+# Chroma 0.5.x 仍调用 PostHog 5.x API；限制传递依赖避免启动告警与额外后台线程。
+posthog>=2.4.0,<6.0.0
 PyPDF2>=3.0.1,<4.0.0
 python-docx>=1.1.0,<2.0.0
 beautifulsoup4>=4.12.3,<5.0.0
 lxml>=5.1.0,<6.0.0
-langchain>=0.1.12,<0.3.0
-langchain-core>=0.1.33,<0.3.0
-langgraph>=0.0.28,<0.3.0
+langchain==0.2.17
+langchain-core==0.2.43
+langgraph==0.2.76
+langgraph-checkpoint==2.1.2
+tiktoken>=0.7.0,<1.0.0
+openai>=1.14.0,<2.0.0
 opentelemetry-api>=1.23.0,<2.0.0
 opentelemetry-sdk>=1.23.0,<2.0.0
 opentelemetry-exporter-otlp-proto-http>=1.23.0,<2.0.0

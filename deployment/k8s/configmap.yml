@@ -8,7 +8,7 @@ data:
   DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres-svc:5432/supportgpt"
   REDIS_URL: "redis://redis-svc:6379/0"
   LLM_PROVIDER: "mock"
-  VECTOR_DB_PERSIST_DIR: "/data/chromadb"
+  VECTOR_DB_PERSIST_DIR: "/data/chromadb/0.5"
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
   OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://otel-collector:4318/v1/metrics"
   OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS: "15000"

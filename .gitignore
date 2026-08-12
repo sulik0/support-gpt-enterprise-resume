@@ -11,9 +11,11 @@ ENV/
 htmlcov/
 .deepeval/
 chromadb_store/
+.runtime/
 supportgpt.db
 *.db
 evaluation/training_candidates/
+evaluation/reports/report_*.json
 
 # Node / React Frontend
 node_modules/
