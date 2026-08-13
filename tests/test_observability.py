@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from src.observability.metrics import (
     TRAINING_CANDIDATES_TOTAL,
 )
 from src.observability.sanitization import sanitize_attributes, sanitize_value
+from src.observability.logging_config import configure_logging
 from src.observability.tracing import (
     bind_request_id,
     get_request_id,
@@ -108,6 +110,20 @@ def test_request_id_context_is_scoped():
     finally:
         reset_request_id(token)
     assert get_request_id() is None
+
+
+def test_application_logging_configuration_is_idempotent():
+    application_logger = logging.getLogger("supportgpt")
+    configure_logging("INFO")
+    configure_logging("INFO")
+
+    handlers = [
+        handler
+        for handler in application_logger.handlers
+        if getattr(handler, "_supportgpt_console_handler", False)
+    ]
+    assert application_logger.level == logging.INFO
+    assert len(handlers) == 1
 
 
 def test_otel_attribute_values_are_compatible():

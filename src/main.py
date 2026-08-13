@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
 
 from src.config import settings
+from src.observability.logging_config import configure_logging
+
+configure_logging(settings.LOG_LEVEL)
+
 from src.database import engine, init_db, get_db
 from src.models.db_models import (
     AgentRun,
@@ -184,6 +188,8 @@ def _route_template(request: Request) -> str:
 # --- FastAPI Lifespan Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 确保 Uvicorn 初始化后业务日志仍使用应用配置。
+    configure_logging(settings.LOG_LEVEL)
     # 初始化统一 OpenTelemetry Trace 与 Metrics。
     init_tracing()
     # Create DB schemas (SQLite or PostgreSQL)
@@ -221,6 +227,10 @@ async def track_http_telemetry(request: Request, call_next):
 
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request_token = bind_request_id(request_id)
+    logger.info(
+        "http request started",
+        extra={"request_id": request_id, "method": method},
+    )
     try:
         with observed_span(tracer, f"api.{method}") as span:
             set_span_attributes(
@@ -250,15 +260,38 @@ async def track_http_telemetry(request: Request, call_next):
                 trace_id = get_current_trace_id()
                 if trace_id:
                     response.headers["X-Trace-ID"] = trace_id
+                logger.info(
+                    "http request completed",
+                    extra={
+                        "request_id": request_id,
+                        "trace_id": trace_id,
+                        "method": method,
+                        "route": route_template,
+                        "status_code": response.status_code,
+                        "duration_ms": round(duration * 1000, 2),
+                    },
+                )
                 return response
             except Exception as e:
                 route_template = _route_template(request)
+                duration = time.time() - start_time
                 _record_http_metrics(
-                    method, route_template, "500", time.time() - start_time
+                    method, route_template, "500", duration
                 )
                 set_span_attributes(
                     span,
                     {"http.status_code": 500, "error.type": e.__class__.__name__},
+                )
+                logger.exception(
+                    "http request failed",
+                    extra={
+                        "request_id": request_id,
+                        "method": method,
+                        "route": route_template,
+                        "status_code": 500,
+                        "duration_ms": round(duration * 1000, 2),
+                        "error_type": e.__class__.__name__,
+                    },
                 )
                 raise
     finally:

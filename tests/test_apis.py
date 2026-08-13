@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from httpx import AsyncClient
 
@@ -49,6 +51,43 @@ async def test_copilot_service_routes(client: AsyncClient):
     eval_data = eval_res.json()
     assert eval_data["passed_evaluation"] is True
     assert eval_data["faithfulness_score"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_chat_request_emits_correlated_application_logs(
+    client: AsyncClient, caplog
+):
+    application_logger = logging.getLogger("supportgpt")
+    application_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.INFO, logger="supportgpt"):
+            response = await client.post(
+                "/chat",
+                headers={"X-Request-ID": "chat-log-test"},
+                json={
+                    "session_id": "sess_log_test",
+                    "customer_id": "cust_101",
+                    "message": "I want a refund for my charge.",
+                    "kb_version": "v1",
+                },
+            )
+    finally:
+        application_logger.removeHandler(caplog.handler)
+
+    assert response.status_code == 200
+    records = caplog.records
+    completed = next(
+        record for record in records if record.message == "http request completed"
+    )
+    assert completed.request_id == "chat-log-test"
+    assert completed.route == "/chat"
+    assert completed.status_code == 200
+    assert completed.duration_ms > 0
+    assert any(record.message == "analyzer completed" for record in records)
+    assert any(record.message == "retriever completed" for record in records)
+    assert any(record.message == "tool completed" for record in records)
+    assert any(record.message == "qa completed" for record in records)
+    assert any(record.message == "escalation decided" for record in records)
 
 
 @pytest.mark.asyncio

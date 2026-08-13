@@ -115,8 +115,13 @@ async def test_workflow_emits_structured_node_logs(caplog):
         "kb_version": "v1",
     }
 
-    with caplog.at_level(logging.INFO, logger="supportgpt.agents.graph"):
-        await run_agent_workflow(initial_state)
+    application_logger = logging.getLogger("supportgpt")
+    application_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.INFO, logger="supportgpt.agents.graph"):
+            await run_agent_workflow(initial_state)
+    finally:
+        application_logger.removeHandler(caplog.handler)
 
     records = {record.message: record for record in caplog.records}
     assert records["analyzer completed"].ticket_id == 1002

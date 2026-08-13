@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     APP_NAME: str = Field(default="SupportGPT-Enterprise")
     APP_ENV: str = Field(default="development")
     DEBUG: bool = Field(default=True)
+    LOG_LEVEL: str = Field(default="INFO")
     PORT: int = Field(default=8000)
     HOST: str = Field(default="0.0.0.0")
 
