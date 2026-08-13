@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,9 @@ from src.observability.sanitization import sanitize_value
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = PROJECT_ROOT / "evaluation" / "golden" / "support_qa_golden.json"
+BASELINE_DATASET_PATH = (
+    PROJECT_ROOT / "evaluation" / "baseline" / "supportgpt_baseline_30.json"
+)
 
 
 def test_golden_dataset_is_valid_and_unique():
@@ -26,6 +30,33 @@ def test_golden_dataset_is_valid_and_unique():
     assert all(case.agent_expectations for case in cases)
 
 
+def test_baseline_dataset_has_30_cases_and_required_coverage():
+    payload = json.loads(BASELINE_DATASET_PATH.read_text(encoding="utf-8"))
+    cases = load_evaluation_dataset(BASELINE_DATASET_PATH)
+
+    required_tags = {
+        "refund",
+        "order",
+        "account",
+        "api_outage",
+        "insufficient_information",
+        "rag",
+        "tool_calling",
+        "human_escalation",
+        "prompt_injection",
+    }
+    actual_tags = {tag for case in cases for tag in case.tags}
+    tag_counts = Counter(tag for case in cases for tag in case.tags)
+
+    assert len(cases) == 30
+    assert len({case.id for case in cases}) == 30
+    assert required_tags <= actual_tags
+    assert payload["coverage"] == {
+        tag: tag_counts[tag] for tag in payload["coverage"]
+    }
+    assert all(case.agent_expectations for case in cases)
+
+
 def test_evaluation_case_accepts_optional_agent_run_link():
     payload = load_evaluation_dataset(DATASET_PATH)[0].__dict__.copy()
     payload["agent_run_id"] = "run-123"
@@ -33,6 +64,29 @@ def test_evaluation_case_accepts_optional_agent_run_link():
     case = EvaluationCase(**payload)
 
     assert case.agent_run_id == "run-123"
+
+
+@pytest.mark.asyncio
+async def test_workflow_replay_uses_case_customer_and_neutral_subject(monkeypatch):
+    captured = {}
+
+    async def capture_workflow(state):
+        captured.update(state)
+        return {
+            "suggested_response": "answer",
+            "context_citations": [],
+            "workflow_path": [],
+            "tool_calls": [],
+            "errors": [],
+        }
+
+    from src.evaluation.offline_rag import collect_workflow_records
+
+    case = load_evaluation_dataset(BASELINE_DATASET_PATH)[0]
+    await collect_workflow_records([case], workflow_runner=capture_workflow)
+
+    assert captured["customer_id"] == case.customer_id
+    assert captured["subject"] == f"Evaluation case: {case.category}"
 
 
 def test_trace_sanitizer_redacts_secrets_and_pii():

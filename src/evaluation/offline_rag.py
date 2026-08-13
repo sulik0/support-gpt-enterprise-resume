@@ -45,6 +45,8 @@ class EvaluationCase:
     category: str
     risk_level: str
     kb_version: str = "v1"
+    customer_id: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
     agent_expectations: Dict[str, Any] = field(default_factory=dict)
     agent_run_id: Optional[str] = None
 
@@ -117,8 +119,9 @@ async def collect_workflow_records(
                     {
                         "request_id": f"offline-eval-{case.id}",
                         "ticket_id": 10000 + index,
-                        "customer_id": f"offline_eval_{case.id}",
-                        "subject": f"Offline evaluation: {case.category}",
+                        "customer_id": case.customer_id
+                        or f"offline_eval_{case.id}",
+                        "subject": f"Evaluation case: {case.category}",
                         "description": case.query,
                         "kb_version": case.kb_version,
                         "operator_role": "agent",

@@ -42,6 +42,20 @@ Golden dataset 位于 `evaluation/golden/support_qa_golden.json`，当前用例�
 
 每条用例包含 `query`、`reference_answer`、`expected_sources`、`category`、`risk_level` 和 `kb_version`。
 
+Baseline dataset 位于 `evaluation/baseline/supportgpt_baseline_30.json`，包含 30 条业务回归样本，覆盖退款、订单、账户、API 故障、信息不足、RAG、Tool Calling、人工升级和 Prompt Injection。每条 Baseline 还可以通过 `customer_id` 绑定现有 Mock CRM/OMS/工单数据，并使用 `tags` 统计覆盖面。
+
+```bash
+LLM_PROVIDER=mock \
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT= \
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT= \
+python scripts/run_agent_eval.py \
+  --dataset evaluation/baseline/supportgpt_baseline_30.json \
+  --rag-engine local \
+  --agent-engine local
+```
+
+Baseline 中包含针对已知能力边界的期望断言，失败样本用于暴露回归或待建设能力，不应通过降低期望来换取通过率。
+
 ## 正式 Ragas 评测
 
 先安装可选评测依赖、配置评委模型密钥，并确保已完成知识库 seed：
