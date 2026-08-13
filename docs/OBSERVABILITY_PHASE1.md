@@ -128,7 +128,7 @@ Collector 转发 LangSmith 时单独使用以下环境变量，它们不会注�
 ```dotenv
 OTEL_COLLECTOR_LANGSMITH_API_KEY=<your-key>
 OTEL_COLLECTOR_LANGSMITH_PROJECT=supportgpt-enterprise
-OTEL_COLLECTOR_LANGSMITH_ENDPOINT=https://api.smith.langchain.com/otel/v1/traces
+OTEL_COLLECTOR_LANGSMITH_ENDPOINT=https://api.smith.langchain.com/otel
 ```
 
 Docker Compose 默认将 Application Trace 和 Metrics 统一发送到 Collector。代码中不存在 LangSmith SDK `traceable` 双轨路径，Collector 或下游不可用时，应用遥测保持 fail-open，不影响客服业务主流程。

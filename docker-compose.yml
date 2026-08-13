@@ -1,0 +1,13 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector:0.157.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    environment:
+      OTEL_COLLECTOR_LANGSMITH_API_KEY: ${OTEL_COLLECTOR_LANGSMITH_API_KEY}
+      OTEL_COLLECTOR_LANGSMITH_PROJECT: ${OTEL_COLLECTOR_LANGSMITH_PROJECT:-supportgpt-enterprise}
+      OTEL_COLLECTOR_LANGSMITH_ENDPOINT: ${OTEL_COLLECTOR_LANGSMITH_ENDPOINT:-https://api.smith.langchain.com/otel}
+    volumes:
+      - ./monitoring/otel-collector.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"

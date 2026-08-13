@@ -38,23 +38,28 @@ processors:
 exporters:
   debug:
     verbosity: basic
-  otlphttp/langsmith:
-    endpoint: ${env:LANGSMITH_OTEL_ENDPOINT}
+  otlp_http/langsmith:
+    endpoint: ${env:OTEL_COLLECTOR_LANGSMITH_ENDPOINT}
     headers:
-      x-api-key: ${env:LANGSMITH_API_KEY}
-      Langsmith-Project: ${env:LANGSMITH_PROJECT}
+      x-api-key: ${env:OTEL_COLLECTOR_LANGSMITH_API_KEY}
+      Langsmith-Project: ${env:OTEL_COLLECTOR_LANGSMITH_PROJECT}
   prometheus:
     endpoint: 0.0.0.0:8889
 
 service:
   telemetry:
     metrics:
-      address: 0.0.0.0:8888
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, attributes/data_protection, batch]
-      exporters: [debug, otlphttp/langsmith]
+      exporters: [debug, otlp_http/langsmith]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]

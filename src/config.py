@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     OTEL_COLLECTOR_LANGSMITH_API_KEY: Optional[str] = Field(default=None)
     OTEL_COLLECTOR_LANGSMITH_PROJECT: str = Field(default="supportgpt-enterprise")
     OTEL_COLLECTOR_LANGSMITH_ENDPOINT: str = Field(
-        default="https://api.smith.langchain.com/otel/v1/traces"
+        default="https://api.smith.langchain.com/otel"
     )
 
     # Guardrails Settings
