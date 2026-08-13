@@ -5,6 +5,48 @@ from src.config import settings
 from src.observability.tracing import trace_operation
 
 
+RESOLUTION_LANGUAGE_POLICY = (
+    "Reply in the language used in the customer's current Description. "
+    "If the current Description explicitly asks for a different response language, "
+    "use the requested language instead. Do not choose the response language from the "
+    "subject, retrieved context, tool results, or earlier messages."
+)
+
+CHAT_LANGUAGE_POLICY = (
+    "Reply in the language used in the latest user message. If that message explicitly "
+    "asks for a different response language, use the requested language instead. "
+    "Do not preserve a previous response language unless the latest user message asks you to."
+)
+
+
+def _mock_uses_chinese(text: str) -> bool:
+    """让 Mock 在中英文演示中遵循当前输入和显式切换要求。"""
+    lowered = text.lower()
+    english_requests = (
+        "用英文",
+        "用英语",
+        "使用英文",
+        "英文回复",
+        "reply in english",
+        "respond in english",
+        "answer in english",
+    )
+    chinese_requests = (
+        "用中文",
+        "用汉语",
+        "使用中文",
+        "中文回复",
+        "reply in chinese",
+        "respond in chinese",
+        "answer in chinese",
+    )
+    if any(item in lowered for item in english_requests):
+        return False
+    if any(item in lowered for item in chinese_requests):
+        return True
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
 class BaseLLMProvider(ABC):
     """定义工单分析、回复生成、QA 和对话能力的统一接口。"""
 
@@ -98,7 +140,23 @@ class MockLLMProvider(BaseLLMProvider):
         self, subject: str, description: str, context: str
     ) -> Tuple[str, int, int]:
         desc_lower = description.lower()
-        if "billing" in desc_lower or "refund" in desc_lower:
+        use_chinese = _mock_uses_chinese(description)
+        if use_chinese and ("退款" in description or "账单" in description):
+            response = (
+                "感谢你联系我们处理账单问题。根据退款政策，退款申请需要在购买后 30 天内提交。"
+                "我已为这笔交易发起退款审批，审批通过后预计 3 至 5 个工作日到账。"
+            )
+        elif use_chinese and any(item in description for item in ("故障", "报错", "无法访问", "宕机")):
+            response = (
+                "很抱歉服务中断。根据系统状态和技术文档，API 服务层发生了短暂故障，"
+                "运维团队已部署修复。请清理缓存后重试，如仍有问题请继续告知我们。"
+            )
+        elif use_chinese:
+            response = (
+                "感谢你联系客户支持。我已查询相关产品指南，请进入“设置 → 偏好设置”并验证邮箱。"
+                "如果还需要其他帮助，请继续告诉我。"
+            )
+        elif "billing" in desc_lower or "refund" in desc_lower:
             response = (
                 "Thank you for reaching out regarding your billing issue. According to our refund policy: "
                 "refund requests must be submitted within 30 days of purchase. I have initiated the refund "
@@ -150,8 +208,18 @@ class MockLLMProvider(BaseLLMProvider):
     async def run_chat(
         self, history: List[Dict[str, str]], context: str
     ) -> Tuple[str, int, int]:
-        last_message = history[-1]["content"] if history else ""
-        response = f"This is an automated response from SupportGPT. I received your message: '{last_message}'. How else can I assist you today?"
+        last_user_message = next(
+            (
+                message.get("content", "")
+                for message in reversed(history)
+                if message.get("role") == "user"
+            ),
+            "",
+        )
+        if _mock_uses_chinese(last_user_message):
+            response = f"这是 SupportGPT 的自动回复。我已收到你的消息：“{last_user_message}”。还有什么可以帮助你？"
+        else:
+            response = f"This is an automated response from SupportGPT. I received your message: '{last_user_message}'. How else can I assist you today?"
         return response, 200, 40
 
 
@@ -223,7 +291,11 @@ class OpenAILLMProvider(BaseLLMProvider):
         messages = [
             {
                 "role": "system",
-                "content": "You are a customer support agent. Address the issue using only the provided context. If the context doesn't have the answer, state that you need to escalate.",
+                "content": (
+                    "You are a customer support agent. Address the issue using only the "
+                    "provided context. If the context doesn't have the answer, state that "
+                    f"you need to escalate. {RESOLUTION_LANGUAGE_POLICY}"
+                ),
             },
             {"role": "user", "content": prompt},
         ]
@@ -259,7 +331,10 @@ class OpenAILLMProvider(BaseLLMProvider):
     async def run_chat(
         self, history: List[Dict[str, str]], context: str
     ) -> Tuple[str, int, int]:
-        system_msg = "You are SupportGPT, a customer support AI assistant. Answer using the retrieved context if available."
+        system_msg = (
+            "You are SupportGPT, a customer support AI assistant. Answer using the "
+            f"retrieved context if available. {CHAT_LANGUAGE_POLICY}"
+        )
         if context:
             system_msg += f"\n\nContext:\n{context}"
 
@@ -330,7 +405,11 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         messages = [
             {
                 "role": "system",
-                "content": "You are a customer support agent. Address the issue using only the provided context. If the context doesn't have the answer, state that you need to escalate.",
+                "content": (
+                    "You are a customer support agent. Address the issue using only the "
+                    "provided context. If the context doesn't have the answer, state that "
+                    f"you need to escalate. {RESOLUTION_LANGUAGE_POLICY}"
+                ),
             },
             {"role": "user", "content": prompt},
         ]
@@ -366,7 +445,10 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
     async def run_chat(
         self, history: List[Dict[str, str]], context: str
     ) -> Tuple[str, int, int]:
-        system_msg = "You are SupportGPT, a customer support AI assistant. Answer using the retrieved context if available."
+        system_msg = (
+            "You are SupportGPT, a customer support AI assistant. Answer using the "
+            f"retrieved context if available. {CHAT_LANGUAGE_POLICY}"
+        )
         if context:
             system_msg += f"\n\nContext:\n{context}"
 

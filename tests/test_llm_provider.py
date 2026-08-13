@@ -1,8 +1,8 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.llm.provider import OpenAILLMProvider
+from src.llm.provider import MockLLMProvider, OpenAILLMProvider
 from src.rag.embedding import MockEmbeddingProvider, get_embedding_provider
 
 
@@ -41,3 +41,58 @@ def test_compatible_chat_does_not_require_openai_embedding_key(monkeypatch):
     monkeypatch.setattr("src.rag.embedding.settings.OPENAI_API_KEY", None)
 
     assert isinstance(get_embedding_provider(), MockEmbeddingProvider)
+
+
+@pytest.mark.asyncio
+async def test_mock_provider_follows_current_input_language():
+    provider = MockLLMProvider()
+
+    chinese, _, _ = await provider.generate_resolution(
+        "Support ticket", "我要申请退款", "policy"
+    )
+    english, _, _ = await provider.generate_resolution(
+        "客服工单", "Please help with my refund", "policy"
+    )
+    switched, _, _ = await provider.generate_resolution(
+        "客服工单", "请用英文回复退款流程", "policy"
+    )
+
+    assert "感谢" in chinese
+    assert "Thank you" in english
+    assert "Thank you" in switched
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_prompts_define_response_language_policy(monkeypatch):
+    monkeypatch.setattr("src.llm.provider.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_MODEL_NAME", "chat-model")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_BASE_URL", None)
+
+    completion = MagicMock()
+    completion.choices = [MagicMock(message=MagicMock(content="ok"))]
+    completion.usage = MagicMock(prompt_tokens=10, completion_tokens=2)
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=completion)
+
+    with patch("openai.AsyncOpenAI", return_value=client):
+        provider = OpenAILLMProvider()
+
+    await provider.generate_resolution("English subject", "我要查询物流", "English context")
+    resolution_messages = client.chat.completions.create.await_args.kwargs["messages"]
+    assert "current Description" in resolution_messages[0]["content"]
+    assert (
+        "explicitly asks for a different response language"
+        in resolution_messages[0]["content"]
+    )
+
+    await provider.run_chat(
+        [
+            {"role": "user", "content": "Please reply in English"},
+            {"role": "assistant", "content": "Previous response"},
+            {"role": "user", "content": "现在物流到哪里了？"},
+        ],
+        "English context",
+    )
+    chat_messages = client.chat.completions.create.await_args.kwargs["messages"]
+    assert "latest user message" in chat_messages[0]["content"]
+    assert "Do not preserve a previous response language" in chat_messages[0]["content"]
