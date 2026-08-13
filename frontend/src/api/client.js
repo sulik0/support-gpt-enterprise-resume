@@ -18,7 +18,7 @@ export async function login(username, password) {
     body: JSON.stringify({ username, password }),
   });
   if (!response.ok) {
-    throw new Error('Authentication failed');
+    throw new Error('身份验证失败');
   }
   const data = await response.json();
   localStorage.setItem('token', data.access_token);
@@ -38,8 +38,7 @@ export async function register(username, password, role = 'agent') {
     body: JSON.stringify({ username, password, role }),
   });
   if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.detail || 'Registration failed');
+    throw new Error('注册失败，用户名可能已存在或输入不符合要求');
   }
   return response.json();
 }
@@ -48,7 +47,7 @@ export async function fetchTickets() {
   const response = await fetch(`${BASE_URL}/tickets`, {
     headers: getHeaders(),
   });
-  if (!response.ok) throw new Error('Failed to fetch tickets');
+  if (!response.ok) throw new Error('加载工单失败');
   return response.json();
 }
 
@@ -58,7 +57,7 @@ export async function createTicket(customerId, subject, description) {
     headers: getHeaders(),
     body: JSON.stringify({ customer_id: customerId, subject, description }),
   });
-  if (!response.ok) throw new Error('Failed to create ticket');
+  if (!response.ok) throw new Error('创建工单失败');
   return response.json();
 }
 
@@ -66,7 +65,7 @@ export async function fetchPendingApprovals() {
   const response = await fetch(`${BASE_URL}/approvals/pending`, {
     headers: getHeaders(),
   });
-  if (!response.ok) throw new Error('Failed to fetch approvals');
+  if (!response.ok) throw new Error('加载审批记录失败');
   return response.json();
 }
 
@@ -76,7 +75,7 @@ export async function submitApproval(approvalId, status, modifiedResponse) {
     headers: getHeaders(),
     body: JSON.stringify({ approval_id: approvalId, status, modified_response: modifiedResponse }),
   });
-  if (!response.ok) throw new Error('Failed to process approval request');
+  if (!response.ok) throw new Error('处理审批请求失败');
   return response.json();
 }
 
@@ -86,7 +85,7 @@ export async function submitChat(message, customerId, sessionId, kbVersion = 'v1
     headers: getHeaders(),
     body: JSON.stringify({ message, customer_id: customerId, session_id: sessionId, kb_version: kbVersion }),
   });
-  if (!response.ok) throw new Error('Chat request failed');
+  if (!response.ok) throw new Error('智能体对话请求失败');
   return response.json();
 }
 
@@ -96,7 +95,7 @@ export async function fetchCustomerContext(customerId) {
     headers: getHeaders(),
     body: JSON.stringify({ customer_id: customerId }),
   });
-  if (!response.ok) throw new Error('Failed to load customer profile');
+  if (!response.ok) throw new Error('加载客户画像失败');
   return response.json();
 }
 
@@ -106,6 +105,6 @@ export async function evaluateResponse(query, context, responseText) {
     headers: getHeaders(),
     body: JSON.stringify({ query, context, response: responseText }),
   });
-  if (!response.ok) throw new Error('Evaluation request failed');
+  if (!response.ok) throw new Error('评测请求失败');
   return response.json();
 }

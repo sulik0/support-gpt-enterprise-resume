@@ -4,30 +4,30 @@ import { DollarSign, Cpu, Clock, ShieldAlert } from 'lucide-react';
 export default function MetricsGrid({ metrics = {} }) {
   const items = [
     {
-      title: 'Estimated API Cost',
+      title: '预估接口成本',
       value: `$${(metrics.cost || 0.0).toFixed(4)}`,
-      desc: 'Based on token usage rates',
+      desc: '根据令牌用量估算',
       icon: DollarSign,
       color: '#10b981',
     },
     {
-      title: 'LLM Tokens Consumed',
+      title: '大模型令牌消耗',
       value: (metrics.tokens || 0).toLocaleString(),
-      desc: 'Prompt + Completion tokens',
+      desc: '输入与生成令牌合计',
       icon: Cpu,
       color: '#3b82f6',
     },
     {
-      title: 'Avg Agent Latency',
+      title: '智能体平均延迟',
       value: `${(metrics.latency || 0).toFixed(2)}s`,
-      desc: 'LangGraph execution span',
+      desc: 'LangGraph 执行链路耗时',
       icon: Clock,
       color: '#eab308',
     },
     {
-      title: 'Guardrail Intercepts',
+      title: '安全护栏拦截次数',
       value: metrics.violations || 0,
-      desc: 'PII, Injection, and Jailbreaks',
+      desc: '个人敏感信息、提示词注入与越狱攻击',
       icon: ShieldAlert,
       color: '#ef4444',
     },

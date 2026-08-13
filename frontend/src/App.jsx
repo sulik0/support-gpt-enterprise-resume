@@ -3,7 +3,8 @@ import { fetchTickets, createTicket, login, register, logout } from './api/clien
 import MetricsGrid from './components/MetricsGrid';
 import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
-import { Sparkles, Key, LogOut, CheckCircle, RefreshCw } from 'lucide-react';
+import { translateRole } from './i18n';
+import { Sparkles, LogOut } from 'lucide-react';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -12,7 +13,7 @@ export default function App() {
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
 
-  // Main lists and states
+  // 页面主体状态
   const [tickets, setTickets] = useState([]);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [kbVersion, setKbVersion] = useState('v1');
@@ -21,7 +22,7 @@ export default function App() {
   const [newSubject, setNewSubject] = useState('');
   const [newDesc, setNewDesc] = useState('');
 
-  // Performance telemetry states
+  // 性能观测指标
   const [sysMetrics, setSysMetrics] = useState({
     cost: 0.0035,
     tokens: 1450,
@@ -44,7 +45,7 @@ export default function App() {
       const list = await fetchTickets();
       setTickets(list);
     } catch (err) {
-      console.error('Error loading tickets:', err);
+      console.error('加载工单失败：', err);
     }
   }
 
@@ -54,18 +55,18 @@ export default function App() {
       await login(loginUser, loginPass);
       setIsAuthenticated(true);
     } catch (err) {
-      alert('Login failed. Please verify credentials.');
+      alert('登录失败，请检查用户名和密码。');
     }
   }
 
   async function handleRegister(role) {
     if (!loginUser || !loginPass) {
-      alert('Please fill out credentials first.');
+      alert('请先填写用户名和密码。');
       return;
     }
     try {
       await register(loginUser, loginPass, role);
-      alert(`User ${loginUser} registered as ${role}. Please login.`);
+      alert(`用户 ${loginUser} 已注册为${translateRole(role)}，请登录。`);
     } catch (err) {
       alert(err.message);
     }
@@ -86,13 +87,13 @@ export default function App() {
       setNewSubject('');
       setNewDesc('');
       loadTickets();
-      alert('Ticket submitted successfully!');
+      alert('工单提交成功！');
     } catch (err) {
       alert(err.message);
     }
   }
 
-  // Update telemetry stats based on ticket events
+  // 工单处理完成后更新当前页面的演示指标。
   function handleActionComplete() {
     loadTickets();
     setSelectedTicket(null);
@@ -112,12 +113,12 @@ export default function App() {
             <h1 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', fontSize: '1.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
               <Sparkles color="#8b5cf6" size={24} /> SupportGPT
             </h1>
-            <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: '#9ca3af' }}>Enterprise AI Customer Support Portal</p>
+            <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: '#9ca3af' }}>企业级 AI 客服平台</p>
           </div>
 
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              <label style={{ fontSize: '0.8rem', fontWeight: '500', color: '#9ca3af' }}>Username</label>
+              <label style={{ fontSize: '0.8rem', fontWeight: '500', color: '#9ca3af' }}>用户名</label>
               <input
                 type="text"
                 value={loginUser}
@@ -127,7 +128,7 @@ export default function App() {
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              <label style={{ fontSize: '0.8rem', fontWeight: '500', color: '#9ca3af' }}>Password</label>
+              <label style={{ fontSize: '0.8rem', fontWeight: '500', color: '#9ca3af' }}>密码</label>
               <input
                 type="password"
                 value={loginPass}
@@ -138,18 +139,18 @@ export default function App() {
             </div>
 
             <button type="submit" className="btn btn-primary" style={{ marginTop: '0.5rem' }}>
-              Sign In
+              登录
             </button>
           </form>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-            <div style={{ fontSize: '0.75rem', color: '#6b7280', textAlign: 'center' }}>Or register seed user:</div>
+            <div style={{ fontSize: '0.75rem', color: '#6b7280', textAlign: 'center' }}>首次使用可注册演示账号</div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button onClick={() => handleRegister('agent')} className="btn btn-secondary" style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem' }}>
-                Register Agent
+                注册客服
               </button>
               <button onClick={() => handleRegister('admin')} className="btn btn-secondary" style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem' }}>
-                Register Admin
+                注册管理员
               </button>
             </div>
           </div>
@@ -160,17 +161,17 @@ export default function App() {
 
   return (
     <div className="app-container">
-      {/* Header */}
+      {/* 页面头部 */}
       <header className="app-header">
         <div className="app-title-group">
-          <h1>SupportGPT Enterprise</h1>
-          <p>Multi-Agent AI Copilot Dashboard</p>
+          <h1>SupportGPT 企业版</h1>
+          <p>多智能体 AI 客服工作台</p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          {/* KB Version dropdown */}
+          {/* 知识库版本 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>KB Version:</span>
+            <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>知识库版本：</span>
             <select
               value={kbVersion}
               onChange={(e) => setKbVersion(e.target.value)}
@@ -183,28 +184,28 @@ export default function App() {
                 fontSize: '0.8rem'
               }}
             >
-              <option value="v1">v1 - Active Policy</option>
-              <option value="v2">v2 - Extended 60-Day Policy</option>
-              <option value="v3">v3 - Draft version</option>
+              <option value="v1">v1 - 当前生效政策</option>
+              <option value="v2">v2 - 延长至 60 天政策</option>
+              <option value="v3">v3 - 草稿版本</option>
             </select>
           </div>
 
-          {/* User profile and logout */}
+          {/* 用户信息与退出 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', fontSize: '0.85rem' }}>
             <span style={{ color: '#8b5cf6', fontWeight: 'bold', textTransform: 'capitalize' }}>
-              {username} ({userRole})
+              {username}（{translateRole(userRole)}）
             </span>
-            <button onClick={handleLogout} className="btn btn-secondary" style={{ padding: '0.4rem', borderRadius: '50%' }}>
+            <button onClick={handleLogout} className="btn btn-secondary" style={{ padding: '0.4rem', borderRadius: '50%' }} title="退出登录" aria-label="退出登录">
               <LogOut size={14} />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Metrics Section */}
+      {/* 指标概览 */}
       <MetricsGrid metrics={sysMetrics} />
 
-      {/* Main Grid: sidebar and details */}
+      {/* 工单列表与详情 */}
       <main className="grid-dashboard">
         <TicketList
           tickets={tickets}
@@ -219,7 +220,7 @@ export default function App() {
         />
       </main>
 
-      {/* New Ticket Modal */}
+      {/* 新建工单弹窗 */}
       {showModal && (
         <div style={{
           position: 'fixed',
@@ -232,24 +233,24 @@ export default function App() {
           backdropFilter: 'blur(4px)'
         }}>
           <div className="glass-card" style={{ width: '450px', display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-            <h2 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif' }}>Submit Customer Case</h2>
+            <h2 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif' }}>提交客户工单</h2>
             
             <form onSubmit={handleCreateTicket} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Customer Profile ID</label>
+                <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>客户编号</label>
                 <select
                   value={newCustId}
                   onChange={(e) => setNewCustId(e.target.value)}
                   style={{ padding: '0.6rem', background: '#0f172a', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff' }}
                 >
-                  <option value="cust_101">cust_101 (Jane Doe - VIP)</option>
-                  <option value="cust_102">cust_102 (John Smith - Standard)</option>
-                  <option value="cust_103">cust_103 (Acme Corp - Enterprise)</option>
+                  <option value="cust_101">cust_101（简·多伊 - VIP 客户）</option>
+                  <option value="cust_102">cust_102（约翰·史密斯 - 标准客户）</option>
+                  <option value="cust_103">cust_103（艾克米公司 - 企业客户）</option>
                 </select>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Subject / Case Title</label>
+                <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>工单主题</label>
                 <input
                   type="text"
                   value={newSubject}
@@ -260,7 +261,7 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Detailed Issue Description</label>
+                <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>问题详情</label>
                 <textarea
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
@@ -271,10 +272,10 @@ export default function App() {
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
-                  File Case
+                  提交工单
                 </button>
                 <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary" style={{ flex: 1 }}>
-                  Cancel
+                  取消
                 </button>
               </div>
             </form>
