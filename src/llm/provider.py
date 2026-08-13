@@ -156,13 +156,25 @@ class MockLLMProvider(BaseLLMProvider):
 
 
 class OpenAILLMProvider(BaseLLMProvider):
-    """通过 OpenAI Chat Completions 实现统一 LLM Provider 接口。"""
+    """通过 OpenAI-compatible Chat Completions 提供统一 LLM 能力。
+
+    可连接 OpenAI、DeepSeek、Qwen、vLLM 等兼容服务。
+    """
 
     def __init__(self):
         from openai import AsyncOpenAI
 
-        self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = "gpt-4-turbo"
+        if not settings.LLM_API_KEY:
+            raise ValueError("LLM_PROVIDER=openai 时必须配置 LLM_API_KEY")
+        if not settings.LLM_MODEL_NAME:
+            raise ValueError("LLM_PROVIDER=openai 时必须配置 LLM_MODEL_NAME")
+
+        # base_url 为空时使用 OpenAI SDK 默认地址，配置后可连接兼容服务。
+        self.client = AsyncOpenAI(
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+        )
+        self.model = settings.LLM_MODEL_NAME
 
     async def _call_gpt(
         self, messages: List[Dict[str, str]], json_mode: bool = False

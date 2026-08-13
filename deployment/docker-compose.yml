@@ -8,7 +8,10 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/supportgpt
       - REDIS_URL=redis://cache:6379/0
-      - LLM_PROVIDER=mock
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-mock-support-v1}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
       - APP_ENV=production
       - VECTOR_DB_PERSIST_DIR=/app/chromadb_store/0.5
       - OTEL_ENABLED=true

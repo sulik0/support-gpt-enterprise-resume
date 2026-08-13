@@ -27,8 +27,11 @@ class Settings(BaseSettings):
     # LLM Configuration
     LLM_PROVIDER: str = Field(default="mock")  # mock, openai, azure
     LLM_MODEL_NAME: Optional[str] = Field(default=None)
+    LLM_BASE_URL: Optional[str] = Field(default=None)
+    LLM_API_KEY: Optional[str] = Field(default=None)
     PROMPT_VERSION: str = Field(default="support-v1")
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
+    # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。
     OPENAI_API_KEY: Optional[str] = Field(default=None)
     AZURE_OPENAI_API_KEY: Optional[str] = Field(default=None)
     AZURE_OPENAI_ENDPOINT: Optional[str] = Field(default=None)

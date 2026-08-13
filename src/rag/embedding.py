@@ -64,8 +64,8 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 
 def get_embedding_provider() -> BaseEmbeddingProvider:
     provider_type = settings.LLM_PROVIDER.lower()
-    if provider_type in ["openai", "azure"]:
-        # Standard OpenAI embedding provider
+    if provider_type in ["openai", "azure"] and settings.OPENAI_API_KEY:
+        # Chat Provider 与 Embedding 凭据解耦，兼容不提供 Embedding 的服务。
         return OpenAIEmbeddingProvider()
     return MockEmbeddingProvider()
 

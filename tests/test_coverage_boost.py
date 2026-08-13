@@ -136,17 +136,28 @@ async def test_providers_mocking(mocker):
         return_value=mock_chat_completion
     )
 
-    # Mock OpenAI client construction
-    mocker.patch("openai.AsyncOpenAI", return_value=mock_async_client)
+    # Mock OpenAI-compatible client construction
+    openai_client = mocker.patch("openai.AsyncOpenAI", return_value=mock_async_client)
     mocker.patch("openai.AsyncAzureOpenAI", return_value=mock_async_client)
 
-    # Test OpenAI LLM provider methods
+    # Test OpenAI-compatible LLM provider methods
+    mocker.patch("src.llm.provider.settings.LLM_API_KEY", "compatible-api-key")
+    mocker.patch("src.llm.provider.settings.LLM_BASE_URL", "https://llm.example.com/v1")
+    mocker.patch("src.llm.provider.settings.LLM_MODEL_NAME", "compatible-chat-model")
     op_provider = OpenAILLMProvider()
+    openai_client.assert_called_once_with(
+        api_key="compatible-api-key",
+        base_url="https://llm.example.com/v1",
+    )
     analysis, _, _ = await op_provider.analyze_ticket("Hello")
     assert analysis["sentiment"] == "positive"
     await op_provider.generate_resolution("subject", "desc", "context")
     await op_provider.evaluate_qa("query", ["context"], "response")
     await op_provider.run_chat([{"role": "user", "content": "hi"}], "context")
+    assert all(
+        call.kwargs["model"] == "compatible-chat-model"
+        for call in mock_async_client.chat.completions.create.await_args_list
+    )
 
     # Test Azure LLM provider methods
     az_provider = AzureOpenAILLMProvider()
