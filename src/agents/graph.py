@@ -91,36 +91,96 @@ async def _run_node(
 
 async def analyze_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(tracer, "agent.analyzer", _trace_attrs(state, node="analyzer")):
-        return await _run_node("ticket_analyzer", ticket_analyzer_agent.analyze, state)
+        result = await _run_node(
+            "ticket_analyzer", ticket_analyzer_agent.analyze, state
+        )
+        logger.info(
+            "analyzer completed",
+            extra={
+                "ticket_id": result.get("ticket_id"),
+                "intent": result.get("intent"),
+                "priority": result.get("priority"),
+            },
+        )
+        return result
 
 
 async def retrieve_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(
         tracer, "agent.retriever", _trace_attrs(state, node="retriever")
     ):
-        return await _run_node("retriever", knowledge_retriever_agent.retrieve, state)
+        result = await _run_node(
+            "retriever", knowledge_retriever_agent.retrieve, state
+        )
+        logger.info(
+            "retriever completed",
+            extra={
+                "ticket_id": result.get("ticket_id"),
+                "citations": len(result.get("context_citations", [])),
+            },
+        )
+        return result
 
 
 async def tooling_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(tracer, "agent.tooling", _trace_attrs(state, node="tooling")):
-        return await _run_node("tool_call", tooling_agent.enrich, state)
+        result = await _run_node("tool_call", tooling_agent.enrich, state)
+        tool_calls = result.get("tool_calls", [])
+        logger.info(
+            "tool completed",
+            extra={
+                "ticket_id": result.get("ticket_id"),
+                "tool": ",".join(
+                    call.get("tool_name", "unknown") for call in tool_calls
+                ),
+                "tool_count": len(tool_calls),
+            },
+        )
+        return result
 
 
 async def resolve_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(tracer, "agent.resolver", _trace_attrs(state, node="resolver")):
-        return await _run_node("llm_generation", resolution_agent.resolve, state)
+        result = await _run_node("llm_generation", resolution_agent.resolve, state)
+        logger.info(
+            "generation completed",
+            extra={
+                "ticket_id": result.get("ticket_id"),
+                "generated": bool(result.get("suggested_response")),
+            },
+        )
+        return result
 
 
 async def qa_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(tracer, "agent.qa", _trace_attrs(state, node="qa")):
-        return await _run_node("qa", quality_assurance_agent.verify, state)
+        result = await _run_node("qa", quality_assurance_agent.verify, state)
+        logger.info(
+            "qa completed",
+            extra={
+                "ticket_id": result.get("ticket_id"),
+                "score": result.get("qa_score"),
+                "hallucination_detected": result.get(
+                    "hallucination_detected", False
+                ),
+            },
+        )
+        return result
 
 
 async def escalate_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(
         tracer, "agent.escalation", _trace_attrs(state, node="escalation")
     ):
-        return await _run_node("escalation", escalation_agent.evaluate, state)
+        result = await _run_node("escalation", escalation_agent.evaluate, state)
+        logger.info(
+            "escalation decided",
+            extra={
+                "ticket_id": result.get("ticket_id"),
+                "required": result.get("escalation_recommended", False),
+            },
+        )
+        return result
 
 
 def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:

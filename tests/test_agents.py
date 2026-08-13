@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from src.agents.analyzer import ticket_analyzer_agent
 from src.agents.retriever import knowledge_retriever_agent
@@ -101,3 +103,25 @@ async def test_compiled_langgraph_flow():
     assert final_output["cost_usd"] >= 0.0
     assert final_output["latency_seconds"] > 0.0
     assert final_output["sla_hours"] == 12.0
+
+
+@pytest.mark.asyncio
+async def test_workflow_emits_structured_node_logs(caplog):
+    initial_state = {
+        "ticket_id": 1002,
+        "customer_id": "cust_101",
+        "subject": "Order question",
+        "description": "Please check my order status",
+        "kb_version": "v1",
+    }
+
+    with caplog.at_level(logging.INFO, logger="supportgpt.agents.graph"):
+        await run_agent_workflow(initial_state)
+
+    records = {record.message: record for record in caplog.records}
+    assert records["analyzer completed"].ticket_id == 1002
+    assert hasattr(records["retriever completed"], "citations")
+    assert hasattr(records["tool completed"], "tool")
+    assert hasattr(records["generation completed"], "generated")
+    assert hasattr(records["qa completed"], "score")
+    assert hasattr(records["escalation decided"], "required")
