@@ -58,6 +58,31 @@ def test_risk_engine_blocks_security_threat_and_flags_bad_output():
     assert "hallucination_detected" in bad_output.reasons
 
 
+def test_risk_engine_fuses_qwen3_guard_severity_and_degraded_context():
+    controversial = RiskEngine().assess(
+        {
+            "semantic_guard_label": "controversial",
+            "semantic_guard_categories": ["Unethical Acts"],
+        },
+        stage="input",
+    )
+    degraded_rag = RiskEngine().assess(
+        {
+            "semantic_guard_degraded": True,
+            "semantic_guard_checks": [{"source": "rag_document", "status": "error"}],
+        },
+        stage="input",
+    )
+
+    assert controversial.level == "high"
+    assert controversial.requires_human is True
+    assert controversial.block_automation is False
+    assert "semantic_safety_controversial" in controversial.reasons
+    assert degraded_rag.level == "high"
+    assert degraded_rag.requires_human is True
+    assert "untrusted_context_guard_unavailable" in degraded_rag.reasons
+
+
 def test_risk_thresholds_must_be_strictly_ordered():
     with pytest.raises(ValueError, match="medium < high < critical"):
         Settings(

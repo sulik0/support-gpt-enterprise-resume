@@ -94,7 +94,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | 向量数据库 | ChromaDB |
 | 检索 | Embedding、Hybrid RAG、BM25 风格词法打分、轻量 rerank |
 | LLM | Mock LLM、OpenAI-compatible（OpenAI / DeepSeek / Qwen / vLLM）、Azure OpenAI Provider |
-| 安全 | JWT、RBAC、PII 脱敏、多层直接/间接 Prompt Injection、Jailbreak、Response Filter、独立 Risk Engine |
+| 安全 | JWT、RBAC、PII 脱敏、确定性 Prompt Injection 规则、Qwen3Guard-Gen-0.6B 语义分类、Jailbreak、Response Filter、独立 Risk Engine |
 | 审批 | Human-in-the-Loop、工单状态机 |
 | 可观测 | OpenTelemetry、LangSmith、Prometheus、Grafana |
 | 部署与验证 | Docker、Docker Compose、Kubernetes manifests、pytest、GitHub Actions |
@@ -107,7 +107,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 | Agent | 职责 |
 |---|---|
-| Analyzer | PII 脱敏、多层 Prompt Injection/Jailbreak 检测、情绪/优先级/部门/意图/置信度分类和初始 Risk Engine 评估 |
+| Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测、情绪/优先级/部门/意图/置信度分类和初始 Risk Engine 评估 |
 | Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文，并检查工具返回的间接注入 |
 | Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation，并在生成前检查文档间接注入 |
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
@@ -181,11 +181,13 @@ Prompt Injection 不再只是英文关键词检测，当前实现为确定性多
 4. 在 `user_input`、`tool_result` 和 `rag_document` 三类信任边界执行，同时防护直接与间接 Prompt Injection。
 5. 返回 `risk_score`、`confidence`、`layers` 和不含敏感原文的 `signals`；命中后清空不可信上下文并直接转人工。
 
+确定性规则未命中时，可选调用独立 `Qwen3Guard-Gen-0.6B` OpenAI-compatible 端点。该 Adapter 已接入 `user_input`、`tool_result` 和 `rag_document`，并将 `Safe / Controversial / Unsafe`、Categories、延迟与降级状态写入 AgentState 和 OpenTelemetry。`Unsafe` 或 `Jailbreak` 类别阻断自动化；`Controversial` 默认进入 Risk Engine 并要求人工处理。Guard 服务默认关闭，不得宣称已有生产运行指标。
+
 独立 `RiskEngine` 综合安全分数、优先级、情绪、退款/拒付/投诉等高风险意图、Analyzer 置信度、QA、幻觉和 Workflow 错误。默认风险阈值为 `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；Analyzer 低置信度阈值为 `0.65`，QA 阈值为 `0.8`。`high` / `critical` 要求人工处理，安全威胁额外阻断自动化。
 
 `/chat` 与 `/suggest-response` 会返回 Analyzer 置信度、风险等级、分数和原因。Trace 和结构化日志记录风险字段，OpenTelemetry Metrics 记录最终风险评估数与分数分布。
 
-可以说已实现确定性多层检测和独立 Risk Engine；不能说已接入专用训练的安全分类模型、策略配置中心、持久化安全事件平台或生产级攻防运营体系。
+可以说已实现“确定性规则 + Qwen3Guard-Gen-0.6B + Risk Engine”可降级链路；不能说 Guard 已在生产强制启用、阈值已经真实数据校准，或已建成策略中心与持久化安全事件平台。
 
 ## 15. 数据库
 
@@ -303,7 +305,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
-| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；Python 3.12 环境 86 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
+| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；Python 3.12 环境 117 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
@@ -312,7 +314,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 | 工具审计不持久化 | 审计记录当前驻留进程内并可随响应返回 | 作为后续审计表改造项 | 不要说已有完整合规审计平台 |
 | Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；恢复后继续上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |
 | Feedback 新表迁移 | 当前使用 SQLAlchemy `create_all` 创建新表 | 本地可直接运行；生产发布前补 Alembic migration | 不要说已经具备生产 Schema Migration |
-| 多层安全检测覆盖边界 | 当前为确定性规范化、特征、启发式与编码载荷检测 | 输入、Tool、RAG 信任边界失败时默认阻断并转人工 | 不要说已有训练型安全分类器或完整攻防平台 |
+| 多层安全检测覆盖边界 | 确定性规范化、特征、启发式和编码载荷，再接 Qwen3Guard 语义分类 | 输入、Tool、RAG 命中 Unsafe 时阻断，Guard 失败时隔离外部上下文并转人工 | 不要说默认已启用 Guard 服务或已建成完整攻防平台 |
 | Risk Engine 阈值 | 默认阈值可通过环境变量配置，但尚无真实运营数据校准 | high / critical 保守转人工，安全威胁阻断自动化 | 不要说阈值已用生产样本训练或自适应调优 |
 
 ## 24. 未来规划
@@ -329,7 +331,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 8. 引入 Prompt Registry、内容快照、灰度和回滚，并按版本关联质量与成本指标。
 9. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
 10. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
-11. 引入专用安全分类模型、安全样本库、策略版本与持久化安全事件，用真实数据校准 Prompt Injection 与 Risk Engine 阈值。
+11. 启用 Qwen3Guard Shadow Mode，建设安全样本库、策略版本与持久化安全事件，用真实数据校准语义结果与 Risk Engine 阈值。
 
 ## 25. 长期一致性规则
 
@@ -345,5 +347,5 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 8. 团队人数和个人贡献归属没有仓库事实依据，必须由回答者的真实经历补充，不能推测。
 9. 本文中的计数、阈值、组件和边界发生变化时，必须在同一提交中更新本文。
 10. Feedback Pipeline 已输出训练候选，但 SFT / DPO 训练、模型 Registry、自动发布和 vLLM Serving 均未实现。
-11. Prompt Injection 当前为确定性多层检测，覆盖用户输入、Tool 返回和 RAG 文档；没有训练型安全分类器。
+11. Prompt Injection 采用确定性多层检测 + Qwen3Guard 语义 Adapter，覆盖用户输入、Tool 返回和 RAG 文档；Guard 服务默认关闭，暂无真实运行分数。
 12. Risk Engine 是独立规则模块，high / critical 转人工，安全威胁阻断自动化；阈值未经真实生产数据校准。

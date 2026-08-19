@@ -21,7 +21,7 @@ For a quick summary of the capabilities supported by this repository, please rev
 | **Multi-Agent** | Intent classification, RAG retrieval, resolution drafting, QA verification, SLA routing | LangGraph, LangChain | [Agent Architecture](docs/AGENT_ARCHITECTURE.md) |
 | **RAG Pipeline** | Versioning, chunking splitters, hybrid vector search, source citations | ChromaDB, PyPDF2, BeautifulSoup | [RAG Architecture](docs/RAG_ARCHITECTURE.md) |
 | **Observability** | Workflow/LLM/Retriever/Tool traces, latency, tokens, USD estimates | LangSmith, OpenTelemetry, Prometheus | [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md) |
-| **AI Guardrails** | Layered direct/indirect Prompt Injection detection, PII scrubbing, jailbreak blocks, output filters, independent Risk Engine | Unicode normalization, deterministic heuristics, LangGraph safety routing | [Security Guide](docs/SECURITY_GUIDE.md) |
+| **AI Guardrails** | Layered direct/indirect Prompt Injection detection, Qwen3Guard semantic classification, PII scrubbing, output filters, independent Risk Engine | Deterministic rules, Qwen3Guard-Gen-0.6B, LangGraph safety routing | [Security Guide](docs/SECURITY_GUIDE.md) |
 | **HITL Approval** | Staging drafts, agent modifications, approval history, review latency checks | FastAPI, SQLAlchemy, PostgreSQL | [System Design](SYSTEM_DESIGN.md) |
 | **Evaluation** | RAG/Agent/Security unified report, Workflow Replay, confusion matrix and safe-disposition metrics | Ragas, DeepEval, deterministic security evaluator | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
 
@@ -90,6 +90,27 @@ supportgpt-enterprise/
    Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to view the interactive API docs.
 
    如果本地曾被其他 ChromaDB 大版本写入，请使用新的 `VECTOR_DB_PERSIST_DIR` 并重新执行 `scripts/seed_kb.py`，不要直接复用不兼容的 SQLite schema。
+
+### Optional Qwen3Guard semantic safety service
+
+Qwen3Guard 与业务 LLM 使用独立端点，默认关闭，因此不影响无 GPU 的本地启动。可按官方 OpenAI-compatible 方式启动：
+
+```bash
+vllm serve Qwen/Qwen3Guard-Gen-0.6B \
+  --port 18001 \
+  --max-model-len 32768
+```
+
+然后在 `.env` 中设置：
+
+```bash
+QWEN3_GUARD_ENABLED=true
+QWEN3_GUARD_BASE_URL=http://127.0.0.1:18001/v1
+QWEN3_GUARD_API_KEY=EMPTY
+QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
+```
+
+正常 Workflow 最多增加 `user_input`、`tool_result` 和 `rag_document` 三次 Guard 调用。确定性规则强命中会在 Guard 模型前直接短路。
 
 ### 2. Local Development (Frontend)
 1. Navigate to the frontend directory:

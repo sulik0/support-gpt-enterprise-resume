@@ -31,7 +31,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 ## 核心能力
 
 1. **工单分析**：识别 `sentiment`、`priority`、`department` 和 `intent`。
-2. **多层安全短路**：组合 Unicode 规范化、中英文特征、组合启发式、角色提权与 Base64 载荷扫描，并分别检查客户输入、Tool 返回和 RAG 文档。
+2. **多层安全短路**：先执行 Unicode 规范化、中英文特征、组合启发式、角色提权与 Base64 载荷扫描，规则未命中时再使用 Qwen3Guard-Gen-0.6B 扫描客户输入、Tool 返回和 RAG 文档。
 3. **PII 脱敏**：正常请求进入 LLM 前对主题和描述中的敏感信息进行匿名化。
 4. **业务工具上下文**：通过 ToolRegistry 查询客户画像、近期订单和历史工单，并把结构化结果注入 Resolver。
 5. **工具治理**：工具具有 `input_schema`、`output_schema`、`min_role`、`timeout_seconds` 和 `mocked` 元数据；每次调用返回状态、耗时、权限结果和错误。
@@ -53,7 +53,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
 | 短期记忆 | Redis | 可选的会话历史快速存储，失败时不影响 SQL 持久化 |
 | RAG | ChromaDB、Embedding、Hybrid RAG | 知识库分块、版本/类别过滤、向量与词法混合召回、rerank |
-| 安全 | JWT、RBAC、Prompt Guardrails、Risk Engine | API 鉴权、工具权限、PII 脱敏、多层直接/间接 Prompt Injection 检测、Jailbreak、输出过滤和统一风险分级 |
+| 安全 | JWT、RBAC、Prompt Guardrails、Qwen3Guard-Gen-0.6B、Risk Engine | API 鉴权、工具权限、PII 脱敏、规则 + 语义的直接/间接 Prompt Injection 检测、Jailbreak、输出过滤和统一风险分级 |
 | 评测 | RAGAS、DeepEval、确定性 Security Evaluator、本地启发式指标 | RAG 质量、Agent 行为、安全检测混淆矩阵与阻断处置质量 |
 | 可观测 | LangSmith、OpenTelemetry、Prometheus、Grafana | OTel 统一采集 Trace 与 Metrics；Collector 转发 Trace 并导出 Prometheus 指标 |
 | 交付 | Docker、Docker Compose、Kubernetes manifests | 本地组件编排和部署模板 |
@@ -106,7 +106,7 @@ LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为�
 - 分析结果：`sentiment`、`priority`、`intent`、`department`、`analyzer_confidence`。
 - 权限与工具：`operator_role`、`tool_context`、`tool_calls`。
 - RAG 与回复：`context_citations`、`suggested_response`。
-- 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
+- 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`semantic_guard_label`、`semantic_guard_categories`、`semantic_guard_checks`、`semantic_guard_degraded`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
 - 质量结果：`qa_score`、`hallucination_detected`、`errors`。
 - 闭环决策：`escalation_recommended`、`escalation_reason`、`approval_required`。
 - 成本与延迟：`tokens_input`、`tokens_output`、`cost_usd`、`latency_seconds`。
@@ -306,6 +306,7 @@ resolved / closed --reopen--> in_progress
 - 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，具备 Mock 拒绝、显式确认、调用预算和模型/Token/成本归因。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
+- Qwen3Guard-Gen-0.6B 已作为独立 OpenAI-compatible 语义安全 Adapter 接入三类信任边界；默认关闭外部服务，启用后将 `Safe / Controversial / Unsafe` 交给 Risk Engine。
 - 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。
 - MVP 主链路已实测通过：FastAPI `/health` -> LangGraph Workflow -> Ticket / AgentRun 持久化 -> 用户评价 -> FeedbackEvent 持久化。
 - 覆盖 Agent、API、Auth、Guardrails、RAG、Evaluation、Observability、Tool Registry 和工单状态机的 pytest 测试模块。
@@ -319,13 +320,13 @@ resolved / closed --reopen--> in_progress
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
-- **安全治理**：已有确定性多层检测与可配置 Risk Engine，但尚无训练型安全分类器、策略版本、持久化安全事件和真实数据阈值校准。
+- **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
 
 ### 已知环境限制
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `100 passed`，CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `117 passed`，CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划

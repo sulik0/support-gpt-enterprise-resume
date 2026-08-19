@@ -42,11 +42,21 @@ async def list_pending_approvals(current_user: User = Depends(require_agent)):
 - 检测结果返回结构化 `risk_score`、`confidence`、`layers` 和不包含原文的 `signals`。
 - 命中后直接阻断后续 Tool / RAG / Resolver / QA 链路，清空不可信上下文并转人工。
 
-### 3. Jailbreak 检测 (`jailbreak_detection.py`)
+### 3. Qwen3Guard 语义安全分类 (`qwen3_guard.py`)
+
+- 确定性规则未命中时，调用独立的 `Qwen3Guard-Gen-0.6B` OpenAI-compatible 端点。
+- 在 `user_input`、`tool_result` 和 `rag_document` 三个信任边界各执行一次语义检查。
+- 官方 `Safe / Controversial / Unsafe` 结果和 Categories 被解析成不含原文的 State 审计记录。
+- `Unsafe` 或 `Jailbreak` 类别立即阻断；`Controversial` 默认交给 Risk Engine 并转人工，也可配置为直接阻断。
+- 调用 Guard 模型前对用户 PII、Tool 敏感字段和 RAG 文本密钥进行脱敏。
+- Guard 服务不可用时不让 API 失败；Tool / RAG 不可信上下文会被隔离，Risk Engine 要求人工处理。
+- Trace 和 Metrics 记录来源、Severity、Categories、延迟、阻断和降级状态，不记录原始文本。
+
+### 4. Jailbreak 检测 (`jailbreak_detection.py`)
 
 - 阻断常见越权话术，例如 “DAN mode” 或 “sudo override”。
 
-### 4. 输出泄露过滤 (`response_filter.py`)
+### 5. 输出泄露过滤 (`response_filter.py`)
 
 - 在回复返回客户端前检查是否泄露系统 prompt、内部 Agent 节点或敏感实现细节。
 - 命中风险时替换为安全兜底回复。
@@ -58,6 +68,7 @@ async def list_pending_approvals(current_user: User = Depends(require_agent)):
 风险信号包括：
 
 - Prompt Injection / Jailbreak 安全威胁与检测分数。
+- Qwen3Guard Severity、Categories 和服务降级信号。
 - 工单优先级、负面情绪和退款、拒付、投诉等高风险业务意图。
 - Analyzer `confidence_score`。
 - QA 分数、幻觉标记和 Workflow 错误。
@@ -68,4 +79,4 @@ async def list_pending_approvals(current_user: User = Depends(require_agent)):
 
 ## 简历表述边界
 
-可以说系统实现了确定性多层 Prompt Injection 检测、间接注入隔离、Jailbreak、PII、输出泄露防护和独立 Risk Engine。不要说它已经达到完整企业安全合规标准；当前仍没有专用训练的模型型安全分类器、策略配置中心、持久化安全事件平台或生产安全团队评审。
+可以说系统实现了“确定性规则 + Qwen3Guard-Gen-0.6B + Risk Engine”的可降级安全链路。不要说语义模型已在生产强制启用或阈值已经真实客服数据校准；当前默认关闭外部 Guard 服务，仍缺少策略配置中心、持久化安全事件平台和生产攻防运营。

@@ -16,6 +16,7 @@
 - [x] 固定核心 LangChain / LangGraph / ChromaDB 兼容版本，并使用版本化 ChromaDB 本地目录。
 - [x] 将 Prompt Injection 升级为规范化、中英特征、组合启发式、角色提权和 Base64 载荷组合的多层检测。
 - [x] 在客户输入、Tool 返回和 RAG 文档三类信任边界检查直接/间接 Prompt Injection。
+- [x] 增加 Qwen3Guard-Gen-0.6B OpenAI-compatible Adapter，将三类信任边界的语义安全结果接入 Risk Engine、Trace 和 Metrics。
 - [x] 建立独立 Risk Engine，统一输出风险等级、分数、原因、人工与自动化处置建议。
 - [x] 将 Risk Engine 结果接入 LangGraph 路由、QA、Escalation、API、结构化日志、OpenTelemetry Trace 与 Metrics。
 - [x] 在 Dataset + Workflow Replay 中增加安全混淆矩阵、Precision / Recall / F1 / 误报率和安全处置正确率。
@@ -33,7 +34,7 @@
 - [ ] 在明确预算后执行首次真实 LLM smoke 回归，固定模型版本并建立质量阈值。
 - [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
-- [ ] 评估专用训练的 Prompt Injection 分类器，与当前确定性检测形成可降级组合。
+- [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。
 
 ## P2
 
@@ -44,11 +45,11 @@
 
 ## 已知问题与风险
 
-- [x] 在 Python 3.12 环境完成 91 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 在 Python 3.12 环境完成 117 条全量测试；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
 - [ ] 反馈 Token 目前随 Agent 响应返回，前端仍需安全保存并只在评价提交时使用。
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。
-- [ ] 当前 Prompt Injection 是确定性多层检测，对未知语义变体的覆盖率仍需通过持续红队样本验证。
+- [ ] Qwen3Guard 默认未启用且尚无本项目真实运行指标，未知语义变体与误报率仍需通过持续红队样本验证。
 - [ ] Risk Engine 阈值尚未基于真实客服运营数据校准，当前采用保守的 high / critical 转人工策略。

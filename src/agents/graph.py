@@ -1,15 +1,16 @@
-import time
 import logging
-from typing import Awaitable, Callable, TypedDict, List, Dict, Any, Optional
-from langgraph.graph import StateGraph, END
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
-from src.config import settings
+from langgraph.graph import END, StateGraph
+
 from src.agents.analyzer import ticket_analyzer_agent
+from src.agents.escalation import escalation_agent
+from src.agents.quality_assurance import quality_assurance_agent
+from src.agents.resolver import resolution_agent
 from src.agents.retriever import knowledge_retriever_agent
 from src.agents.tooling import tooling_agent
-from src.agents.resolver import resolution_agent
-from src.agents.quality_assurance import quality_assurance_agent
-from src.agents.escalation import escalation_agent
+from src.config import settings
 from src.observability.cost_tracking import calculate_llm_cost
 from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
@@ -45,6 +46,11 @@ class AgentState(TypedDict):
     security_risk_score: float
     security_source: Optional[str]
     security_findings: List[str]
+    semantic_guard_label: str
+    semantic_guard_categories: List[str]
+    semantic_guard_checks: List[Dict[str, Any]]
+    semantic_guard_degraded: bool
+    semantic_guard_model: Optional[str]
     risk_level: str
     risk_score: float
     risk_reasons: List[str]
@@ -212,6 +218,9 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "risk.score": state.get("risk_score"),
         "risk.requires_human": state.get("risk_requires_human"),
         "security.threat_detected": state.get("security_threat_detected"),
+        "guardrail.semantic_label": state.get("semantic_guard_label", "not_run"),
+        "guardrail.semantic_degraded": state.get("semantic_guard_degraded", False),
+        "guardrail.semantic_check_count": len(state.get("semantic_guard_checks", [])),
     }
 
 
@@ -329,6 +338,11 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "security_risk_score": 0.0,
         "security_source": None,
         "security_findings": [],
+        "semantic_guard_label": "not_run",
+        "semantic_guard_categories": [],
+        "semantic_guard_checks": [],
+        "semantic_guard_degraded": False,
+        "semantic_guard_model": None,
         "risk_level": "low",
         "risk_score": 0.0,
         "risk_reasons": [],

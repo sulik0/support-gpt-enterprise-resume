@@ -1,16 +1,18 @@
-import time
 import logging
-from typing import Dict, Any
+import time
+from typing import Any, Dict
 
-from src.llm.provider import llm_provider
+from src.guardrails.jailbreak_detection import detect_jailbreak
 from src.guardrails.pii_detection import anonymize_pii
 from src.guardrails.prompt_injection import analyze_prompt_injection
-from src.guardrails.jailbreak_detection import detect_jailbreak
+from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
+from src.llm.provider import llm_provider
 from src.observability.metrics import (
     AGENT_EXECUTION_DURATION_SECONDS,
     TICKET_SENTIMENT_TOTAL,
 )
+from src.observability.sanitization import redact_text
 from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.analyzer")
@@ -60,11 +62,32 @@ class TicketAnalyzerAgent:
                 findings=["jailbreak_signature"],
             )
 
-        # 3. Privacy Scrubbing: Anonymize PII
+        # 3. 调用外部模型前先移除客户 PII。
         clean_description = anonymize_pii(original_text)
         clean_subject = anonymize_pii(subject)
+        semantic_text = redact_text(
+            f"Subject: {clean_subject}\nDescription: {clean_description}"
+        )
 
-        # 4. Perform LLM analysis
+        # 4. 规则通过后再使用 Qwen3Guard 检测语义风险。
+        semantic_result = await qwen3_guard.classify(semantic_text, source="user_input")
+        state = merge_qwen3_guard_result(state, semantic_result)
+        if semantic_result.block_recommended:
+            return build_security_block(
+                state,
+                threat_type="Qwen3Guard semantic safety violation",
+                source=semantic_result.source,
+                risk_score=semantic_result.policy_score,
+                findings=[
+                    f"semantic_severity:{semantic_result.severity}",
+                    *(
+                        f"semantic_category:{item}"
+                        for item in semantic_result.categories
+                    ),
+                ],
+            )
+
+        # 5. Perform LLM analysis
         try:
             analysis, in_tok, out_tok = await llm_provider.analyze_ticket(
                 f"Subject: {clean_subject}\nDescription: {clean_description}"

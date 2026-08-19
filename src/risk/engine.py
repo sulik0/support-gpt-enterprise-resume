@@ -5,7 +5,6 @@ from typing import Any, Literal, Mapping
 
 from src.config import settings
 
-
 _HIGH_RISK_INTENT_TOKENS = (
     "refund",
     "billing_dispute",
@@ -60,12 +59,35 @@ class RiskEngine:
         security_threat = bool(state.get("security_threat_detected")) or (
             "Security threat" in errors
         )
+        semantic_label = str(state.get("semantic_guard_label", "not_run")).lower()
+        semantic_degraded = bool(state.get("semantic_guard_degraded", False))
+        semantic_checks = list(state.get("semantic_guard_checks", []))
+        degraded_untrusted_context = any(
+            check.get("status") == "error"
+            and check.get("source") in {"tool_result", "rag_document"}
+            for check in semantic_checks
+            if isinstance(check, Mapping)
+        )
 
         if security_threat:
             score = max(
                 score, float(state.get("security_risk_score", 1.0) or 1.0), 0.95
             )
             reasons.add("security_threat_detected")
+
+        if semantic_label == "unsafe":
+            score = max(score, 0.95)
+            reasons.add("semantic_safety_unsafe")
+        elif semantic_label == "controversial":
+            score = max(score, 0.75)
+            reasons.add("semantic_safety_controversial")
+
+        if semantic_degraded:
+            score = max(score, 0.75)
+            reasons.add("semantic_guard_degraded")
+        if degraded_untrusted_context:
+            score = max(score, 0.85)
+            reasons.add("untrusted_context_guard_unavailable")
 
         priority = str(state.get("priority", "medium")).lower()
         sentiment = str(state.get("sentiment", "neutral")).lower()
@@ -129,7 +151,7 @@ class RiskEngine:
             score=score,
             reasons=tuple(sorted(reasons)),
             requires_human=level in {"high", "critical"},
-            block_automation=security_threat,
+            block_automation=security_threat or semantic_label == "unsafe",
         )
 
     @staticmethod

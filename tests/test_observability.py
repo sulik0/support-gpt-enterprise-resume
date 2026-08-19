@@ -3,26 +3,29 @@ import logging
 from pathlib import Path
 
 import pytest
-from src.observability.token_tracking import estimate_tokens
+
+from src.main import _route_template
 from src.observability.cost_tracking import calculate_llm_cost
+from src.observability.logging_config import configure_logging
 from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
     AGENT_REQUESTS_TOTAL,
     FEEDBACK_EVENTS_TOTAL,
     HUMAN_APPROVALS_TOTAL,
     LLM_TOKENS_TOTAL,
+    SEMANTIC_GUARD_CHECKS_TOTAL,
+    SEMANTIC_GUARD_DURATION_SECONDS,
     TOOL_CALLS_TOTAL,
     TRAINING_CANDIDATES_TOTAL,
 )
 from src.observability.sanitization import sanitize_attributes, sanitize_value
-from src.observability.logging_config import configure_logging
+from src.observability.token_tracking import estimate_tokens
 from src.observability.tracing import (
     bind_request_id,
     get_request_id,
     reset_request_id,
     set_span_attributes,
 )
-from src.main import _route_template
 
 
 def test_token_estimation():
@@ -60,6 +63,11 @@ def test_otel_metric_instruments_record_natively():
     assert instrument_name(HUMAN_APPROVALS_TOTAL) == "human_approvals"
     assert instrument_name(FEEDBACK_EVENTS_TOTAL) == "feedback_events"
     assert instrument_name(TRAINING_CANDIDATES_TOTAL) == "training_candidates"
+    assert instrument_name(SEMANTIC_GUARD_CHECKS_TOTAL) == "semantic_guard_checks"
+    assert (
+        instrument_name(SEMANTIC_GUARD_DURATION_SECONDS)
+        == "semantic_guard_duration_seconds"
+    )
     AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
     AGENT_NODE_DURATION_SECONDS.record(0.01, {"node": "retriever"})
 

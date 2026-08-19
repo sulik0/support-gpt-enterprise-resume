@@ -1,7 +1,8 @@
 import os
 from typing import Optional
-from pydantic_settings import BaseSettings
+
 from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -67,6 +68,16 @@ class Settings(BaseSettings):
     PROMPT_INJECTION_PROTECTION_ENABLED: bool = Field(default=True)
     JAILBREAK_DETECTION_ENABLED: bool = Field(default=True)
     RESPONSE_FILTERING_ENABLED: bool = Field(default=True)
+
+    # Qwen3Guard 通过独立 OpenAI-compatible 服务提供语义安全分类。
+    QWEN3_GUARD_ENABLED: bool = Field(default=False)
+    QWEN3_GUARD_BASE_URL: str = Field(default="http://127.0.0.1:18001/v1")
+    QWEN3_GUARD_API_KEY: str = Field(default="EMPTY")
+    QWEN3_GUARD_MODEL_NAME: str = Field(default="Qwen/Qwen3Guard-Gen-0.6B")
+    QWEN3_GUARD_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0.0)
+    QWEN3_GUARD_MAX_RETRIES: int = Field(default=0, ge=0, le=2)
+    QWEN3_GUARD_BLOCK_CONTROVERSIAL: bool = Field(default=False)
+    QWEN3_GUARD_MAX_INPUT_CHARS: int = Field(default=20000, ge=1000, le=100000)
 
     # Risk Engine
     RISK_MEDIUM_THRESHOLD: float = Field(default=0.4, ge=0.0, le=1.0)

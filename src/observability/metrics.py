@@ -2,7 +2,6 @@
 
 from opentelemetry import metrics
 
-
 meter = metrics.get_meter("supportgpt.observability.metrics", "1.0.0")
 
 # Counter names omit ``_total`` because the Collector Prometheus exporter adds
@@ -64,6 +63,14 @@ QA_SCORE_HISTOGRAM = meter.create_histogram(
 )
 GUARDRAIL_VIOLATIONS_TOTAL = meter.create_counter(
     "guardrail_violations", description="Total guardrail violations"
+)
+SEMANTIC_GUARD_CHECKS_TOTAL = meter.create_counter(
+    "semantic_guard_checks", description="Total Qwen3Guard semantic safety checks"
+)
+SEMANTIC_GUARD_DURATION_SECONDS = meter.create_histogram(
+    "semantic_guard_duration_seconds",
+    unit="s",
+    description="Qwen3Guard semantic safety check duration",
 )
 RISK_ASSESSMENTS_TOTAL = meter.create_counter(
     "agent_risk_assessments", description="Total final Agent risk assessments"

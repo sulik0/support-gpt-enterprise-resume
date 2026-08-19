@@ -395,7 +395,7 @@ Resolver 也把 citation 的来源和内容放入 Knowledge Base Context。
 
 ### 60. 什么是 Guardrails？
 
-Guardrails 是围绕 LLM 输入、工具调用、输出和业务状态设置的确定性约束。它的目标不是让模型“更聪明”，而是限制模型在不可信输入和高风险场景中的行为边界。
+Guardrails 是围绕 LLM 输入、工具调用、输出和业务状态设置的可审计约束。当前安全检测同时使用确定性规则和 Qwen3Guard 语义分类，处置由 Risk Engine 集中决策。它的目标不是让模型“更聪明”，而是限制模型在不可信输入和高风险场景中的行为边界。
 
 ### 61. 为什么 Agent 需要 Guardrails？
 
@@ -405,12 +405,13 @@ Agent 不只生成文本，还可能读取客户数据、选择工具和推动�
 
 ### 62. 你的 Guardrails 分哪几层？
 
-可以分为四层：
+可以分为五层：
 
-1. Input：Prompt Injection、Jailbreak、PII 脱敏。
-2. Tool：注册白名单、输入 Schema、RBAC、超时和审计。
-3. Output：QA、幻觉判断、Response Filter。
-4. Business：Escalation、HITL 和工单状态机。
+1. Input：确定性规则 + Qwen3Guard 识别 Prompt Injection/Jailbreak，并执行 PII 脱敏。
+2. Tool / RAG Context：对外部结果做敏感字段过滤和规则 + Qwen3Guard 扫描，服务失效时隔离未扫描上下文。
+3. Tool Governance：注册白名单、输入 Schema、RBAC、超时和审计。
+4. Output：QA、幻觉判断、Response Filter。
+5. Business：Risk Engine、Escalation、HITL 和工单状态机。
 
 这种分层比只说 Input/Tool/Output 更完整，因为工单状态和审批也是关键安全边界。
 
@@ -430,19 +431,15 @@ Jailbreak 是试图让模型摆脱安全限制、进入所谓无限制模式或�
 
 Prompt Injection 更强调通过输入覆盖应用指令或操纵工具上下文；Jailbreak 更强调解除模型整体安全限制。两者会重叠，工程上都应在进入 Tool、RAG 和生成前处理。
 
-当前项目用两组独立签名规则检测，并分别记录 Metrics。
+当前项目保留独立签名规则，同时使用 Qwen3Guard 识别语义变体，并由 Risk Engine 统一处置。
 
 ### 66. Prompt Injection 怎么检测？
 
-当前使用可配置的签名规则，将输入转为小写后匹配“ignore previous instructions”“reveal your prompt”等典型模式。命中后增加 Guardrail 计数并进行安全短路。
-
-这是轻量基线，不覆盖语义改写、编码攻击或间接 Prompt Injection。
+首先规范化 Unicode 和零宽字符，使用中英特征、组合启发式、角色提权和 Base64 载荷规则扫描。确定性命中直接短路；未命中时，将 PII 脱敏后的客户输入，或敏感字段过滤后的 Tool / RAG 上下文，交给 Qwen3Guard-Gen-0.6B 分类为 `Safe / Controversial / Unsafe`。
 
 ### 67. 规则检测和模型检测如何结合？
 
-当前只实现规则检测，没有安全分类模型。规则的优点是低延迟、确定性和可解释；缺点是容易漏掉变体。
-
-更完整的方案是规则先拦截高精度模式，再用独立安全模型处理语义变体，并对高风险结果人工复核。安全模型的输出仍不能直接放行高风险工具。
+规则先拦截高精度已知模式，Qwen3Guard 处理语义变体，Risk Engine 再融合安全标签、服务降级、业务意图、置信度和 QA 信号。`Unsafe` 或 `Jailbreak` 阻断自动化，`Controversial` 默认转人工；模型服务失效时不影响主流程，但会标记降级，并隔离未扫描的 Tool / RAG 内容。语义安全默认关闭，必须启动独立 OpenAI-compatible Qwen3Guard 服务并配置环境变量后才生效。
 
 ### 68. 幻觉检测怎么实现？
 

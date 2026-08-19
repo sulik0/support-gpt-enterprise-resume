@@ -1,12 +1,15 @@
-import time
 import logging
-from typing import Dict, Any
+import time
+from typing import Any, Dict
 
 from src.guardrails.prompt_injection import analyze_prompt_injection
+from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
-from src.rag.vector_store import vector_store
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
+from src.observability.sanitization import redact_text
 from src.observability.tracing import get_tracer, observed_span, set_span_attributes
+from src.rag.vector_store import vector_store
+from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.retriever")
 tracer = get_tracer(__name__)
@@ -105,12 +108,40 @@ class KnowledgeRetrievalAgent:
                     findings=[*injection.layers, *injection.signals],
                 )
 
+            semantic_result = await qwen3_guard.classify(
+                redact_text(retrieved_text), source="rag_document"
+            )
+            guarded_state = merge_qwen3_guard_result(state, semantic_result)
+            assessment = risk_engine.assess(guarded_state, stage="input")
+            guarded_state = {**guarded_state, **assessment.state_updates()}
+            if semantic_result.block_recommended:
+                return build_security_block(
+                    guarded_state,
+                    threat_type="Qwen3Guard semantic safety violation",
+                    source=semantic_result.source,
+                    risk_score=semantic_result.policy_score,
+                    findings=[
+                        f"semantic_severity:{semantic_result.severity}",
+                        *(
+                            f"semantic_category:{item}"
+                            for item in semantic_result.categories
+                        ),
+                    ],
+                )
+            if semantic_result.degraded:
+                return {
+                    **guarded_state,
+                    "context_citations": [],
+                    "errors": list(guarded_state.get("errors", []))
+                    + ["Semantic guard unavailable; RAG context isolated."],
+                }
+
             duration = time.time() - start_time
             AGENT_EXECUTION_DURATION_SECONDS.record(
                 duration, {"agent_name": "knowledge_retriever"}
             )
 
-            return {**state, "context_citations": citations}
+            return {**guarded_state, "context_citations": citations}
 
         except Exception as e:
             logger.error(f"Error querying vector store in retriever: {e}")

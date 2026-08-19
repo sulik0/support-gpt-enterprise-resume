@@ -4,8 +4,11 @@ import time
 from typing import Any, Dict
 
 from src.guardrails.prompt_injection import analyze_prompt_injection
+from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
+from src.observability.sanitization import sanitize_value
+from src.risk.engine import risk_engine
 from src.tools.registry import tool_registry
 
 logger = logging.getLogger("supportgpt.agents.tooling")
@@ -106,6 +109,41 @@ class ToolingAgent:
                 )
                 return {**blocked, "tool_calls": public_tool_calls}
 
+            semantic_payload = json.dumps(
+                sanitize_value([call.get("result") for call in tool_calls]),
+                ensure_ascii=False,
+                default=str,
+            )
+            semantic_result = await qwen3_guard.classify(
+                semantic_payload, source="tool_result"
+            )
+            guarded_state = merge_qwen3_guard_result(state, semantic_result)
+            assessment = risk_engine.assess(guarded_state, stage="input")
+            guarded_state = {**guarded_state, **assessment.state_updates()}
+            if semantic_result.block_recommended:
+                blocked = build_security_block(
+                    guarded_state,
+                    threat_type="Qwen3Guard semantic safety violation",
+                    source=semantic_result.source,
+                    risk_score=semantic_result.policy_score,
+                    findings=[
+                        f"semantic_severity:{semantic_result.severity}",
+                        *(
+                            f"semantic_category:{item}"
+                            for item in semantic_result.categories
+                        ),
+                    ],
+                )
+                return {**blocked, "tool_calls": public_tool_calls}
+            if semantic_result.degraded:
+                return {
+                    **guarded_state,
+                    "tool_context": {},
+                    "tool_calls": public_tool_calls,
+                    "errors": list(guarded_state.get("errors", []))
+                    + ["Semantic guard unavailable; Tool context isolated."],
+                }
+
             tool_context = {
                 "customer_profile": {
                     "customer_id": profile.get("customer_id"),
@@ -130,7 +168,7 @@ class ToolingAgent:
             )
 
             return {
-                **state,
+                **guarded_state,
                 "tool_context": tool_context,
                 "tool_calls": public_tool_calls,
             }

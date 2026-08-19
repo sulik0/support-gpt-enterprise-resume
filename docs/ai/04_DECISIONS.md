@@ -294,7 +294,7 @@ MCP 可以为外部工具、资源和 Prompt 提供标准化连接协议，但�
 
 任何基于 Mock 的质量指标都不能当作生产结果；真实模型接入后需重新评估 Prompt、成本、延迟与 QA 阈值。
 
-## 决策 10：采用输入 Guardrails 与输出 Guardrails
+## 决策 10：采用规则 + Qwen3Guard + Risk Engine 的分层 Guardrails
 
 ### 问题背景
 
@@ -302,7 +302,9 @@ MCP 可以为外部工具、资源和 Prompt 提供标准化连接协议，但�
 
 ### 候选方案
 
-- 输入安全检测 + PII 脱敏 + 输出过滤
+- 确定性规则 + PII 脱敏 + 输出过滤
+- 只使用独立语义安全分类模型
+- 确定性规则 + Qwen3Guard-Gen-0.6B + Risk Engine
 - 只依赖 System Prompt
 - 仅人工审核
 - 专用安全网关服务
@@ -311,22 +313,24 @@ MCP 可以为外部工具、资源和 Prompt 提供标准化连接协议，但�
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
-| 多信任边界 + 输出 Guardrails | 前后多道防线，可提前短路直接与间接注入 | 确定性特征需持续维护 |
+| 多信任边界确定性规则 | 低延迟、可解释、可离线复现 | 语义变体和未知攻击覆盖有限 |
+| 只用语义安全模型 | 语义覆盖更广 | 存在延迟、误判、服务失效与输出解析风险 |
+| 规则 + Qwen3Guard + Risk Engine | 确定性快速拦截与语义检测互补，处置策略集中可审计 | 增加模型服务、调用延迟和阈值校准成本 |
 | 只靠 Prompt | 实现最少 | 对攻击和提示泄露不可靠 |
 | 仅人工审核 | 安全高 | 成本和响应延迟高 |
 | 安全网关 | 可集中治理 | 引入额外服务和集成复杂度 |
 
 ### 最终方案
 
-采用用户输入、Tool 返回、RAG 文档与生成输出的分层 Guardrails。Prompt Injection 组合 Unicode/零宽字符规范化、中英特征、组合启发式、角色提权和 Base64 载荷扫描，同时保留 Jailbreak、PII 脱敏和 Response Filter。
+采用用户输入、Tool 返回、RAG 文档与生成输出的分层 Guardrails。在前三个不可信边界，确定性规则先扫描 Unicode/零宽字符、中英特征、组合启发式、角色提权和 Base64 载荷；未命中时，将脱敏与敏感字段过滤后的文本交给独立 Qwen3Guard-Gen-0.6B 服务。Risk Engine 将 `Safe / Controversial / Unsafe`、规则信号和业务风险融合为统一处置。
 
 ### 为什么选择
 
-客户输入风险应在调用工具与模型前被拦截；Tool 和 RAG 结果也是不可信数据，必须在进入生成 Prompt 前检查；输出风险需要在回复客户前再检查。
+客户输入风险应在调用工具与业务模型前被拦截；Tool 和 RAG 结果也是不可信数据，必须在进入生成 Prompt 前检查。规则对已知攻击快速、可解释；Qwen3Guard 用小型多语言安全模型覆盖语义改写；Risk Engine 确保模型分类不直接决定高风险业务放行。
 
 ### 工程权衡
 
-当前检测是确定性多层规则，本地可复现但不能视为训练型安全产品；命中时默认清空受污染上下文、阻断自动化并转人工，会牺牲部分可能的正常请求以降低漏检后果。
+Qwen3Guard 为可选独立 OpenAI-compatible 服务，默认关闭，不影响本地 Mock 复现。启用后，正常请求最多新增用户、Tool、RAG 三次安全分类调用；明确规则命中会提前短路。`Unsafe` 或 `Jailbreak` 阻断自动化，`Controversial` 默认交给 Risk Engine 转人工。语义服务失效时，用户边界保留规则并降级，Tool / RAG 边界隔离未扫描内容。当前尚未使用真实业务攻击集校准误报率和延迟。
 
 ## 决策 11：采用 ChromaDB 作为当前向量数据库，不采用 pgvector
 
@@ -774,7 +778,7 @@ RAG 质量不能只依靠主观体验，需要评估 Faithfulness、Context Prec
 | 状态 | 单一 AgentState | 无 TaskState / Checkpoint |
 | 工具 | ToolRegistry + Mock Adapter | 无 MCP、审计未持久化 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |
-| 安全 | 用户 / Tool / RAG 多层 Guardrails + 输出 Filter + QA | 确定性检测需持续用攻击样本维护，无训练型安全分类器 |
+| 安全 | 用户 / Tool / RAG 规则 + Qwen3Guard + Risk Engine，输出 Filter + QA | 语义安全默认关闭，尚无真实业务攻击集校准与生产可用性数据 |
 | RAG | ChromaDB Hybrid RAG | 无 pgvector、无生产搜索后端 |
 | 数据 | SQLite 本地、PostgreSQL Compose | 无迁移、读写分离、多租户 |
 | 记忆 | Redis 可选 + SQL 兜底 | 历史未注入生成 Prompt |
