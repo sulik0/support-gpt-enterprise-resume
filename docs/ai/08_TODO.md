@@ -18,6 +18,7 @@
 - [x] 在客户输入、Tool 返回和 RAG 文档三类信任边界检查直接/间接 Prompt Injection。
 - [x] 建立独立 Risk Engine，统一输出风险等级、分数、原因、人工与自动化处置建议。
 - [x] 将 Risk Engine 结果接入 LangGraph 路由、QA、Escalation、API、结构化日志、OpenTelemetry Trace 与 Metrics。
+- [x] 在 Dataset + Workflow Replay 中增加安全混淆矩阵、Precision / Recall / F1 / 误报率和安全处置正确率。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -40,7 +41,7 @@
 
 ## 已知问题与风险
 
-- [x] 在 Python 3.12 环境完成 86 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 在 Python 3.12 环境完成 91 条全量测试；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。

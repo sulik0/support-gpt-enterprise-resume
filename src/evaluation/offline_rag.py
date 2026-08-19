@@ -16,6 +16,11 @@ from src.evaluation.agent_evaluation import (
 )
 from src.evaluation.response_metrics import response_metrics_evaluator
 from src.evaluation.retrieval_metrics import retrieval_metrics_evaluator
+from src.evaluation.security_evaluation import (
+    SecurityExpectations,
+    case_result_payload,
+    evaluate_security_records,
+)
 from src.observability.sanitization import redact_text
 from src.observability.tracing import (
     get_current_trace_id,
@@ -48,6 +53,7 @@ class EvaluationCase:
     customer_id: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     agent_expectations: Dict[str, Any] = field(default_factory=dict)
+    security_expectations: Dict[str, Any] = field(default_factory=dict)
     agent_run_id: Optional[str] = None
 
 
@@ -88,6 +94,7 @@ def load_evaluation_dataset(path: Path) -> List[EvaluationCase]:
                 f"Evaluation case '{case.id}' must define agent_expectations."
             )
         AgentExpectations.from_mapping(case.agent_expectations)
+        SecurityExpectations.from_case(case)
     return cases
 
 
@@ -103,6 +110,7 @@ async def collect_workflow_records(
     records: List[EvaluationRecord] = []
     for index, case in enumerate(cases):
         trace_id = None
+        security_expectations = SecurityExpectations.from_case(case)
         try:
             with observed_span(
                 tracer,
@@ -112,6 +120,12 @@ async def collect_workflow_records(
                     "evaluation.category": case.category,
                     "evaluation.kb_version": case.kb_version,
                     "request.id": f"offline-eval-{case.id}",
+                    "evaluation.security.expected_attack": (
+                        security_expectations.expected_attack
+                    ),
+                    "evaluation.security.attack_type": (
+                        security_expectations.attack_type
+                    ),
                 },
             ) as span:
                 trace_id = get_current_trace_id()
@@ -119,8 +133,7 @@ async def collect_workflow_records(
                     {
                         "request_id": f"offline-eval-{case.id}",
                         "ticket_id": 10000 + index,
-                        "customer_id": case.customer_id
-                        or f"offline_eval_{case.id}",
+                        "customer_id": case.customer_id or f"offline_eval_{case.id}",
                         "subject": f"Evaluation case: {case.category}",
                         "description": case.query,
                         "kb_version": case.kb_version,
@@ -134,6 +147,10 @@ async def collect_workflow_records(
                             output.get("errors", [])
                         ),
                         "evaluation.workflow_path": output.get("workflow_path", []),
+                        "evaluation.security.detected": output.get(
+                            "security_threat_detected", False
+                        ),
+                        "evaluation.security.risk_level": output.get("risk_level"),
                     },
                 )
         except Exception as exc:
@@ -296,6 +313,7 @@ def build_report(
     agent_engine: str,
     dataset_path: Path,
 ) -> Dict[str, Any]:
+    security_summary, security_results = evaluate_security_records(records)
     rag_aggregates = {
         metric: round(mean(record.metrics.get(metric, 0.0) for record in records), 4)
         for metric in METRIC_KEYS
@@ -344,6 +362,9 @@ def build_report(
                     "overall_score": round(mean(record.agent_metrics.values()), 4),
                     "failures": record.agent_failures,
                 },
+                "security_evaluation": case_result_payload(
+                    security_results[record.case.id]
+                ),
                 "workflow_errors": record.workflow_errors,
             }
         )
@@ -355,9 +376,13 @@ def build_report(
         4,
     )
     return {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "engines": {"rag": rag_engine, "agent": agent_engine},
+        "engines": {
+            "rag": rag_engine,
+            "agent": agent_engine,
+            "security": "deterministic",
+        },
         "dataset": str(dataset_path),
         "case_count": len(records),
         "rag_evaluation": {
@@ -378,6 +403,7 @@ def build_report(
                 1 for record in records if record.trace_id is not None
             ),
         },
+        "security_evaluation": security_summary,
         "cases": case_rows,
     }
 
@@ -396,14 +422,16 @@ def write_report(report: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
 def _render_markdown(report: Dict[str, Any]) -> str:
     rag = report["rag_evaluation"]
     agent = report["agent_evaluation"]
+    security = report["security_evaluation"]
     rag_aggregates = rag["aggregates"]
     agent_aggregates = agent["aggregates"]
     lines = [
-        "# RAG + Agent Evaluation 统一评测报告",
+        "# RAG + Agent + Security Evaluation 统一评测报告",
         "",
         f"- 生成时间：`{report['generated_at']}`",
         f"- RAG 引擎：`{report['engines']['rag']}`",
         f"- Agent 引擎：`{report['engines']['agent']}`",
+        f"- Security 引擎：`{report['engines']['security']}`",
         f"- 数据集：`{report['dataset']}`",
         f"- 用例数：`{report['case_count']}`",
         "",
@@ -440,19 +468,62 @@ def _render_markdown(report: Dict[str, Any]) -> str:
             f"| {agent['pass_rate']:.4f} | {agent['trace_linked_cases']} |"
         ),
         "",
+        "## Security Evaluation",
+        "",
+        (
+            "| Precision | Recall | F1 | Accuracy | False Positive Rate | "
+            "Case Pass Rate |"
+        ),
+        "|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| {_format_metric(security['detection']['precision'])} "
+            f"| {_format_metric(security['detection']['recall'])} "
+            f"| {_format_metric(security['detection']['f1_score'])} "
+            f"| {_format_metric(security['detection']['accuracy'])} "
+            f"| {_format_metric(security['detection']['false_positive_rate'])} "
+            f"| {_format_metric(security['case_pass_rate'])} |"
+        ),
+        "",
+        (
+            "| TP | FP | TN | FN | Block Automation | Safe Short Circuit | "
+            "Context Isolation | Human Intervention | Critical Risk |"
+        ),
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| {security['confusion_matrix']['true_positive']} "
+            f"| {security['confusion_matrix']['false_positive']} "
+            f"| {security['confusion_matrix']['true_negative']} "
+            f"| {security['confusion_matrix']['false_negative']} "
+            f"| {_format_metric(security['disposition']['block_automation_rate'])} "
+            f"| {_format_metric(security['disposition']['safe_short_circuit_rate'])} "
+            f"| {_format_metric(security['disposition']['context_isolation_rate'])} "
+            f"| {_format_metric(security['disposition']['human_intervention_rate'])} "
+            f"| {_format_metric(security['disposition']['critical_risk_rate'])} |"
+        ),
+        "",
         "## 用例明细与 Trace",
         "",
-        "| ID | RAG | Agent | Workflow | OTel Trace ID | Failure |",
-        "|---|---:|---:|---|---|---|",
+        "| ID | RAG | Agent | Security | Workflow | OTel Trace ID | Failure |",
+        "|---|---:|---:|---:|---|---|---|",
     ]
     for row in report["cases"]:
         rag_metrics = row["rag_evaluation"]["metrics"]
         agent_metrics = row["agent_evaluation"]["metrics"]
+        security_result = row["security_evaluation"]
         path = " → ".join(row["workflow_replay"]["workflow_path"]) or "-"
-        failures = "; ".join(row["agent_evaluation"]["failures"]) or "-"
+        failures = (
+            "; ".join(
+                [
+                    *row["agent_evaluation"]["failures"],
+                    *security_result["failures"],
+                ]
+            )
+            or "-"
+        )
         lines.append(
             f"| {row['id']} | {mean(rag_metrics.values()):.4f} "
-            f"| {mean(agent_metrics.values()):.4f} | {path} "
+            f"| {mean(agent_metrics.values()):.4f} "
+            f"| {'PASS' if security_result['passed'] else 'FAIL'} | {path} "
             f"| `{row['trace_id'] or 'unavailable'}` | {failures} |"
         )
     lines.extend(
@@ -466,6 +537,11 @@ def _render_markdown(report: Dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _format_metric(value: Any) -> str:
+    """统一格式化安全指标，无分母时明确标记 N/A。"""
+    return "N/A" if value is None else f"{float(value):.4f}"
 
 
 async def run_offline_evaluation(

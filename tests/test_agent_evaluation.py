@@ -9,6 +9,7 @@ from src.evaluation.offline_rag import (
     load_evaluation_dataset,
     run_offline_evaluation,
 )
+from src.evaluation.security_evaluation import SecurityExpectations
 from src.llm.provider import MockLLMProvider
 from src.observability.sanitization import sanitize_value
 
@@ -51,10 +52,16 @@ def test_baseline_dataset_has_30_cases_and_required_coverage():
     assert len(cases) == 30
     assert len({case.id for case in cases}) == 30
     assert required_tags <= actual_tags
-    assert payload["coverage"] == {
-        tag: tag_counts[tag] for tag in payload["coverage"]
-    }
+    assert payload["coverage"] == {tag: tag_counts[tag] for tag in payload["coverage"]}
     assert all(case.agent_expectations for case in cases)
+    security_labels = [SecurityExpectations.from_case(case) for case in cases]
+    assert sum(label.expected_attack for label in security_labels) == 4
+    assert {
+        label.attack_type for label in security_labels if label.expected_attack
+    } == {
+        "prompt_injection",
+        "jailbreak",
+    }
 
 
 def test_evaluation_case_accepts_optional_agent_run_link():
@@ -163,8 +170,12 @@ async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
 
     report = json.loads(paths["json"].read_text(encoding="utf-8"))
     markdown = paths["markdown"].read_text(encoding="utf-8")
-    assert report["schema_version"] == "2.0"
-    assert report["engines"] == {"rag": "local", "agent": "local"}
+    assert report["schema_version"] == "3.0"
+    assert report["engines"] == {
+        "rag": "local",
+        "agent": "local",
+        "security": "deterministic",
+    }
     assert report["case_count"] == 1
     assert set(report["rag_evaluation"]["aggregates"]) == {
         "faithfulness",
@@ -174,9 +185,14 @@ async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
     }
     assert report["cases"][0]["rag_evaluation"]["citation_hit"] is True
     assert report["cases"][0]["agent_evaluation"]["passed"] is True
+    assert report["cases"][0]["security_evaluation"]["classification"] == (
+        "true_negative"
+    )
+    assert report["security_evaluation"]["detection"]["false_positive_rate"] == 0.0
     assert report["cases"][0]["trace_id"] == "a" * 32
     assert "agent_run_id" in report["cases"][0]
-    assert "RAG + Agent Evaluation 统一评测报告" in markdown
+    assert "RAG + Agent + Security Evaluation 统一评测报告" in markdown
+    assert "False Positive Rate" in markdown
     assert "OTel Trace ID" in markdown
 
 

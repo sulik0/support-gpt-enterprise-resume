@@ -22,6 +22,31 @@ RAG_METRICS = (
 )
 
 
+def build_feedback_evaluation(case: dict) -> tuple[dict, bool]:
+    """生成回写数据，安全用例失败时禁止进入训练候选。"""
+    rag = case.get("rag_evaluation", {})
+    agent = case.get("agent_evaluation", {})
+    security = case.get("security_evaluation", {})
+    rag_scores = [
+        float(rag.get("metrics", {}).get(metric, 0.0)) for metric in RAG_METRICS
+    ]
+    security_passed = bool(security.get("passed", True))
+    passed = (
+        bool(agent.get("passed"))
+        and bool(rag.get("citation_hit"))
+        and mean(rag_scores) >= settings.FEEDBACK_TRAINING_MIN_RAG_SCORE
+        and security_passed
+    )
+    metrics = {
+        "rag": rag.get("metrics", {}),
+        "agent": agent.get("metrics", {}),
+        "security": security,
+        "citation_hit": rag.get("citation_hit"),
+        "rag_average": round(mean(rag_scores), 4),
+    }
+    return metrics, passed
+
+
 def parse_args() -> argparse.Namespace:
     """解析统一离线评测报告路径。"""
     parser = argparse.ArgumentParser(
@@ -50,27 +75,12 @@ async def main() -> None:
                 skipped += 1
                 continue
             try:
-                rag = case.get("rag_evaluation", {})
-                agent = case.get("agent_evaluation", {})
-                rag_scores = [
-                    float(rag.get("metrics", {}).get(metric, 0.0))
-                    for metric in RAG_METRICS
-                ]
-                passed = (
-                    bool(agent.get("passed"))
-                    and bool(rag.get("citation_hit"))
-                    and mean(rag_scores) >= settings.FEEDBACK_TRAINING_MIN_RAG_SCORE
-                )
+                metrics, passed = build_feedback_evaluation(case)
                 async with db.begin_nested():
                     await feedback_service.record_evaluation(
                         db,
                         agent_run_id=run_id,
-                        metrics={
-                            "rag": rag.get("metrics", {}),
-                            "agent": agent.get("metrics", {}),
-                            "citation_hit": rag.get("citation_hit"),
-                            "rag_average": round(mean(rag_scores), 4),
-                        },
+                        metrics=metrics,
                         passed=passed,
                         external_ref=(f"{report.get('generated_at')}:{case.get('id')}"),
                     )

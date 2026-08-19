@@ -79,6 +79,7 @@ async def test_tooling_blocks_indirect_prompt_injection(monkeypatch):
     )
 
     assert result["security_threat_detected"] is True
+    assert result["security_source"] == "tool_result"
     assert result["risk_block_automation"] is True
     assert result["tool_context"] == {}
     assert result["tool_calls"]
@@ -175,6 +176,7 @@ async def test_chinese_prompt_injection_short_circuits_workflow():
     )
 
     assert final_output["workflow_path"] == ["ticket_analyzer", "escalation"]
+    assert final_output["security_source"] == "user_input"
     assert final_output["risk_level"] == "critical"
     assert final_output["approval_required"] is True
     assert final_output["context_citations"] == []

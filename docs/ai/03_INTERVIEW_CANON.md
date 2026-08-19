@@ -240,12 +240,12 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 | 层次 | 当前事实 |
 |---|---|
 | 在线 QA | 每次正常草稿生成后评估 QA 分数、幻觉风险和输出泄露；低分或幻觉触发审批 |
-| 离线评测 | 基于 Dataset + Workflow Replay；提供 RAGAS、DeepEval 和本地启发式指标的统一适配入口 |
-| 评测指标 | Faithfulness、Context Precision、Context Recall、Answer Relevance、Hallucination Rate、综合质量分数 |
+| 离线评测 | 基于 Dataset + Workflow Replay；提供 RAGAS、DeepEval、确定性 Security Evaluator 和本地启发式指标的统一适配入口 |
+| 评测指标 | RAG 指标、Agent 行为指标、安全 TP/FP/TN/FN、Precision、Recall、F1、误报率和安全处置正确率 |
 | 当前通过阈值 | 综合质量分数 `>= 0.75` 且 Hallucination Rate `< 0.35` |
-| 报告 | 统一生成 JSON / Markdown 的 RAG + Agent Evaluation 报告，并记录 Trace ID |
+| 报告 | 统一生成 JSON / Markdown 的 RAG + Agent + Security Evaluation 报告，并记录 Trace ID |
 
-当前有 13 条 Synthetic Golden Dataset，包含参考答案、期望来源、业务类别、风险等级和 Agent 行为预期。报告包含 citation hit rate、RAG 指标、Agent 行为指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量基线或真实线上评测数据。无 API Key 时的本地评测是确定性启发式降级，不能等同于真实 RAGAS / DeepEval 结果。
+当前有 13 条 Synthetic Golden Dataset，并有一组 30 条 Baseline Dataset，其中 4 条攻击样本和 26 条正常业务样本可形成安全混淆矩阵。统一报告包含 citation hit rate、RAG 指标、Agent 行为指标、安全检测与处置指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量基线或真实线上评测数据。无 API Key 时的本地 RAG / Agent 评测是确定性启发式降级，安全指标本身为确定性断言。
 
 ## 20. Feedback Pipeline
 

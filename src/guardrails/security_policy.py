@@ -34,6 +34,7 @@ def build_security_block(
         "priority": "urgent",
         "security_threat_detected": True,
         "security_risk_score": min(max(float(risk_score), 0.0), 1.0),
+        "security_source": source,
         "security_findings": safe_findings,
         "tool_context": {},
         "context_citations": [],

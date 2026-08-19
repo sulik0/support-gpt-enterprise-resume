@@ -43,6 +43,7 @@ class AgentState(TypedDict):
     analyzer_confidence: float
     security_threat_detected: bool
     security_risk_score: float
+    security_source: Optional[str]
     security_findings: List[str]
     risk_level: str
     risk_score: float
@@ -316,6 +317,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "analyzer_confidence": 1.0,
         "security_threat_detected": False,
         "security_risk_score": 0.0,
+        "security_source": None,
         "security_findings": [],
         "risk_level": "low",
         "risk_score": 0.0,
@@ -382,6 +384,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "risk.requires_human": final_output.get("risk_requires_human", False),
         "risk.block_automation": final_output.get("risk_block_automation", False),
         "security.threat_detected": final_output.get("security_threat_detected", False),
+        "security.source": final_output.get("security_source"),
     }
 
     # Determine if human approval is required

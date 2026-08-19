@@ -54,7 +54,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | 短期记忆 | Redis | 可选的会话历史快速存储，失败时不影响 SQL 持久化 |
 | RAG | ChromaDB、Embedding、Hybrid RAG | 知识库分块、版本/类别过滤、向量与词法混合召回、rerank |
 | 安全 | JWT、RBAC、Prompt Guardrails、Risk Engine | API 鉴权、工具权限、PII 脱敏、多层直接/间接 Prompt Injection 检测、Jailbreak、输出过滤和统一风险分级 |
-| 评测 | RAGAS、DeepEval、本地启发式指标 | Faithfulness、Context Precision / Recall、Answer Relevance 和 Hallucination Rate |
+| 评测 | RAGAS、DeepEval、确定性 Security Evaluator、本地启发式指标 | RAG 质量、Agent 行为、安全检测混淆矩阵与阻断处置质量 |
 | 可观测 | LangSmith、OpenTelemetry、Prometheus、Grafana | OTel 统一采集 Trace 与 Metrics；Collector 转发 Trace 并导出 Prometheus 指标 |
 | 交付 | Docker、Docker Compose、Kubernetes manifests | 本地组件编排和部署模板 |
 | 质量保障 | pytest、GitHub Actions | Python 3.11 编译检查与定向后端测试 |
@@ -276,7 +276,7 @@ resolved / closed --reopen--> in_progress
 
 - 在线单条评测入口是 `run_deeval_evaluation()` 和 `POST /evaluate-response`。
 - 离线统一入口是 Dataset + Workflow Replay Pipeline，RAG 采用 RAGAS，Agent 行为采用 DeepEval。
-- 正式离线报告同时输出 Faithfulness、Answer Relevancy、Context Precision、Context Recall、Agent 行为指标、citation hit rate、Workflow Path 和 Trace ID。
+- 正式离线报告同时输出 Faithfulness、Answer Relevancy、Context Precision、Context Recall、Agent 行为指标、Security Precision / Recall / F1 / 误报率、安全处置正确率、citation hit rate、Workflow Path 和 Trace ID。
 - 没有可用 API Key 时可显式选择 `local` 确定性指标进行 CI 烟测；正式 RAGAS / DeepEval 模式缺少依赖或密钥会直接失败，不会自动伪装为正式结果。
 - 报告写入 `evaluation/reports/evaluation_latest.json` 和 `evaluation_latest.md`。
 
@@ -302,7 +302,7 @@ resolved / closed --reopen--> in_progress
 - OpenTelemetry 统一 Trace / Metrics 采集、OTLP Collector、LangSmith Trace 后端和 Prometheus / Grafana 指标展示。
 - Docker Compose、Kubernetes manifests、分层 requirements 和 Python 3.11 GitHub Actions smoke CI。
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
-- Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent 指标并关联 Trace ID。
+- Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent / Security 指标并关联 Trace ID。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
 - 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。
@@ -324,7 +324,7 @@ resolved / closed --reopen--> in_progress
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `86 passed`，CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `91 passed`，CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划

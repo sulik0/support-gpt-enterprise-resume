@@ -23,7 +23,7 @@ For a quick summary of the capabilities supported by this repository, please rev
 | **Observability** | Workflow/LLM/Retriever/Tool traces, latency, tokens, USD estimates | LangSmith, OpenTelemetry, Prometheus | [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md) |
 | **AI Guardrails** | Layered direct/indirect Prompt Injection detection, PII scrubbing, jailbreak blocks, output filters, independent Risk Engine | Unicode normalization, deterministic heuristics, LangGraph safety routing | [Security Guide](docs/SECURITY_GUIDE.md) |
 | **HITL Approval** | Staging drafts, agent modifications, approval history, review latency checks | FastAPI, SQLAlchemy, PostgreSQL | [System Design](SYSTEM_DESIGN.md) |
-| **Evaluation** | Golden dataset, Faithfulness, Answer Relevancy, Context Precision/Recall | Ragas, DeepEval | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
+| **Evaluation** | RAG/Agent/Security unified report, Workflow Replay, confusion matrix and safe-disposition metrics | Ragas, DeepEval, deterministic security evaluator | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
 
 ---
 
@@ -139,6 +139,10 @@ Run the independent phase-1 Agent/RAG evaluation after seeding the knowledge bas
 pip install -r requirements/eval.txt
 python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
+
+统一 JSON / Markdown 报告还会输出安全专项指标，包括 Prompt Injection 检测的
+Precision、Recall、F1、误报率，以及自动化阻断、安全短路、上下文隔离、人工介入和
+critical 风险处置正确率。Baseline 30 中的攻击与正常业务样本共同构成混淆矩阵。
 
 ### Feedback Pipeline
 

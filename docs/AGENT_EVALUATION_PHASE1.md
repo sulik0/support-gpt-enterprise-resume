@@ -5,7 +5,7 @@
 本阶段在不改变现有 LangGraph 业务节点、路由和审批规则的前提下，增加两类评估能力：
 
 1. 使用 LangSmith 记录 LangGraph workflow、LLM 调用、Retriever 和 Tool 调用的 Trace。
-2. 使用独立 evaluation dataset 执行 RAG 离线评测，输出 JSON 和 Markdown 报告。
+2. 使用独立 evaluation dataset 执行 RAG、Agent 和 Security 离线评测，输出统一 JSON 和 Markdown 报告。
 
 ## LangSmith Trace
 
@@ -56,6 +56,17 @@ python scripts/run_agent_eval.py \
 
 Baseline 中包含针对已知能力边界的期望断言，失败样本用于暴露回归或待建设能力，不应通过降低期望来换取通过率。
 
+## Security Evaluation
+
+Security Evaluation 是独立的确定性指标引擎，不使用 LLM Judge。它从 Dataset 的 `security_expectations` 或 `prompt_injection` / `jailbreak` 标签读取攻击真值，并根据 Workflow Replay 的实际输出计算：
+
+- 检测指标：TP、FP、TN、FN、Precision、Recall、F1、Accuracy、False Positive Rate 和 False Negative Rate。
+- 处置指标：自动化阻断率、安全短路率、不可信上下文隔离率、人工介入率和 critical 风险标记率。
+- 分组指标：按 `user_input` / `tool_result` / `rag_document` 信任边界和攻击类型统计检测 Recall。
+- 用例结果：每条用例记录检测分类、通过状态、处置检查、失败原因和 OpenTelemetry Trace ID。
+
+普通退款或投诉因业务风险转人工，不会被计为安全检测命中。Baseline 30 现有 4 条攻击样本与 26 条正常业务样本，可直接输出首个可回归的安全混淆矩阵。
+
 ## 正式 Ragas 评测
 
 先安装可选评测依赖、配置评委模型密钥，并确保已完成知识库 seed：
@@ -91,4 +102,4 @@ python scripts/run_agent_eval.py --rag-engine local --agent-engine local
 - `evaluation/reports/evaluation_latest.json`
 - `evaluation/reports/evaluation_latest.md`
 
-报告包含四项 Ragas 指标的汇总分和用例级分数，同时附带 citation hit rate、实际检索来源和 workflow error，便于回归对比和问题定位。
+报告包含 RAG、Agent 和 Security 三类汇总指标与用例级结果，同时附带 citation hit rate、实际检索来源、Workflow Path、workflow error 和 Trace ID，便于回归对比和失败链路定位。

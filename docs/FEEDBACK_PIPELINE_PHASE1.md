@@ -95,9 +95,11 @@ python scripts/import_evaluation_feedback.py \
   --report evaluation/reports/evaluation_latest.json
 ```
 
+回写统一评测报告时同时保留 Security Evaluation 结果；任一安全专项检查失败的用例不会通过训练候选质量门控。
+
 脚本会把 RAG / Agent 指标和 Pass/Fail 结论批量回写为 Evaluation Event；默认 Synthetic Golden Dataset 没有关联线上 Run，因此会被安全跳过。
 
-离线用例只有在 Agent Evaluation 通过、Citation 命中且四项 RAG 指标平均分达到配置阈值时，才会成为“评测通过”事件；单条导入失败不会中断整批任务。
+离线用例只有在 Agent Evaluation 和 Security Evaluation 通过、Citation 命中且四项 RAG 指标平均分达到配置阈值时，才会成为“评测通过”事件；单条导入失败不会中断整批任务。
 
 ## 训练数据质量门控
 
