@@ -275,9 +275,7 @@ async def track_http_telemetry(request: Request, call_next):
             except Exception as e:
                 route_template = _route_template(request)
                 duration = time.time() - start_time
-                _record_http_metrics(
-                    method, route_template, "500", duration
-                )
+                _record_http_metrics(method, route_template, "500", duration)
                 set_span_attributes(
                     span,
                     {"http.status_code": 500, "error.type": e.__class__.__name__},
@@ -461,6 +459,10 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         citations=citations,
         escalation_recommended=agent_output.get("escalation_recommended", False),
         escalation_reason=agent_output.get("escalation_reason"),
+        analyzer_confidence=agent_output.get("analyzer_confidence", 1.0),
+        risk_level=agent_output.get("risk_level", "low"),
+        risk_score=agent_output.get("risk_score", 0.0),
+        risk_reasons=agent_output.get("risk_reasons", []),
         cost_metadata=cost_meta,
         approval_required=agent_output.get("approval_required", False),
         approval_id=approval_id,
@@ -551,6 +553,10 @@ async def suggest_response(
         citations=citations,
         qa_score=agent_output.get("qa_score", 1.0),
         hallucination_detected=agent_output.get("hallucination_detected", False),
+        analyzer_confidence=agent_output.get("analyzer_confidence", 1.0),
+        risk_level=agent_output.get("risk_level", "low"),
+        risk_score=agent_output.get("risk_score", 0.0),
+        risk_reasons=agent_output.get("risk_reasons", []),
         cost_metadata=cost_meta,
         agent_run_id=agent_run.id if agent_run else None,
         feedback_token=(

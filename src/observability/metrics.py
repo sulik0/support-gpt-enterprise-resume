@@ -65,6 +65,12 @@ QA_SCORE_HISTOGRAM = meter.create_histogram(
 GUARDRAIL_VIOLATIONS_TOTAL = meter.create_counter(
     "guardrail_violations", description="Total guardrail violations"
 )
+RISK_ASSESSMENTS_TOTAL = meter.create_counter(
+    "agent_risk_assessments", description="Total final Agent risk assessments"
+)
+RISK_SCORE_HISTOGRAM = meter.create_histogram(
+    "agent_risk_score_ratio", description="Distribution of final Agent risk scores"
+)
 FEEDBACK_EVENTS_TOTAL = meter.create_counter(
     "feedback_events", description="Total online feedback events"
 )

@@ -311,22 +311,22 @@ MCP 可以为外部工具、资源和 Prompt 提供标准化连接协议，但�
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
-| 双侧 Guardrails | 前后两道防线，可提前短路 | 规则覆盖有限，需维护 |
+| 多信任边界 + 输出 Guardrails | 前后多道防线，可提前短路直接与间接注入 | 确定性特征需持续维护 |
 | 只靠 Prompt | 实现最少 | 对攻击和提示泄露不可靠 |
 | 仅人工审核 | 安全高 | 成本和响应延迟高 |
 | 安全网关 | 可集中治理 | 引入额外服务和集成复杂度 |
 
 ### 最终方案
 
-采用 Prompt Injection、Jailbreak、PII 脱敏和 Response Filter 的分层 Guardrails。
+采用用户输入、Tool 返回、RAG 文档与生成输出的分层 Guardrails。Prompt Injection 组合 Unicode/零宽字符规范化、中英特征、组合启发式、角色提权和 Base64 载荷扫描，同时保留 Jailbreak、PII 脱敏和 Response Filter。
 
 ### 为什么选择
 
-输入风险应在调用工具与模型前被拦截；输出风险需要在回复客户前再检查。双侧措施适合当前本地可运行架构。
+客户输入风险应在调用工具与模型前被拦截；Tool 和 RAG 结果也是不可信数据，必须在进入生成 Prompt 前检查；输出风险需要在回复客户前再检查。
 
 ### 工程权衡
 
-当前检测以轻量规则为主，不能视为完整安全产品；高风险命中采取人工升级而不是尝试自动绕过或重写。
+当前检测是确定性多层规则，本地可复现但不能视为训练型安全产品；命中时默认清空受污染上下文、阻断自动化并转人工，会牺牲部分可能的正常请求以降低漏检后果。
 
 ## 决策 11：采用 ChromaDB 作为当前向量数据库，不采用 pgvector
 
@@ -590,15 +590,15 @@ LangGraph Checkpoint 可以保存执行中状态，用于长流程恢复、中�
 
 ### 最终方案
 
-安全违规、紧急工单、负面且高优先级、低 QA 或幻觉风险触发审批；工单状态只能沿合法状态机流转。
+通过独立 Risk Engine 统一综合安全、优先级、情绪、高风险业务意图、Analyzer 置信度、QA、幻觉和 Workflow 错误。`high` / `critical` 触发人工审批，安全威胁额外阻断自动化；工单状态只能沿合法状态机流转。
 
 ### 为什么选择
 
-该方案让自动化优先处理低风险问题，同时保留高风险场景的人类最终裁决权。
+分散在多个 Agent 中的 if/else 容易出现阈值漂移。独立 Risk Engine 让自动化优先处理低风险问题，同时保留高风险场景的人类最终裁决权。
 
 ### 工程权衡
 
-审批阈值目前固定，未基于真实运营数据动态优化；状态事件尚未单独持久化。
+阈值已通过 `RISK_*` 环境变量集中配置，但未基于真实运营数据校准、无策略版本和灰度机制；状态事件尚未单独持久化。
 
 ## 决策 19：采用受限 Error Recovery，而非通用自动 Retry
 
@@ -774,11 +774,11 @@ RAG 质量不能只依靠主观体验，需要评估 Faithfulness、Context Prec
 | 状态 | 单一 AgentState | 无 TaskState / Checkpoint |
 | 工具 | ToolRegistry + Mock Adapter | 无 MCP、审计未持久化 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |
-| 安全 | 输入 Guardrails + 输出 Filter + QA | 规则覆盖需持续维护 |
+| 安全 | 用户 / Tool / RAG 多层 Guardrails + 输出 Filter + QA | 确定性检测需持续用攻击样本维护，无训练型安全分类器 |
 | RAG | ChromaDB Hybrid RAG | 无 pgvector、无生产搜索后端 |
 | 数据 | SQLite 本地、PostgreSQL Compose | 无迁移、读写分离、多租户 |
 | 记忆 | Redis 可选 + SQL 兜底 | 历史未注入生成 Prompt |
-| 审批 | 风险驱动 HITL + 状态机 | 阈值固定、状态事件未持久化 |
+| 审批 | 独立 Risk Engine + HITL + 状态机 | 阈值可配置但未用生产数据校准，状态事件未持久化 |
 | 恢复 | 受限回退、人工接管 | 无通用 Retry / Queue / Circuit Breaker |
 | 观测 | OpenTelemetry + OTLP Collector + LangSmith / Prometheus | Collector 尚未高可用，未接 Jaeger / Tempo |
 | 评测 | Adapter + 本地降级 | 无 Golden Set 和生产基线 |

@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 
 
 class Settings(BaseSettings):
@@ -67,6 +67,24 @@ class Settings(BaseSettings):
     PROMPT_INJECTION_PROTECTION_ENABLED: bool = Field(default=True)
     JAILBREAK_DETECTION_ENABLED: bool = Field(default=True)
     RESPONSE_FILTERING_ENABLED: bool = Field(default=True)
+
+    # Risk Engine
+    RISK_MEDIUM_THRESHOLD: float = Field(default=0.4, ge=0.0, le=1.0)
+    RISK_HIGH_THRESHOLD: float = Field(default=0.7, ge=0.0, le=1.0)
+    RISK_CRITICAL_THRESHOLD: float = Field(default=0.9, ge=0.0, le=1.0)
+    RISK_LOW_CONFIDENCE_THRESHOLD: float = Field(default=0.65, ge=0.0, le=1.0)
+    RISK_QA_SCORE_THRESHOLD: float = Field(default=0.8, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_risk_thresholds(self):
+        """确保风险等级阈值从低到高严格递增。"""
+        if not (
+            self.RISK_MEDIUM_THRESHOLD
+            < self.RISK_HIGH_THRESHOLD
+            < self.RISK_CRITICAL_THRESHOLD
+        ):
+            raise ValueError("Risk thresholds must satisfy medium < high < critical.")
+        return self
 
     # Feedback Pipeline
     FEEDBACK_TRAINING_MIN_RATING: int = Field(default=4, ge=1, le=5)

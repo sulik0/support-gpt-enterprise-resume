@@ -41,6 +41,8 @@ flowchart TB
         Escalation[Escalation]
         Analyzer -->|normal| Tooling --> Retriever --> Resolver --> QA --> Escalation
         Analyzer -->|security threat| Escalation
+        Tooling -->|infected tool result| Escalation
+        Retriever -->|infected RAG document| Escalation
     end
 
     Tooling --> Registry[ToolRegistry]
@@ -95,8 +97,10 @@ stateDiagram-v2
     [*] --> Analyzer
     Analyzer --> Escalation: Prompt Injection / Jailbreak
     Analyzer --> Tooling: 正常请求
-    Tooling --> Retriever
-    Retriever --> Resolver
+    Tooling --> Escalation: Tool 间接注入
+    Tooling --> Retriever: 安全工具结果
+    Retriever --> Escalation: RAG 间接注入
+    Retriever --> Resolver: 安全 citation
     Resolver --> QA
     QA --> Escalation
     Escalation --> [*]
@@ -106,12 +110,12 @@ stateDiagram-v2
 
 | 节点 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前取舍 |
 |---|---|---|---|---|---|---|
-| Analyzer | 安全检测、PII 脱敏、情绪/优先级/部门/意图分类 | 主题、描述 | 分类结果、脱敏文本或安全错误 | 在早期阻断风险，减少越权工具和无效 LLM 调用 | 规则引擎、专用分类模型 | 采用 Guardrails + Provider 分类，简单且可替换 |
-| Tooling | 补充客户、订单、历史工单上下文 | 客户 ID、角色、部门、意图 | `tool_context`、`tool_calls` | 先补齐业务事实，再做检索和生成 | 让 LLM 自行决定工具 | 当前采用确定性调用，风险和成本更可控 |
-| Retriever | 召回售后政策、FAQ 和操作指引 | 工单主题、描述、版本、类别 | citation 列表 | 给回复提供知识依据 | 纯关键字搜索、纯向量搜索 | 混合检索提高精确规则问题稳定性 |
+| Analyzer | 多层输入安全检测、PII 脱敏、情绪/优先级/部门/意图分类和初始风险评估 | 主题、描述 | 分类结果、置信度、脱敏文本或安全阻断 | 在早期阻断风险，减少越权工具和无效 LLM 调用 | 只用关键词、专用分类模型 | 采用确定性多层 Guardrails + Provider 分类，本地可测且可替换 |
+| Tooling | 补充客户、订单、历史工单上下文，检查工具结果的间接注入 | 客户 ID、角色、部门、意图 | `tool_context`、`tool_calls` 或安全阻断 | 先补齐业务事实，但不信任外部工具文本 | 让 LLM 自行决定工具 | 当前采用确定性调用与入 Prompt 前扫描，风险和成本更可控 |
+| Retriever | 召回售后政策、FAQ 和操作指引，检查文档间接注入 | 工单主题、描述、版本、类别 | citation 列表或安全阻断 | 给回复提供知识依据，且不把受污染文档交给模型 | 纯关键字搜索、纯向量搜索 | 混合检索后执行信任边界扫描，以增加少量延迟换取间接注入隔离 |
 | Resolver | 合并检索与业务上下文生成客服草稿 | 工单、citation、Tool Context | `suggested_response` | 将业务事实与知识事实统一供给模型 | 模板化回复、单一 RAG 上下文 | 当前保留 LLM 生成的弹性，同时限制为给定上下文 |
 | QA | 评估回复质量和幻觉风险，过滤内部信息泄露 | 问题、citation、草稿 | QA 分数、幻觉标记、过滤后的草稿 | 生成后再加一道独立风险门 | Resolver 自检、人工全量审核 | 单独 QA 节点更易观测和调阈值 |
-| Escalation | 计算 SLA 并决定是否升级 | 优先级、情绪、QA、幻觉、安全错误 | 升级结论、原因、SLA | 将业务升级规则与生成逻辑解耦 | 在 Prompt 内决定是否升级 | 显式规则更可审计、可测试 |
+| Escalation | 调用 Risk Engine、计算 SLA 并决定是否升级 | 安全、优先级、情绪、意图、置信度、QA、幻觉、错误 | 风险等级/分数/原因、升级结论、SLA | 将风险策略与生成逻辑解耦 | 在 Prompt 内决定、分散 if/else | 独立确定性规则更可审计、可测试并可统一调阈值 |
 
 ### 3.3 设计原因
 
@@ -126,7 +130,8 @@ stateDiagram-v2
 | 状态分组 | 关键内容 | 输入来源 | 下游消费者 | 设计原因 |
 |---|---|---|---|---|
 | 工单标识 | 工单 ID、客户 ID、主题、描述、知识库版本 | API | 全部节点 | 保证所有结果可关联到具体请求和知识版本 |
-| 分类结果 | 情绪、优先级、意图、部门 | Analyzer | Tooling、Retriever、Escalation | 决定订单查询、类别过滤、SLA 和升级规则 |
+| 分类结果 | 情绪、优先级、意图、部门、Analyzer 置信度 | Analyzer | Tooling、Retriever、Risk Engine | 决定订单查询、类别过滤、SLA 和初始风险 |
+| 安全与风险 | 安全威胁、检测分数与信号、风险等级/分数/原因、人工与自动化建议 | Guardrails、Analyzer、QA、Risk Engine | 条件边、Escalation、Approval、API、Trace | 让所有节点使用同一风险语义，避免分散阈值漂移 |
 | 工具上下文 | 操作角色、结构化 Tool Context、调用审计 | Tooling / ToolRegistry | Resolver、API、Trace | 让回复可利用业务事实并暴露治理证据 |
 | RAG 结果 | citation | Retriever | Resolver、QA、API | 让回答、质量判断和人工核验使用同一依据 |
 | 生成与质量 | 回复草稿、QA 分数、幻觉标记 | Resolver、QA | Escalation、Approval、API | 将内容生成和风险判断分离 |
@@ -162,7 +167,7 @@ stateDiagram-v2
 
 ### 5.1 Agent 编排
 
-当前 Agent 编排由 LangGraph 固定定义：Analyzer → Tooling → Retriever → Resolver → QA → Escalation；仅安全风险会从 Analyzer 直接路由到 Escalation。
+当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Tooling → Retriever → Resolver → QA → Escalation；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，从当前节点直接路由到 Escalation。
 
 **职责**：控制节点顺序与唯一条件分支。
 
@@ -195,10 +200,10 @@ stateDiagram-v2
 
 当前项目**没有独立 Selector Agent**。选择逻辑由确定性规则承担：
 
-- 安全路由选择：命中 Prompt Injection 或 Jailbreak 时直接进入 Escalation。
+- 安全路由选择：客户输入、Tool 返回或 RAG 文档命中 Prompt Injection，或输入命中 Jailbreak 时直接进入 Escalation。
 - 订单工具选择：billing、shipping 或相关意图时才查询订单历史。
 - 检索范围选择：优先按部门类别检索；为空时放宽类别过滤。
-- 升级选择：依据安全、优先级、情绪、QA 和幻觉规则决定。
+- 升级选择：由 Risk Engine 综合安全、优先级、情绪、高风险业务意图、分类置信度、QA、幻觉和异常信号决定。
 
 **职责**：做有限、可审计的路由与资源选择。
 
@@ -232,7 +237,9 @@ stateDiagram-v2
 
 | 验证层 | 验证内容 | 输入 | 输出 | 设计原因 |
 |---|---|---|---|---|
-| 输入安全验证 | Prompt Injection、Jailbreak、PII | 主题与描述 | 安全短路或脱敏文本 | 风险输入不得进入工具和生成环节 |
+| 输入安全验证 | 多层 Prompt Injection、Jailbreak、PII | 主题与描述 | 结构化安全结果、安全短路或脱敏文本 | 风险输入不得进入工具和生成环节 |
+| 外部上下文验证 | 间接 Prompt Injection | Tool 返回、RAG citation | 可信上下文或安全短路 | 外部系统与知识文档不能被当作指令来源 |
+| 风险验证 | 统一 Risk Engine | 安全、业务、置信度、QA、错误 | 风险分数/等级/原因与处置建议 | 避免多节点各自维护不一致阈值 |
 | 工具验证 | Pydantic Schema、RBAC、超时 | 工具名、参数、角色 | 成功、拒绝、校验错误、超时或错误审计 | 防止错误参数与越权调用 |
 | 检索验证 | 版本与类别过滤、citation 返回 | 查询与过滤条件 | 有版本归属的检索结果 | 减少跨版本知识污染 |
 | 输出验证 | QA、幻觉判断、Response Filter | 草稿与检索上下文 | 评分、风险标记、过滤结果 | 减少无依据回答和内部提示泄露 |
@@ -361,7 +368,8 @@ flowchart LR
 
 | 阶段 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前取舍 |
 |---|---|---|---|---|---|---|
-| 输入 Guardrails | 阻断攻击、脱敏 PII | 原始主题和描述 | 安全错误或脱敏文本 | 防止不可信输入进入后续链路 | 模型安全分类 API、人工初筛 | 本地规则轻量、可离线；覆盖率有限 |
+| 输入 Guardrails | 阻断攻击、脱敏 PII | 原始主题和描述 | 结构化安全结果或脱敏文本 | 防止不可信输入进入后续链路 | 模型安全分类 API、人工初筛 | Unicode/紧凑化、中英特征、组合启发式、角色提权和 Base64 扫描本地可测；仍不等于训练型安全分类器 |
+| 上下文 Guardrails | 阻断间接 Prompt Injection | Tool 结果、RAG 文档 | 可信上下文或安全短路 | 防止受污染的外部数据改写模型任务 | 内容签名、专用分类器、沙箱摘要 | 复用同一确定性检测器，维护简单；结构化结果可能需要更精细的字段级策略 |
 | Analyzer Prompt | 分类工单 | 脱敏工单 | 情绪、优先级、部门、意图 JSON | 为路由提供结构化决策信号 | 专用分类器、规则分类 | Provider 抽象便于替换；分类质量依赖模型 |
 | Resolver Prompt | 基于事实与知识生成草稿 | 工单、citation、Tool Context | 客服回复 | 强制让生成依赖可见上下文 | 模板引擎、Function Calling 循环 | 自然语言表达灵活；上下文不足仍需升级 |
 | QA Prompt | 评估依据与幻觉风险 | 问题、citation、草稿 | QA JSON | 将质量门从生成职责中分离 | 规则、Judge Model、人工审核 | 一次性 QA 成本可控；没有自动反思重写 |
@@ -400,7 +408,8 @@ Redis 是可选组件，不是启动前提。
 
 | 故障类型 | 当前处理 | 设计原因 | 未采用方案与权衡 |
 |---|---|---|---|
-| Prompt Injection / Jailbreak | 安全短路至 Escalation，跳过工具、RAG、生成和 QA | 攻击输入不应继续消耗外部资源或影响上下文 | 继续生成拒绝解释会增大提示泄露和绕过风险 |
+| 用户输入 Prompt Injection / Jailbreak | Analyzer 安全短路至 Escalation，跳过工具、RAG、生成和 QA | 攻击输入不应继续消耗外部资源或访问业务数据 | 继续生成拒绝解释会增大提示泄露和绕过风险 |
+| Tool / RAG 间接 Prompt Injection | 清空受污染上下文，从 Tooling 或 Retriever 直接进入 Escalation | 外部文本只能被视为数据，不能成为生成指令 | 完全信任 Adapter 或知识库会使间接注入穿过输入防线 |
 | Redis 不可用 | 自动读取 SQL 历史，保存 Redis 失败不阻断主流程 | 缓存不能成为业务单点 | 强制 Redis 高可用成本不适合本地 Demo |
 | RAG 类别无结果 | 保留知识库版本并移除类别限制，再检索一次 | 避免分类误差造成零召回 | 多次广泛重试会增加延迟和跨域知识风险 |
 | 工具超时、权限或参数错误 | 记录审计状态；Tooling 失败时返回空上下文和错误信息，流程可继续 | 读工具失败不应直接导致整个工单不可处理 | 当前没有自动 Retry、Circuit Breaker 或持久化 Dead Letter Queue |
@@ -411,7 +420,24 @@ Redis 是可选组件，不是启动前提。
 
 **Retry 边界**：当前唯一显式业务 Retry 是 RAG 类别过滤失败后的单次回退查询。工具调用、LLM 调用和审批动作均没有通用自动重试机制。未来如增加 Retry，必须配置最大次数、退避、幂等键、可观测记录和高风险操作禁重试规则。
 
-## 13. Human-in-the-Loop
+## 13. Risk Engine
+
+Risk Engine 位于 `src/risk/engine.py`，是独立于 Prompt、LLM Provider 和具体 Agent 节点的确定性策略组件。Analyzer 完成分类后生成初始风险，QA 完成后加入回复质量信号，Escalation 生成最终评估并记录 Metrics。
+
+| 维度 | 设计 |
+|---|---|
+| 职责 | 统一综合安全、业务、分类置信度、QA、幻觉和 Workflow 错误，决定风险等级与处置建议 |
+| 输入 | `security_risk_score`、优先级、情绪、意图、`analyzer_confidence`、`qa_score`、幻觉标记、错误列表 |
+| 输出 | `risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation` |
+| 默认阈值 | `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；Analyzer 低置信度阈值 `0.65`，QA 阈值 `0.8` |
+| 设计原因 | 避免 Analyzer、QA、Escalation 分散维护相互矛盾的魔法数字，也避免让 LLM 自行判定是否放行 |
+| 可替代方案 | 节点内 if/else、策略配置中心、规则引擎、训练型 Risk Model、LLM Judge |
+| 最终选择 | 当前规则规模较小，采用纯 Python 独立模块，无外部依赖、离线可复现、单元测试稳定 |
+| 工程权衡 | 规则可解释但不会自动学习；阈值可配置但尚无策略版本和灰度发布；安全威胁会阻断自动化，其他 high / critical 风险转人工而不直接丢弃草稿 |
+
+`/chat` 和 `/suggest-response` 响应会返回 Analyzer 置信度以及风险等级、分数和原因；OpenTelemetry Trace 与结构化日志保留风险字段，Metrics 记录最终风险评估数和分数分布。
+
+## 14. Human-in-the-Loop
 
 ```mermaid
 flowchart TD
@@ -429,16 +455,16 @@ flowchart TD
 | 维度 | 说明 |
 |---|---|
 | 职责 | 将高风险或低置信度 AI 草稿交由人工审核，并将审核结果纳入工单状态闭环 |
-| 输入 | 草稿、升级结论、QA 分数、幻觉标记、工单状态 |
-| 触发条件 | 安全违规、urgent、negative + high、QA 分数低于 0.8、检测到幻觉，或工作流最终建议升级 |
+| 输入 | 草稿、Risk Engine 结论、QA 分数、幻觉标记、工单状态 |
+| 触发条件 | 安全违规、urgent、negative + high、高风险业务意图、Analyzer 低置信度、QA 分数低于 0.8、检测到幻觉、`risk_level` 为 high / critical，或工作流最终建议升级 |
 | 输出 | 待审批记录、人工最终回复、审核人、审核延迟和合法工单新状态 |
 | 设计原因 | 退款、投诉、重大故障和安全风险不宜由模型单独闭环 |
 | 可替代方案 | 全自动回复、全量人工审核、分级抽样审核 |
-| 最终取舍 | 风险驱动的按需审批，在安全与处理效率间平衡；阈值目前为固定规则，尚未根据历史指标自适应优化 |
+| 最终取舍 | 风险驱动的按需审批；风险阈值通过 `RISK_*` 环境变量集中配置，但尚未根据真实历史指标自适应优化 |
 
 人工拒绝草稿后，工单回到 `in_progress`。当前系统不会自动重新规划或重新生成；后续处理需要人工重新触发业务流程。这种设计避免系统在被拒绝后不受控地重复生成相似内容。
 
-## 14. 性能优化
+## 15. 性能优化
 
 | 方向 | 当前实现 | 作用 | 限制与后续空间 |
 |---|---|---|---|
@@ -447,12 +473,12 @@ flowchart TD
 | 会话读取 | Redis 保存最近 12 条消息，SQL 兜底 | 降低热会话读取延迟 | 历史当前未注入生成，收益主要在存储读取路径 |
 | 检索规模 | Top 3 返回、候选扩展后轻量 rerank、版本和类别过滤 | 限制 Prompt 长度和检索成本 | 进程内词法搜索不适合大规模文档集合 |
 | LLM 成本 | 聚合 token、成本和延迟；默认 Mock LLM | 支持成本可见与离线开发 | 尚无缓存、批处理、模型路由或预算熔断 |
-| 安全前置 | 风险输入提前短路 | 避免不必要的工具、检索和模型调用 | 规则检测需要持续更新 |
+| 安全前置 | 用户、Tool、RAG 三类信任边界提前短路 | 避免不必要的后续工具、检索和模型调用 | 确定性检测需要持续用攻击样本更新 |
 | 可观测 | Metrics 与 Trace 覆盖 API、节点、工具、RAG、审批 | 支持定位瓶颈和错误阶段 | Trace 默认仅输出到控制台，尚无集中存储与采样策略 |
 
-## 15. 可扩展性设计
+## 16. 可扩展性设计
 
-### 15.1 已有扩展点
+### 16.1 已有扩展点
 
 | 扩展方向 | 当前扩展点 | 输入/输出契约 | 工程价值 |
 |---|---|---|---|
@@ -463,7 +489,7 @@ flowchart TD
 | 观测后端 | OpenTelemetry SDK + OTLP Collector | Trace、Metrics 与脱敏属性 | Collector 可扩展 LangSmith、Jaeger、Tempo 等 exporter |
 | 部署 | Docker Compose、Kubernetes manifests | 环境变量与容器配置 | 可从本地栈演进至容器平台 |
 
-### 15.2 尚未实现但需要预留的扩展
+### 16.2 尚未实现但需要预留的扩展
 
 | 方向 | 推荐演进 | 设计原因 | 主要工程代价 |
 |---|---|---|---|
@@ -475,7 +501,7 @@ flowchart TD
 | Planner / Reflection | 在 Golden Set 和预算控制基础上增加受限计划与限次重写 | 处理更复杂的调查型工单 | 质量比较、循环控制、成本和审批边界 |
 | Prompt 治理 | Prompt Registry、版本记录、A/B 与灰度 | 支持可重复的质量回归 | 评测集、指标归因、发布流程 |
 
-## 16. 最终架构决策摘要
+## 17. 最终架构决策摘要
 
 | 决策 | 最终采用方案 | 核心原因 | 明确不采用或暂缓的方案 |
 |---|---|---|---|

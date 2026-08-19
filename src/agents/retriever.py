@@ -2,6 +2,8 @@ import time
 import logging
 from typing import Dict, Any
 
+from src.guardrails.prompt_injection import analyze_prompt_injection
+from src.guardrails.security_policy import build_security_block
 from src.rag.vector_store import vector_store
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 from src.observability.tracing import get_tracer, observed_span, set_span_attributes
@@ -77,6 +79,31 @@ class KnowledgeRetrievalAgent:
                         query=query_str, version=kb_version, top_k=3
                     )
                     set_span_attributes(span, {"rag.citation_count": len(citations)})
+
+            # RAG 文档可能被污染，在交给生成模型前检测间接注入。
+            retrieved_text = "\n".join(
+                f"{citation.source}: {citation.text}" for citation in citations
+            )
+            injection = analyze_prompt_injection(
+                retrieved_text,
+                source="rag_document",
+            )
+            if injection.detected:
+                logger.warning(
+                    "Indirect prompt injection detected in RAG document",
+                    extra={
+                        "ticket_id": state.get("ticket_id"),
+                        "risk_score": injection.risk_score,
+                        "security_source": injection.source,
+                    },
+                )
+                return build_security_block(
+                    state,
+                    threat_type="Indirect prompt injection",
+                    source=injection.source,
+                    risk_score=injection.risk_score,
+                    findings=[*injection.layers, *injection.signals],
+                )
 
             duration = time.time() - start_time
             AGENT_EXECUTION_DURATION_SECONDS.record(

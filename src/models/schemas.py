@@ -108,6 +108,10 @@ class ChatResponse(BaseModel):
     citations: List[Citation]
     escalation_recommended: bool
     escalation_reason: Optional[str] = None
+    analyzer_confidence: float = 1.0
+    risk_level: str = "low"
+    risk_score: float = 0.0
+    risk_reasons: List[str] = Field(default_factory=list)
     cost_metadata: CostMetadata
     approval_required: bool = False
     approval_id: Optional[int] = None
@@ -194,6 +198,10 @@ class SuggestResponseResponse(BaseModel):
     citations: List[Citation]
     qa_score: float
     hallucination_detected: bool
+    analyzer_confidence: float = 1.0
+    risk_level: str = "low"
+    risk_score: float = 0.0
+    risk_reasons: List[str] = Field(default_factory=list)
     cost_metadata: CostMetadata
     agent_run_id: Optional[str] = None
     feedback_token: Optional[str] = None

@@ -65,11 +65,12 @@ FastAPI API 层（鉴权、工单、聊天、审批、评测、Metrics）
         v
 LangGraph Agent Workflow
   Analyzer -> Tooling -> Retriever -> Resolver -> QA -> Escalation
-       \-> 安全风险时直接进入 Escalation
+       \-> 客户输入、Tool 结果或 RAG 文档命中安全风险时直接进入 Escalation
         |
         +-- ToolRegistry -> Mock CRM / OMS / Ticketing
         +-- Hybrid RAG -> ChromaDB
         +-- LLM Provider -> Mock / OpenAI / Azure OpenAI
+        +-- Risk Engine -> 风险等级 / 人工建议 / 自动化阻断
         +-- HITL -> ResponseApproval + 工单状态机
         |
         +-- SQLAlchemy -> SQLite / PostgreSQL
@@ -78,7 +79,7 @@ LangGraph Agent Workflow
 Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 ```
 
-正常请求的固定顺序为：Analyzer → Tooling → Retriever → Resolver → QA → Escalation。命中 Prompt Injection 或 Jailbreak 时，系统跳过 Tooling、RAG、Resolver 和 QA，直接进入 Escalation。
+正常请求的固定顺序为：Analyzer → Tooling → Retriever → Resolver → QA → Escalation。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Tooling 或 Retriever 直接进入 Escalation，不调用后续 Resolver / QA。
 
 ## 7. 技术栈
 
@@ -92,10 +93,10 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | 短期会话缓存 | Redis（可选） |
 | 向量数据库 | ChromaDB |
 | 检索 | Embedding、Hybrid RAG、BM25 风格词法打分、轻量 rerank |
-| LLM | Mock LLM、OpenAI、Azure OpenAI Provider |
-| 安全 | JWT、RBAC、PII 脱敏、Prompt Injection、Jailbreak、Response Filter |
+| LLM | Mock LLM、OpenAI-compatible（OpenAI / DeepSeek / Qwen / vLLM）、Azure OpenAI Provider |
+| 安全 | JWT、RBAC、PII 脱敏、多层直接/间接 Prompt Injection、Jailbreak、Response Filter、独立 Risk Engine |
 | 审批 | Human-in-the-Loop、工单状态机 |
-| 可观测 | Prometheus、OpenTelemetry |
+| 可观测 | OpenTelemetry、LangSmith、Prometheus、Grafana |
 | 部署与验证 | Docker、Docker Compose、Kubernetes manifests、pytest、GitHub Actions |
 
 未使用或未实现的技术包括：MCP、pgvector、独立 TaskState、LangGraph Checkpoint、动态 Planner、自动 Reflection Loop、多租户知识隔离、生产搜索后端、Prompt 版本灰度。
@@ -106,12 +107,12 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 | Agent | 职责 |
 |---|---|
-| Analyzer | PII 脱敏、Prompt Injection/Jailbreak 检测、情绪/优先级/部门/意图分类 |
-| Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文 |
-| Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation |
+| Analyzer | PII 脱敏、多层 Prompt Injection/Jailbreak 检测、情绪/优先级/部门/意图/置信度分类和初始 Risk Engine 评估 |
+| Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文，并检查工具返回的间接注入 |
+| Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation，并在生成前检查文档间接注入 |
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
 | QA | 评估质量与幻觉风险，并执行输出泄露过滤 |
-| Escalation | 计算 SLA，判断升级与人工审批需求 |
+| Escalation | 调用 Risk Engine 生成最终风险结论，计算 SLA，判断升级与人工审批需求 |
 
 当前没有独立 Planner、Selector、Reviewer 以外的 Agent、Validator Agent 或 Reflection Agent。QA 承担 Review 职责；安全、工具和状态验证由分层规则完成。
 
@@ -138,7 +139,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 11. TaskState 与任务规划
 
-当前没有独立 `TaskState`。LangGraph 使用单一 `AgentState` 传递工单输入、分类结果、工具上下文、citation、回复草稿、QA、升级结论、token、成本和错误信息。
+当前没有独立 `TaskState`。LangGraph 使用单一 `AgentState` 传递工单输入、分类结果与置信度、工具上下文、citation、回复草稿、QA、安全信号、`risk_level`、`risk_score`、`risk_reasons`、人工/自动化建议、升级结论、token、成本和错误信息。
 
 当前也没有独立 Planner 或动态任务分解。系统采用固定 Workflow，并根据安全结果、部门、意图和优先级做有限的规则路由。当前唯一的受限重新规划是：类别检索无结果时，保留知识库版本并放宽类别进行一次回退检索。
 
@@ -170,7 +171,23 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。不能说 Prompt 已版本化、已灰度或已通过线上实验优化。
 
-## 14. 数据库
+## 14. 安全与 Risk Engine
+
+Prompt Injection 不再只是英文关键词检测，当前实现为确定性多层检测：
+
+1. Unicode NFKC 规范化，清理零宽字符与多余空白，同时识别分隔符混淆。
+2. 组合中英文直接特征、操作与指令边界启发式、敏感对象提取与角色提权检测。
+3. 受限解码 Base64 / URL-safe Base64 载荷，对解码内容再扫描。
+4. 在 `user_input`、`tool_result` 和 `rag_document` 三类信任边界执行，同时防护直接与间接 Prompt Injection。
+5. 返回 `risk_score`、`confidence`、`layers` 和不含敏感原文的 `signals`；命中后清空不可信上下文并直接转人工。
+
+独立 `RiskEngine` 综合安全分数、优先级、情绪、退款/拒付/投诉等高风险意图、Analyzer 置信度、QA、幻觉和 Workflow 错误。默认风险阈值为 `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；Analyzer 低置信度阈值为 `0.65`，QA 阈值为 `0.8`。`high` / `critical` 要求人工处理，安全威胁额外阻断自动化。
+
+`/chat` 与 `/suggest-response` 会返回 Analyzer 置信度、风险等级、分数和原因。Trace 和结构化日志记录风险字段，OpenTelemetry Metrics 记录最终风险评估数与分数分布。
+
+可以说已实现确定性多层检测和独立 Risk Engine；不能说已接入专用训练的安全分类模型、策略配置中心、持久化安全事件平台或生产级攻防运营体系。
+
+## 15. 数据库
 
 系统使用 SQLAlchemy Async 访问数据库。
 
@@ -181,7 +198,7 @@ OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider
 
 持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、`AgentRun`、`AgentRunLink` 和 `FeedbackEvent`。当前没有数据库迁移工具、读写分离、分库分表、`ticket_status_events` 审计表或多租户数据隔离。
 
-## 15. Redis
+## 16. Redis
 
 Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
@@ -191,7 +208,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 不能说 Redis 是唯一记忆存储、必须依赖 Redis，或 Redis 当前承担分布式锁、队列、Checkpoint、限流等职责。
 
-## 16. Embedding
+## 17. Embedding
 
 系统通过 Embedding Provider 生成知识库分块和查询向量。
 
@@ -202,7 +219,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 当前不使用本地训练 Embedding 模型、向量微调、Embedding A/B 评测或多向量检索。
 
-## 17. RAG
+## 18. RAG
 
 当前 RAG 为 ChromaDB 上的 Hybrid RAG：
 
@@ -210,13 +227,13 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 2. 检索时使用工单主题与描述构造查询，必须限定 `kb_version`。
 3. 系统优先按业务类别过滤；没有结果时，保留版本并放宽类别再查询一次。
 4. 系统融合向量召回、进程内 BM25 风格关键词打分和轻量 rerank。
-5. 最终返回最多 3 条 citation，每条包含来源、文本、分数和版本。
+5. 最终候选在交给 Resolver 前扫描间接 Prompt Injection；命中时清空 citation 并转人工，未命中时返回最多 3 条 citation，每条包含来源、文本、分数和版本。
 
 当前默认分块参数为 600 字符、120 字符 overlap。ChromaDB 是当前向量数据库；系统没有使用 pgvector、OpenSearch、Elasticsearch、Milvus、Pinecone、Cross-encoder 或 LLM Reranker。
 
 可以说“实现 Hybrid RAG、版本/类别过滤、citation 与轻量 rerank”；不能说“已实现生产级搜索集群、多租户 RAG 隔离或训练型 Reranker”。
 
-## 18. 评测体系
+## 19. 评测体系
 
 项目包含两层质量评估：
 
@@ -230,7 +247,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 当前有 13 条 Synthetic Golden Dataset，包含参考答案、期望来源、业务类别、风险等级和 Agent 行为预期。报告包含 citation hit rate、RAG 指标、Agent 行为指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量基线或真实线上评测数据。无 API Key 时的本地评测是确定性启发式降级，不能等同于真实 RAGAS / DeepEval 结果。
 
-## 19. Feedback Pipeline
+## 20. Feedback Pipeline
 
 第一阶段已实现线上反馈采集和训练候选沉淀：
 
@@ -243,7 +260,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 本阶段只生成训练候选，不执行 SFT / DPO 训练，不包含 Dataset Registry、人工标注平台、训练任务编排、模型自动发布或 vLLM Serving。
 
-## 20. 性能指标
+## 21. 性能指标
 
 ### 当前已采集的指标
 
@@ -254,6 +271,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 - LLM 输入/输出 token 与估算成本。
 - QA 分数分布。
 - 情绪分类计数、Guardrail 违规计数和工单升级计数。
+- 最终 Risk Engine 评估数和风险分数分布。
 - Feedback Event 和 SFT / DPO 候选导出计数。
 
 LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有完整的更新逻辑，不能当作可用的实测监控数据。
@@ -266,7 +284,7 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 
 历史文档中出现过单次 Mock Workflow 的本地示例延迟；该值受机器、数据、Provider 和运行环境影响，不是基准测试结果，不得作为性能指标对外引用。
 
-## 21. 上线指标
+## 22. 上线指标
 
 当前**没有上线指标**，原因是项目没有已证实的真实生产部署、真实客户流量、真实 SLA、真实工单量、真实审批率或真实业务转化数据。
 
@@ -279,11 +297,11 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 
 可以说：Docker Compose 和 Kubernetes manifests 提供了本地或生产风格部署基础，但不代表已生产发布。
 
-## 22. 已知问题与解决方案
+## 23. 已知问题与解决方案
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
-| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；新的 Python 3.12 隔离环境 `pip check` 和 60 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
+| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；Python 3.12 环境 86 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
@@ -292,8 +310,10 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 | 工具审计不持久化 | 审计记录当前驻留进程内并可随响应返回 | 作为后续审计表改造项 | 不要说已有完整合规审计平台 |
 | Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；恢复后继续上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |
 | Feedback 新表迁移 | 当前使用 SQLAlchemy `create_all` 创建新表 | 本地可直接运行；生产发布前补 Alembic migration | 不要说已经具备生产 Schema Migration |
+| 多层安全检测覆盖边界 | 当前为确定性规范化、特征、启发式与编码载荷检测 | 输入、Tool、RAG 信任边界失败时默认阻断并转人工 | 不要说已有训练型安全分类器或完整攻防平台 |
+| Risk Engine 阈值 | 默认阈值可通过环境变量配置，但尚无真实运营数据校准 | high / critical 保守转人工，安全威胁阻断自动化 | 不要说阈值已用生产样本训练或自适应调优 |
 
-## 23. 未来规划
+## 24. 未来规划
 
 以下均为规划，尚未实现：
 
@@ -307,8 +327,9 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 8. 引入 Prompt Registry、内容快照、灰度和回滚，并按版本关联质量与成本指标。
 9. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
 10. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
+11. 引入专用安全分类模型、安全样本库、策略版本与持久化安全事件，用真实数据校准 Prompt Injection 与 Risk Engine 阈值。
 
-## 24. 长期一致性规则
+## 25. 长期一致性规则
 
 未来任何回答都必须遵守以下规则：
 
@@ -322,3 +343,5 @@ OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工�
 8. 团队人数和个人贡献归属没有仓库事实依据，必须由回答者的真实经历补充，不能推测。
 9. 本文中的计数、阈值、组件和边界发生变化时，必须在同一提交中更新本文。
 10. Feedback Pipeline 已输出训练候选，但 SFT / DPO 训练、模型 Registry、自动发布和 vLLM Serving 均未实现。
+11. Prompt Injection 当前为确定性多层检测，覆盖用户输入、Tool 返回和 RAG 文档；没有训练型安全分类器。
+12. Risk Engine 是独立规则模块，high / critical 转人工，安全威胁阻断自动化；阈值未经真实生产数据校准。

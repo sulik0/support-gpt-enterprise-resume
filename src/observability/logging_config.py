@@ -22,6 +22,9 @@ _STRUCTURED_FIELDS = (
     "score",
     "hallucination_detected",
     "required",
+    "risk_level",
+    "risk_score",
+    "security_source",
     "error_type",
 )
 

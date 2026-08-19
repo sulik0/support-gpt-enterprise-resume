@@ -1,7 +1,10 @@
+import json
 import logging
 import time
 from typing import Any, Dict
 
+from src.guardrails.prompt_injection import analyze_prompt_injection
+from src.guardrails.security_policy import build_security_block
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 from src.tools.registry import tool_registry
 
@@ -77,6 +80,31 @@ class ToolingAgent:
                 {key: value for key, value in call.items() if key != "result"}
                 for call in tool_calls
             ]
+
+            # 工具返回属于不可信外部数据，入上下文前扫描间接注入。
+            tool_payload = json.dumps(
+                [call.get("result") for call in tool_calls],
+                ensure_ascii=False,
+                default=str,
+            )
+            injection = analyze_prompt_injection(tool_payload, source="tool_result")
+            if injection.detected:
+                logger.warning(
+                    "Indirect prompt injection detected in Tool result",
+                    extra={
+                        "ticket_id": ticket_id,
+                        "risk_score": injection.risk_score,
+                        "security_source": injection.source,
+                    },
+                )
+                blocked = build_security_block(
+                    state,
+                    threat_type="Indirect prompt injection",
+                    source=injection.source,
+                    risk_score=injection.risk_score,
+                    findings=[*injection.layers, *injection.signals],
+                )
+                return {**blocked, "tool_calls": public_tool_calls}
 
             tool_context = {
                 "customer_profile": {

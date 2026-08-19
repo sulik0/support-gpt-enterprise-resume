@@ -17,7 +17,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 
 - 将客户的自然语言问题转换为可路由、可审批、可追踪的工单处理流程。
 - 在生成回复前同时引入知识库依据和结构化业务上下文。
-- 对安全违规、紧急工单、负面高优先级工单和低质量回复引入 Human-in-the-Loop。
+- 通过独立 Risk Engine 统一评估安全、业务、分类置信度和回复质量，对高风险或临界风险引入 Human-in-the-Loop。
 - 通过 citation、QA 结果、工具审计和 Trace 为客服坐席提供可核查依据。
 
 ### 工程目标
@@ -31,13 +31,13 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 ## 核心能力
 
 1. **工单分析**：识别 `sentiment`、`priority`、`department` 和 `intent`。
-2. **安全短路**：在调用工具和 LLM 生成回复前检测 Prompt Injection 与 Jailbreak，命中后直接进入 Escalation。
+2. **多层安全短路**：组合 Unicode 规范化、中英文特征、组合启发式、角色提权与 Base64 载荷扫描，并分别检查客户输入、Tool 返回和 RAG 文档。
 3. **PII 脱敏**：正常请求进入 LLM 前对主题和描述中的敏感信息进行匿名化。
 4. **业务工具上下文**：通过 ToolRegistry 查询客户画像、近期订单和历史工单，并把结构化结果注入 Resolver。
 5. **工具治理**：工具具有 `input_schema`、`output_schema`、`min_role`、`timeout_seconds` 和 `mocked` 元数据；每次调用返回状态、耗时、权限结果和错误。
 6. **Hybrid RAG**：融合 ChromaDB 向量召回、进程内 BM25 风格词法打分和轻量 rerank，返回带版本的 citation。
 7. **回复生成与 QA**：使用知识库 citation 和 Tool Context 生成草稿，再评估 QA 分数、幻觉风险和输出泄露。
-8. **Human-in-the-Loop**：对需要人工处理的草稿创建审批记录，支持通过、修改和拒绝。
+8. **Risk Engine 与 Human-in-the-Loop**：统一输出 `risk_level`、`risk_score`、`risk_reasons`、是否人工处理及是否阻断自动化，并为高风险草稿创建审批记录。
 9. **工单状态机**：统一约束 `open`、`in_progress`、`pending_approval`、`resolved` 和 `closed` 的合法流转。
 10. **分层记忆**：SQL `SessionMemory` 保存持久化对话历史，Redis 作为可选短期快速存储，不可用时回退到 SQL。
 11. **可观测性**：使用 OpenTelemetry 统一采集 Trace 与 Metrics；Collector 将 Trace 转发 LangSmith，并通过 Prometheus exporter 提供指标，由 Grafana 展示。
@@ -53,7 +53,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
 | 短期记忆 | Redis | 可选的会话历史快速存储，失败时不影响 SQL 持久化 |
 | RAG | ChromaDB、Embedding、Hybrid RAG | 知识库分块、版本/类别过滤、向量与词法混合召回、rerank |
-| 安全 | JWT、RBAC、Prompt Guardrails | API 鉴权、工具权限、PII 脱敏、Prompt Injection / Jailbreak 检测和输出过滤 |
+| 安全 | JWT、RBAC、Prompt Guardrails、Risk Engine | API 鉴权、工具权限、PII 脱敏、多层直接/间接 Prompt Injection 检测、Jailbreak、输出过滤和统一风险分级 |
 | 评测 | RAGAS、DeepEval、本地启发式指标 | Faithfulness、Context Precision / Recall、Answer Relevance 和 Hallucination Rate |
 | 可观测 | LangSmith、OpenTelemetry、Prometheus、Grafana | OTel 统一采集 Trace 与 Metrics；Collector 转发 Trace 并导出 Prometheus 指标 |
 | 交付 | Docker、Docker Compose、Kubernetes manifests | 本地组件编排和部署模板 |
@@ -76,7 +76,7 @@ FastAPI
   |      |-- Retriever --> ChromaDB Hybrid RAG
   |      |-- Resolver --> BaseLLMProvider --> Mock / OpenAI / Azure OpenAI
   |      |-- QA --> LLM QA + Response Filter
-  |      `-- Escalation --> Human-in-the-Loop
+  |      `-- Risk Engine --> Escalation --> Human-in-the-Loop
   |
   +--> SQLAlchemy Async --> SQLite / PostgreSQL
   |      |-- User
@@ -103,10 +103,11 @@ Observability
 LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为：
 
 - 请求标识：`ticket_id`、`customer_id`、`subject`、`description`、`kb_version`。
-- 分析结果：`sentiment`、`priority`、`intent`、`department`。
+- 分析结果：`sentiment`、`priority`、`intent`、`department`、`analyzer_confidence`。
 - 权限与工具：`operator_role`、`tool_context`、`tool_calls`。
 - RAG 与回复：`context_citations`、`suggested_response`。
-- 质量与风险：`qa_score`、`hallucination_detected`、`errors`。
+- 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
+- 质量结果：`qa_score`、`hallucination_detected`、`errors`。
 - 闭环决策：`escalation_recommended`、`escalation_reason`、`approval_required`。
 - 成本与延迟：`tokens_input`、`tokens_output`、`cost_usd`、`latency_seconds`。
 
@@ -120,23 +121,27 @@ analyzer
   |      `--> escalation --> END
   |
   `-- 正常请求
-         `--> tooling --> retriever --> resolver --> qa --> escalation --> END
+         `--> tooling --工具注入--> escalation --> END
+                    `--> retriever --文档注入--> escalation --> END
+                                  `--> resolver --> qa --> escalation --> END
 ```
 
 ### 节点职责
 
 1. **Analyzer**
-   - 先检测 Prompt Injection 和 Jailbreak。
+   - 先执行多层 Prompt Injection 和 Jailbreak 检测。
    - 命中安全风险时写入 `errors`，设置紧急优先级和拒绝回复，不执行后续 Tooling、RAG、Resolver 和 QA。
    - 正常请求先对 PII 脱敏，再调用 LLM 分析情绪、优先级、部门和意图。
 2. **Tooling**
    - 始终查询客户画像和历史工单。
    - 只在 billing、shipping 或相关意图下查询订单历史。
    - 所有调用必须经过 ToolRegistry，Agent 不能直接调用 Mock Adapter。
+   - 工具返回在写入 Tool Context 前扫描间接 Prompt Injection；命中后保留调用审计，但清空工具上下文并短路。
 3. **Retriever**
    - 用工单主题和描述构造 Query，默认返回 Top 3 citation。
    - 强制带 `kb_version`，并优先按 `department` 过滤类别。
    - 类别过滤无结果时，保留版本过滤并放宽类别再检索一次。
+   - citation 在交给 Resolver 前扫描间接 Prompt Injection；命中后清空 citation 并短路。
 4. **Resolver**
    - 将 citation 格式化为 Knowledge Base Context。
    - 将 `tool_context` 序列化为 Structured Tool Context。
@@ -146,8 +151,9 @@ analyzer
    - 通过 Response Filter 删除内部指令或工作流泄露；命中时将 QA 分数降为 `0.5` 并标记幻觉。
 6. **Escalation**
    - 按优先级计算 SLA：urgent `2h`、high `12h`、medium `24h`、low `48h`。
-   - 以下任一条件命中时建议升级：安全违规、urgent、negative + high、`qa_score < 0.8`、检测到幻觉。
-   - 工作流结束后，只要建议升级或 `qa_score < 0.8`，就设置 `approval_required = true`。
+   - 调用独立 Risk Engine 综合安全威胁、优先级、情绪、业务意图、Analyzer 置信度、QA、幻觉和 Workflow 错误。
+   - 默认风险等级阈值为 `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；`high` / `critical` 要求人工处理。
+   - 工作流结束后，建议升级、`qa_score < 0.8` 或 `risk_requires_human = true` 任一命中，就设置 `approval_required = true`。
 
 ### 工单状态闭环
 
@@ -173,6 +179,7 @@ resolved / closed --reopen--> in_progress
 | Mock Adapter | `src/tools/crm.py`、`order_mgmt.py`、`ticketing.py` | 模拟 CRM、OMS 和历史工单系统 |
 | LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure |
 | Guardrails | `src/guardrails/` | PII 脱敏、Prompt Injection、Jailbreak 和 Response Filter |
+| Risk Engine | `src/risk/engine.py` | 统一综合安全、业务、置信度、QA 和异常信号，输出风险等级与处置建议 |
 | RAG | `src/rag/` | 文档解析、分块、Embedding、版本管理、Hybrid Retrieval 和 citation |
 | 记忆 | `src/memory/redis_memory.py` | Redis 可选会话历史存储与降级 |
 | 审批 | `src/approval/workflows.py` | 创建待审批记录，处理通过、修改、拒绝和审批延迟 |
@@ -190,11 +197,11 @@ resolved / closed --reopen--> in_progress
 2. API 为当次消息新建 `Ticket(status="open")` 并写入 SQL。
 3. API 查询或创建 `SessionMemory`，优先从 Redis 读取历史；Redis 无数据或不可用时使用 SQL 历史。
 4. API 以当前工单信息构造 `AgentState`并调用 `run_agent_workflow()`。
-5. Analyzer 进行安全检测、PII 脱敏和工单分类。
-6. Tooling 通过 ToolRegistry 补充客户、订单和历史工单上下文。
-7. Retriever 按知识库版本和部门检索 citation。
+5. Analyzer 进行输入多层安全检测、PII 脱敏、工单分类和初始风险评估。
+6. Tooling 通过 ToolRegistry 补充客户、订单和历史工单上下文，并扫描工具结果的间接注入。
+7. Retriever 按知识库版本和部门检索 citation，并在生成前扫描 RAG 文档的间接注入。
 8. Resolver 合并 Knowledge Base Context 和 Structured Tool Context 生成回复草稿。
-9. QA 校验草稿，Escalation 计算 SLA 并决定是否升级。
+9. QA 校验草稿，Risk Engine 更新输出风险，Escalation 计算 SLA 并决定是否升级。
 10. API 回写工单的情绪、优先级、部门和 SLA。
 11. 如果 `approval_required = true`，创建 `ResponseApproval(status="pending")`，并通过状态机将工单转为 `pending_approval`。
 12. API 将当前用户消息和 AI 回复写入 SQL 与可选 Redis，然后返回回复、`tool_context`、`tool_calls`、`citations`、升级原因、审批 ID 和成本元数据。
@@ -297,6 +304,8 @@ resolved / closed --reopen--> in_progress
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent 指标并关联 Trace ID。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
+- Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
+- 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。
 - MVP 主链路已实测通过：FastAPI `/health` -> LangGraph Workflow -> Ticket / AgentRun 持久化 -> 用户评价 -> FeedbackEvent 持久化。
 - 覆盖 Agent、API、Auth、Guardrails、RAG、Evaluation、Observability、Tool Registry 和工单状态机的 pytest 测试模块。
 
@@ -309,12 +318,13 @@ resolved / closed --reopen--> in_progress
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
+- **安全治理**：已有确定性多层检测与可配置 Risk Engine，但尚无训练型安全分类器、策略版本、持久化安全事件和真实数据阈值校准。
 
 ### 已知环境限制
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在全新 Python 3.12 隔离环境中 `pip check` 通过，全量测试 `60 passed`，CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `86 passed`，CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划
@@ -370,7 +380,7 @@ resolved / closed --reopen--> in_progress
 1. 不得将 Mock CRM、OMS、Ticketing、Refund 或默认 Mock LLM 写成真实企业接入。
 2. 所有业务工具必须经过 ToolRegistry，不得在 Agent 中直接调用 Adapter。
 3. 工单状态只能通过 TicketStateMachine 流转，不得直接赋值 `ticket.status`。
-4. 不得移除 Analyzer 后的安全短路路由。
+4. 不得移除 Analyzer、Tooling 和 Retriever 后的安全短路路由。
 5. Redis 必须保持可选，本地 Demo 不得因 Redis 未启动而失败。
 6. 默认 LLM Provider 必须保持 Mock，以便无 API Key 运行和测试。
 7. API 中面向 Demo 和审计的 `tool_context`、`tool_calls`、`citations`、`approval_required`、`approval_id` 和 `cost_metadata` 不得无理由删除。

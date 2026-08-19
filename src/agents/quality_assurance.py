@@ -8,6 +8,7 @@ from src.observability.metrics import (
     AGENT_EXECUTION_DURATION_SECONDS,
     QA_SCORE_HISTOGRAM,
 )
+from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.quality_assurance")
 
@@ -66,7 +67,7 @@ class QualityAssuranceAgent:
                 duration, {"agent_name": "quality_assurance"}
             )
 
-            return {
+            next_state = {
                 **state,
                 "suggested_response": filtered_response_text,
                 "qa_score": qa_score,
@@ -78,15 +79,19 @@ class QualityAssuranceAgent:
                     else []
                 ),
             }
+            assessment = risk_engine.assess(next_state, stage="output")
+            return {**next_state, **assessment.state_updates()}
 
         except Exception as e:
             logger.error(f"Error executing QA evaluation in QA agent: {e}")
-            return {
+            next_state = {
                 **state,
                 "qa_score": 0.5,
                 "hallucination_detected": True,
                 "errors": state.get("errors", []) + [f"QA agent error: {str(e)}"],
             }
+            assessment = risk_engine.assess(next_state, stage="output")
+            return {**next_state, **assessment.state_updates()}
 
 
 quality_assurance_agent = QualityAssuranceAgent()

@@ -33,6 +33,10 @@ async def test_copilot_service_routes(client: AsyncClient):
     assert data["session_id"] == "sess_test"
     assert data["sentiment"] == "negative"
     assert data["priority"] == "high"
+    assert data["analyzer_confidence"] == 0.95
+    assert data["risk_level"] in {"high", "critical"}
+    assert data["risk_score"] >= 0.7
+    assert "high_risk_business_intent" in data["risk_reasons"]
     assert "response" in data
     # High-priority / billing triggers Human-In-The-Loop approval requirement
     assert data["approval_required"] is True

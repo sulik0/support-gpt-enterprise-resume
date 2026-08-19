@@ -40,6 +40,15 @@ class AgentState(TypedDict):
     priority: str
     intent: str
     department: str
+    analyzer_confidence: float
+    security_threat_detected: bool
+    security_risk_score: float
+    security_findings: List[str]
+    risk_level: str
+    risk_score: float
+    risk_reasons: List[str]
+    risk_requires_human: bool
+    risk_block_automation: bool
     operator_role: str
     tool_context: Dict[str, Any]
     tool_calls: List[Dict[str, Any]]
@@ -100,6 +109,8 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
                 "ticket_id": result.get("ticket_id"),
                 "intent": result.get("intent"),
                 "priority": result.get("priority"),
+                "risk_level": result.get("risk_level"),
+                "risk_score": result.get("risk_score"),
             },
         )
         return result
@@ -109,14 +120,14 @@ async def retrieve_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(
         tracer, "agent.retriever", _trace_attrs(state, node="retriever")
     ):
-        result = await _run_node(
-            "retriever", knowledge_retriever_agent.retrieve, state
-        )
+        result = await _run_node("retriever", knowledge_retriever_agent.retrieve, state)
         logger.info(
             "retriever completed",
             extra={
                 "ticket_id": result.get("ticket_id"),
                 "citations": len(result.get("context_citations", [])),
+                "risk_level": result.get("risk_level"),
+                "risk_score": result.get("risk_score"),
             },
         )
         return result
@@ -134,6 +145,8 @@ async def tooling_node(state: AgentState) -> Dict[str, Any]:
                     call.get("tool_name", "unknown") for call in tool_calls
                 ),
                 "tool_count": len(tool_calls),
+                "risk_level": result.get("risk_level"),
+                "risk_score": result.get("risk_score"),
             },
         )
         return result
@@ -160,9 +173,9 @@ async def qa_node(state: AgentState) -> Dict[str, Any]:
             extra={
                 "ticket_id": result.get("ticket_id"),
                 "score": result.get("qa_score"),
-                "hallucination_detected": result.get(
-                    "hallucination_detected", False
-                ),
+                "hallucination_detected": result.get("hallucination_detected", False),
+                "risk_level": result.get("risk_level"),
+                "risk_score": result.get("risk_score"),
             },
         )
         return result
@@ -178,6 +191,8 @@ async def escalate_node(state: AgentState) -> Dict[str, Any]:
             extra={
                 "ticket_id": result.get("ticket_id"),
                 "required": result.get("escalation_recommended", False),
+                "risk_level": result.get("risk_level"),
+                "risk_score": result.get("risk_score"),
             },
         )
         return result
@@ -192,14 +207,41 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "ticket.department": state.get("department"),
         "ticket.priority": state.get("priority"),
         "operator.role": state.get("operator_role"),
+        "risk.level": state.get("risk_level"),
+        "risk.score": state.get("risk_score"),
+        "risk.requires_human": state.get("risk_requires_human"),
+        "security.threat_detected": state.get("security_threat_detected"),
     }
 
 
+def _is_automation_blocked(state: AgentState) -> bool:
+    """对安全威胁使用统一的自动化阻断条件。"""
+    return (
+        bool(state.get("risk_block_automation"))
+        or bool(state.get("security_threat_detected"))
+        or "Security threat" in "".join(state.get("errors", []))
+    )
+
+
 def route_after_analyzer(state: AgentState) -> str:
-    """Route security-blocked tickets directly to escalation."""
-    if "Security threat" in "".join(state.get("errors", [])):
+    """输入安全检查失败时直接进入人工升级。"""
+    if _is_automation_blocked(state):
         return "escalation"
     return "tooling"
+
+
+def route_after_tooling(state: AgentState) -> str:
+    """Tool 结果受污染时不再进入 RAG 和生成节点。"""
+    if _is_automation_blocked(state):
+        return "escalation"
+    return "retriever"
+
+
+def route_after_retriever(state: AgentState) -> str:
+    """RAG 文档受污染时不将内容交给生成模型。"""
+    if _is_automation_blocked(state):
+        return "escalation"
+    return "resolver"
 
 
 def create_agent_graph() -> StateGraph:
@@ -224,8 +266,22 @@ def create_agent_graph() -> StateGraph:
             "escalation": "escalation",
         },
     )
-    workflow.add_edge("tooling", "retriever")
-    workflow.add_edge("retriever", "resolver")
+    workflow.add_conditional_edges(
+        "tooling",
+        route_after_tooling,
+        {
+            "retriever": "retriever",
+            "escalation": "escalation",
+        },
+    )
+    workflow.add_conditional_edges(
+        "retriever",
+        route_after_retriever,
+        {
+            "resolver": "resolver",
+            "escalation": "escalation",
+        },
+    )
     workflow.add_edge("resolver", "qa")
     workflow.add_edge("qa", "escalation")
     workflow.add_edge("escalation", END)
@@ -257,6 +313,15 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "priority": "medium",
         "intent": "general",
         "department": "general",
+        "analyzer_confidence": 1.0,
+        "security_threat_detected": False,
+        "security_risk_score": 0.0,
+        "security_findings": [],
+        "risk_level": "low",
+        "risk_score": 0.0,
+        "risk_reasons": [],
+        "risk_requires_human": False,
+        "risk_block_automation": False,
         "operator_role": initial_state.get("operator_role", "agent"),
         "tool_context": {},
         "tool_calls": [],
@@ -312,13 +377,19 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "agent.escalation_recommended": final_output.get(
             "escalation_recommended", False
         ),
+        "risk.level": final_output.get("risk_level", "low"),
+        "risk.score": final_output.get("risk_score", 0.0),
+        "risk.requires_human": final_output.get("risk_requires_human", False),
+        "risk.block_automation": final_output.get("risk_block_automation", False),
+        "security.threat_detected": final_output.get("security_threat_detected", False),
     }
 
     # Determine if human approval is required
     # Escalation needed or low QA score triggers approval
     if (
         final_output.get("escalation_recommended")
-        or final_output.get("qa_score", 1.0) < 0.8
+        or final_output.get("qa_score", 1.0) < settings.RISK_QA_SCORE_THRESHOLD
+        or final_output.get("risk_requires_human", False)
     ):
         final_output["approval_required"] = True
         span_attrs["agent.approval_required"] = True

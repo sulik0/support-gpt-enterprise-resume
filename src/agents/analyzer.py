@@ -4,12 +4,14 @@ from typing import Dict, Any
 
 from src.llm.provider import llm_provider
 from src.guardrails.pii_detection import anonymize_pii
-from src.guardrails.prompt_injection import detect_prompt_injection
+from src.guardrails.prompt_injection import analyze_prompt_injection
 from src.guardrails.jailbreak_detection import detect_jailbreak
+from src.guardrails.security_policy import build_security_block
 from src.observability.metrics import (
     AGENT_EXECUTION_DURATION_SECONDS,
     TICKET_SENTIMENT_TOTAL,
 )
+from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.analyzer")
 
@@ -28,33 +30,35 @@ class TicketAnalyzerAgent:
         subject = state.get("subject", "")
         combined_text = f"Subject: {subject}\nDescription: {original_text}"
 
-        # 1. Security Check: Prompt Injection
-        if detect_prompt_injection(combined_text):
-            logger.warning("Prompt injection detected by guardrails.")
-            return {
-                **state,
-                "errors": state.get("errors", [])
-                + ["Security threat: Prompt injection attempt detected."],
-                "sentiment": "negative",
-                "priority": "urgent",
-                "escalation_recommended": True,
-                "escalation_reason": "Security violation block",
-                "suggested_response": "I cannot fulfill this request due to system security constraints.",
-            }
+        # 1. 使用多层检测阻断直接 Prompt Injection。
+        injection = analyze_prompt_injection(combined_text, source="user_input")
+        if injection.detected:
+            logger.warning(
+                "Prompt injection detected by layered guardrails",
+                extra={
+                    "ticket_id": state.get("ticket_id"),
+                    "risk_score": injection.risk_score,
+                    "security_source": injection.source,
+                },
+            )
+            return build_security_block(
+                state,
+                threat_type="Prompt injection attempt",
+                source=injection.source,
+                risk_score=injection.risk_score,
+                findings=[*injection.layers, *injection.signals],
+            )
 
         # 2. Security Check: Jailbreak Detection
         if detect_jailbreak(combined_text):
             logger.warning("Jailbreak pattern detected by guardrails.")
-            return {
-                **state,
-                "errors": state.get("errors", [])
-                + ["Security threat: Jailbreak vector detected."],
-                "sentiment": "negative",
-                "priority": "urgent",
-                "escalation_recommended": True,
-                "escalation_reason": "Security violation block",
-                "suggested_response": "I cannot fulfill this request due to system security constraints.",
-            }
+            return build_security_block(
+                state,
+                threat_type="Jailbreak vector",
+                source="user_input",
+                risk_score=0.95,
+                findings=["jailbreak_signature"],
+            )
 
         # 3. Privacy Scrubbing: Anonymize PII
         clean_description = anonymize_pii(original_text)
@@ -81,7 +85,7 @@ class TicketAnalyzerAgent:
                 duration, {"agent_name": "ticket_analyzer"}
             )
 
-            return {
+            next_state = {
                 **state,
                 "description": clean_description,
                 "subject": clean_subject,
@@ -89,17 +93,33 @@ class TicketAnalyzerAgent:
                 "priority": analysis.get("priority", "medium"),
                 "intent": analysis.get("intent", "general_query"),
                 "department": analysis.get("department", "general"),
+                "analyzer_confidence": self._confidence(
+                    analysis.get("confidence_score", 0.0)
+                ),
                 "errors": state.get("errors", []),
             }
+            assessment = risk_engine.assess(next_state, stage="input")
+            return {**next_state, **assessment.state_updates()}
         except Exception as e:
             logger.error(f"Error executing LLM ticket analysis: {e}")
-            return {
+            next_state = {
                 **state,
                 "errors": state.get("errors", []) + [f"Analyzer agent error: {str(e)}"],
                 "sentiment": "neutral",
                 "priority": "medium",
                 "department": "general",
+                "analyzer_confidence": 0.0,
             }
+            assessment = risk_engine.assess(next_state, stage="input")
+            return {**next_state, **assessment.state_updates()}
+
+    @staticmethod
+    def _confidence(value: Any) -> float:
+        """将 LLM 分类置信度约束在 0 到 1。"""
+        try:
+            return min(max(float(value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return 0.0
 
 
 ticket_analyzer_agent = TicketAnalyzerAgent()

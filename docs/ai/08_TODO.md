@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-08-12。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-08-19。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -14,6 +14,10 @@
 - [x] 跑通 FastAPI `/health` -> Workflow -> Ticket / AgentRun -> FeedbackEvent 的 MVP 持久化链路。
 - [x] 修复 LangGraph State 缺少 `sla_hours` 导致的 Workflow 运行失败。
 - [x] 固定核心 LangChain / LangGraph / ChromaDB 兼容版本，并使用版本化 ChromaDB 本地目录。
+- [x] 将 Prompt Injection 升级为规范化、中英特征、组合启发式、角色提权和 Base64 载荷组合的多层检测。
+- [x] 在客户输入、Tool 返回和 RAG 文档三类信任边界检查直接/间接 Prompt Injection。
+- [x] 建立独立 Risk Engine，统一输出风险等级、分数、原因、人工与自动化处置建议。
+- [x] 将 Risk Engine 结果接入 LangGraph 路由、QA、Escalation、API、结构化日志、OpenTelemetry Trace 与 Metrics。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -24,6 +28,8 @@
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
 - [ ] 增加 Prompt Registry、内容快照、灰度和回滚门禁。
 - [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
+- [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
+- [ ] 评估专用训练的 Prompt Injection 分类器，与当前确定性检测形成可降级组合。
 
 ## P2
 
@@ -34,9 +40,11 @@
 
 ## 已知问题与风险
 
-- [x] 在新 Python 3.12 隔离环境完成 `pip check` 和 60 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 在 Python 3.12 环境完成 86 条全量测试；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
 - [ ] 反馈 Token 目前随 Agent 响应返回，前端仍需安全保存并只在评价提交时使用。
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。
+- [ ] 当前 Prompt Injection 是确定性多层检测，对未知语义变体的覆盖率仍需通过持续红队样本验证。
+- [ ] Risk Engine 阈值尚未基于真实客服运营数据校准，当前采用保守的 high / critical 转人工策略。

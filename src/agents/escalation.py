@@ -2,10 +2,14 @@ import time
 import logging
 from typing import Dict, Any
 
+from src.config import settings
 from src.observability.metrics import (
     AGENT_EXECUTION_DURATION_SECONDS,
+    RISK_ASSESSMENTS_TOTAL,
+    RISK_SCORE_HISTOGRAM,
     TICKET_ESCALATIONS_TOTAL,
 )
+from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.escalation")
 
@@ -28,6 +32,7 @@ class EscalationAgent:
         hallucination_detected = state.get("hallucination_detected", False)
         department = state.get("department", "general")
         errors = state.get("errors", [])
+        assessment = risk_engine.assess(state, stage="final")
 
         # 1. Map SLA window based on ticket priority
         sla_hours = 24.0  # default medium
@@ -53,11 +58,32 @@ class EscalationAgent:
         elif sentiment == "negative" and priority == "high":
             escalate = True
             reason = "Negative customer sentiment combined with high priority."
-        elif qa_score < 0.8 or hallucination_detected:
+        elif "qa_score_below_threshold" in assessment.reasons or hallucination_detected:
             escalate = True
-            reason = f"AI quality assurance score ({qa_score}) below threshold (0.8) or hallucination detected."
+            reason = (
+                f"AI quality assurance score ({qa_score}) below threshold "
+                f"({settings.RISK_QA_SCORE_THRESHOLD}) or hallucination detected."
+            )
+        elif assessment.requires_human:
+            escalate = True
+            reasons = ", ".join(assessment.reasons) or "policy threshold"
+            reason = f"Risk Engine classified ticket as {assessment.level}: {reasons}."
 
         # 3. Handle telemetry updates
+        try:
+            RISK_ASSESSMENTS_TOTAL.add(
+                1,
+                {
+                    "level": assessment.level,
+                    "requires_human": str(assessment.requires_human).lower(),
+                },
+            )
+            RISK_SCORE_HISTOGRAM.record(
+                assessment.score,
+                {"stage": "final", "level": assessment.level},
+            )
+        except Exception:
+            logger.debug("Unable to record Risk Engine metrics")
         if escalate:
             TICKET_ESCALATIONS_TOTAL.add(
                 1, {"department": department, "priority": priority}
@@ -71,6 +97,7 @@ class EscalationAgent:
 
         return {
             **state,
+            **assessment.state_updates(),
             "escalation_recommended": escalate,
             "escalation_reason": reason if escalate else None,
             "sla_hours": sla_hours,
