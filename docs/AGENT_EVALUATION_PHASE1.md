@@ -42,14 +42,14 @@ Golden dataset 位于 `evaluation/golden/support_qa_golden.json`，当前用例�
 
 每条用例包含 `query`、`reference_answer`、`expected_sources`、`category`、`risk_level` 和 `kb_version`。
 
-Baseline dataset 位于 `evaluation/baseline/supportgpt_baseline_30.json`，包含 30 条业务回归样本，覆盖退款、订单、账户、API 故障、信息不足、RAG、Tool Calling、人工升级和 Prompt Injection。每条 Baseline 还可以通过 `customer_id` 绑定现有 Mock CRM/OMS/工单数据，并使用 `tags` 统计覆盖面。
+Baseline dataset 位于 `evaluation/baseline/supportgpt_baseline_100.json`，包含 100 条业务回归样本，覆盖退款、订单、账户、API 故障、信息不足、RAG、Tool Calling、人工升级、多语言、Prompt Injection、Jailbreak 和安全 hard negative。每条 Baseline 还可以通过 `customer_id` 绑定现有 Mock CRM/OMS/工单数据，并使用 `tags` 统计覆盖面。
 
 ```bash
 LLM_PROVIDER=mock \
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT= \
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT= \
 python scripts/run_agent_eval.py \
-  --dataset evaluation/baseline/supportgpt_baseline_30.json \
+  --dataset evaluation/baseline/supportgpt_baseline_100.json \
   --rag-engine local \
   --agent-engine local
 ```
@@ -65,7 +65,7 @@ Security Evaluation 是独立的确定性指标引擎，不使用 LLM Judge。�
 - 分组指标：按 `user_input` / `tool_result` / `rag_document` 信任边界和攻击类型统计检测 Recall。
 - 用例结果：每条用例记录检测分类、通过状态、处置检查、失败原因和 OpenTelemetry Trace ID。
 
-普通退款或投诉因业务风险转人工，不会被计为安全检测命中。Baseline 30 现有 4 条攻击样本与 26 条正常业务样本，可直接输出首个可回归的安全混淆矩阵。
+普通退款或投诉因业务风险转人工，不会被计为安全检测命中。Baseline 100 现有 14 条攻击样本与 86 条非攻击样本，其中包含 6 条安全语义 hard negative，用于同时评估攻击召回和误报。
 
 ## 正式 Ragas 评测
 

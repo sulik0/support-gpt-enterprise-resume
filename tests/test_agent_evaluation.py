@@ -17,7 +17,7 @@ from src.observability.sanitization import sanitize_value
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = PROJECT_ROOT / "evaluation" / "golden" / "support_qa_golden.json"
 BASELINE_DATASET_PATH = (
-    PROJECT_ROOT / "evaluation" / "baseline" / "supportgpt_baseline_30.json"
+    PROJECT_ROOT / "evaluation" / "baseline" / "supportgpt_baseline_100.json"
 )
 
 
@@ -31,7 +31,7 @@ def test_golden_dataset_is_valid_and_unique():
     assert all(case.agent_expectations for case in cases)
 
 
-def test_baseline_dataset_has_30_cases_and_required_coverage():
+def test_baseline_dataset_has_100_cases_and_required_coverage():
     payload = json.loads(BASELINE_DATASET_PATH.read_text(encoding="utf-8"))
     cases = load_evaluation_dataset(BASELINE_DATASET_PATH)
 
@@ -45,17 +45,21 @@ def test_baseline_dataset_has_30_cases_and_required_coverage():
         "tool_calling",
         "human_escalation",
         "prompt_injection",
+        "jailbreak",
+        "security_benign",
+        "multilingual",
     }
     actual_tags = {tag for case in cases for tag in case.tags}
     tag_counts = Counter(tag for case in cases for tag in case.tags)
 
-    assert len(cases) == 30
-    assert len({case.id for case in cases}) == 30
+    assert len(cases) == 100
+    assert len({case.id for case in cases}) == 100
     assert required_tags <= actual_tags
+    assert set(payload["coverage"]) == required_tags
     assert payload["coverage"] == {tag: tag_counts[tag] for tag in payload["coverage"]}
     assert all(case.agent_expectations for case in cases)
     security_labels = [SecurityExpectations.from_case(case) for case in cases]
-    assert sum(label.expected_attack for label in security_labels) == 4
+    assert sum(label.expected_attack for label in security_labels) == 14
     assert {
         label.attack_type for label in security_labels if label.expected_attack
     } == {

@@ -282,7 +282,7 @@ resolved / closed --reopen--> in_progress
 
 ### 评测边界
 
-- 当前有 13 条 Synthetic Golden Dataset，但仍未达到规划的 30–50 条规模。
+- 当前有 13 条 Synthetic Golden Dataset，另有 100 条 Workflow Replay Baseline；Golden Dataset 本身仍需继续扩充和人工复核。
 - Synthetic 参考答案不是经真实客服专家审核的生产标准答案。
 - 本地启发式指标适合验证评测链路和做基础回归，不能代表生产环境真实准确率。
 - 在完成人工标注、稳定基线和真实环境校准前，不得将本项目表述为已有生产质量结论。
@@ -314,7 +314,7 @@ resolved / closed --reopen--> in_progress
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
 - **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
-- **评测**：已具备 Golden Dataset、Workflow Replay 和统一报告，但样本规模、人工标注与稳定回归基线仍需继续扩充。
+- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline 和统一报告，但人工标注、质量阈值和 CI Quality Gate 仍需继续建设。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
@@ -339,7 +339,7 @@ resolved / closed --reopen--> in_progress
 
 ### P1：扩充 Golden Set 与回归基线
 
-- 构造 30–50 条 Synthetic Customer Support 样本，覆盖退款、保修、物流、订单取消、账户和技术支持。
+- 继续扩充并人工复核 Synthetic Golden Dataset，将保修、物流和订单取消等尚未入库政策与现有 100 条 Baseline 分开治理。
 - 每条样本包含 Query、Expected Answer Points、Expected Sources、Risk Level 和 Category。
 - 输出 citation hit rate、Context Recall、Answer Relevance、Faithfulness Proxy 和 Hallucination Risk。
 - 生成稳定的 JSON + Markdown 报告，用于知识库和 Prompt 变更的回归比较。

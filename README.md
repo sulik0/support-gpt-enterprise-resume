@@ -142,7 +142,7 @@ python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 
 统一 JSON / Markdown 报告还会输出安全专项指标，包括 Prompt Injection 检测的
 Precision、Recall、F1、误报率，以及自动化阻断、安全短路、上下文隔离、人工介入和
-critical 风险处置正确率。Baseline 30 中的攻击与正常业务样本共同构成混淆矩阵。
+critical 风险处置正确率。Baseline 100 中的 14 条攻击与 86 条非攻击样本共同构成混淆矩阵。
 
 ### Feedback Pipeline
 
