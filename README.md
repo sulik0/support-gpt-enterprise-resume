@@ -144,6 +144,15 @@ python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 Precision、Recall、F1、误报率，以及自动化阻断、安全短路、上下文隔离、人工介入和
 critical 风险处置正确率。Baseline 100 中的 14 条攻击与 86 条非攻击样本共同构成混淆矩阵。
 
+真实 LLM 回归使用独立的成本保护入口；建议先 Dry Run 核对模型与调用预算：
+
+```bash
+python scripts/run_real_llm_regression.py --suite smoke --dry-run
+python scripts/run_real_llm_regression.py --suite smoke --confirm-live
+```
+
+Mock Provider、缺少密钥、示例模型名和超出调用上限都会在第一次模型请求前失败。报告记录 Provider、Model、Endpoint Host、Token、估算成本和 Workflow 延迟，不记录 API Key。
+
 ### Feedback Pipeline
 
 `/chat` 和 `/suggest-response` 返回 `agent_run_id`。用户评分、人工审批修正和质量评测可据此关联 OpenTelemetry Trace、Prompt / Workflow / Model 版本与执行快照。

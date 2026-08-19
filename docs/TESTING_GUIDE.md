@@ -95,6 +95,15 @@ python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 
 无 API key 时可以使用 `python scripts/run_agent_eval.py --rag-engine local --agent-engine local` 验证 Pipeline 和统一报告生成，但 local proxy 分数不等于 Ragas 或 DeepEval 分数。完整设计参见 [第一阶段 Agent Evaluation](AGENT_EVALUATION_PHASE1.md)。
 
+真实 LLM Workflow 回归需先配置 `LLM_PROVIDER` 及对应的模型和密钥，然后先运行 Dry Run：
+
+```bash
+python scripts/run_real_llm_regression.py --suite smoke --dry-run
+python scripts/run_real_llm_regression.py --suite smoke --confirm-live
+```
+
+Dry Run 只校验配置、用例和调用预算，不初始化 Agent，不发送网络请求。
+
 ### 旧版单条评估入口
 
 评估模块支持两种模式：

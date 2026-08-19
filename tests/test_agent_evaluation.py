@@ -161,6 +161,10 @@ async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
             ],
             "escalation_recommended": True,
             "approval_required": True,
+            "tokens_input": 320,
+            "tokens_output": 90,
+            "cost_usd": 0.0123,
+            "latency_seconds": 1.25,
             "errors": [],
         }
 
@@ -169,6 +173,11 @@ async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
         tmp_path,
         engine="local",
         limit=1,
+        execution_metadata={
+            "mode": "real_llm_regression",
+            "llm_provider": "openai",
+            "llm_model": "test-model",
+        },
         workflow_runner=fake_workflow,
     )
 
@@ -181,6 +190,19 @@ async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
         "security": "deterministic",
     }
     assert report["case_count"] == 1
+    assert report["execution"] == {
+        "mode": "real_llm_regression",
+        "llm_provider": "openai",
+        "llm_model": "test-model",
+        "usage": {
+            "tokens_input": 320,
+            "tokens_output": 90,
+            "tokens_total": 410,
+            "cost_usd": 0.0123,
+            "workflow_latency_seconds": 1.25,
+            "average_workflow_latency_seconds": 1.25,
+        },
+    }
     assert set(report["rag_evaluation"]["aggregates"]) == {
         "faithfulness",
         "answer_relevancy",
@@ -197,6 +219,8 @@ async def test_offline_evaluation_writes_unified_report(tmp_path, monkeypatch):
     assert "agent_run_id" in report["cases"][0]
     assert "RAG + Agent + Security Evaluation 统一评测报告" in markdown
     assert "False Positive Rate" in markdown
+    assert "test-model" in markdown
+    assert "410" in markdown
     assert "OTel Trace ID" in markdown
 
 

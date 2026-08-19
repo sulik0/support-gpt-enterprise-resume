@@ -16,6 +16,7 @@ supportgpt.db
 *.db
 evaluation/training_candidates/
 evaluation/reports/report_*.json
+evaluation/reports/real_llm/
 
 # Node / React Frontend
 node_modules/

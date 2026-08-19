@@ -247,6 +247,8 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 当前有 13 条 Synthetic Golden Dataset，并有一组 100 条 Baseline Dataset，其中 14 条攻击样本和 86 条非攻击样本可形成安全混淆矩阵；非攻击样本中包含 6 条安全语义 hard negative。统一报告包含 citation hit rate、RAG 指标、Agent 行为指标、安全检测与处置指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量阈值或真实线上评测数据。无 API Key 时的本地 RAG / Agent 评测是确定性启发式降级，安全指标本身为确定性断言。
 
+项目已提供真实 LLM Regression 专用入口：`smoke` 固定选取 12 条并预计 27 次 Workflow LLM 调用，`full` 运行 100 条并预计 258 次；入口拒绝 Mock，需要显式 `--confirm-live`，并在报告中记录 Provider、Model、Endpoint Host、Token、成本和延迟。当前只能说“真实模型回归能力已实现”，因为尚未执行付费调用，不得宣称已有真实模型评分或质量结论。
+
 ## 20. Feedback Pipeline
 
 第一阶段已实现线上反馈采集和训练候选沉淀：

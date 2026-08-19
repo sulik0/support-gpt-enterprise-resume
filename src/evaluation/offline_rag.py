@@ -21,7 +21,7 @@ from src.evaluation.security_evaluation import (
     case_result_payload,
     evaluate_security_records,
 )
-from src.observability.sanitization import redact_text
+from src.observability.sanitization import redact_text, sanitize_value
 from src.observability.tracing import (
     get_current_trace_id,
     get_tracer,
@@ -312,8 +312,10 @@ def build_report(
     rag_engine: str,
     agent_engine: str,
     dataset_path: Path,
+    execution_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     security_summary, security_results = evaluate_security_records(records)
+    usage = _aggregate_workflow_usage(records)
     rag_aggregates = {
         metric: round(mean(record.metrics.get(metric, 0.0) for record in records), 4)
         for metric in METRIC_KEYS
@@ -350,6 +352,20 @@ def build_report(
                     "approval_required": record.workflow_output.get(
                         "approval_required", False
                     ),
+                    "llm_usage": {
+                        "tokens_input": _safe_int(
+                            record.workflow_output.get("tokens_input", 0)
+                        ),
+                        "tokens_output": _safe_int(
+                            record.workflow_output.get("tokens_output", 0)
+                        ),
+                        "cost_usd": _safe_float(
+                            record.workflow_output.get("cost_usd", 0.0)
+                        ),
+                        "latency_seconds": _safe_float(
+                            record.workflow_output.get("latency_seconds", 0.0)
+                        ),
+                    },
                     "errors": record.workflow_errors,
                 },
                 "rag_evaluation": {
@@ -385,6 +401,11 @@ def build_report(
         },
         "dataset": str(dataset_path),
         "case_count": len(records),
+        "execution": {
+            "mode": "offline_evaluation",
+            **sanitize_value(execution_metadata or {}),
+            "usage": usage,
+        },
         "rag_evaluation": {
             "aggregates": rag_aggregates,
             "citation_hit_rate": citation_hit_rate,
@@ -423,6 +444,8 @@ def _render_markdown(report: Dict[str, Any]) -> str:
     rag = report["rag_evaluation"]
     agent = report["agent_evaluation"]
     security = report["security_evaluation"]
+    execution = report["execution"]
+    usage = execution["usage"]
     rag_aggregates = rag["aggregates"]
     agent_aggregates = agent["aggregates"]
     lines = [
@@ -432,8 +455,16 @@ def _render_markdown(report: Dict[str, Any]) -> str:
         f"- RAG 引擎：`{report['engines']['rag']}`",
         f"- Agent 引擎：`{report['engines']['agent']}`",
         f"- Security 引擎：`{report['engines']['security']}`",
+        f"- 执行模式：`{execution['mode']}`",
+        f"- LLM Provider：`{execution.get('llm_provider', 'unspecified')}`",
+        f"- LLM Model：`{execution.get('llm_model', 'unspecified')}`",
         f"- 数据集：`{report['dataset']}`",
         f"- 用例数：`{report['case_count']}`",
+        (
+            f"- Workflow Token：`{usage['tokens_input']} input / "
+            f"{usage['tokens_output']} output`，估算成本："
+            f"`${usage['cost_usd']:.6f}`"
+        ),
         "",
         "## RAG Evaluation",
         "",
@@ -544,6 +575,49 @@ def _format_metric(value: Any) -> str:
     return "N/A" if value is None else f"{float(value):.4f}"
 
 
+def _aggregate_workflow_usage(
+    records: Sequence[EvaluationRecord],
+) -> Dict[str, Any]:
+    """汇总 Workflow 中真实或 Mock LLM 的 Token、成本和延迟。"""
+    tokens_input = sum(
+        _safe_int(record.workflow_output.get("tokens_input", 0)) for record in records
+    )
+    tokens_output = sum(
+        _safe_int(record.workflow_output.get("tokens_output", 0)) for record in records
+    )
+    cost_usd = sum(
+        _safe_float(record.workflow_output.get("cost_usd", 0.0)) for record in records
+    )
+    latency_seconds = sum(
+        _safe_float(record.workflow_output.get("latency_seconds", 0.0))
+        for record in records
+    )
+    return {
+        "tokens_input": tokens_input,
+        "tokens_output": tokens_output,
+        "tokens_total": tokens_input + tokens_output,
+        "cost_usd": round(cost_usd, 6),
+        "workflow_latency_seconds": round(latency_seconds, 4),
+        "average_workflow_latency_seconds": (
+            round(latency_seconds / len(records), 4) if records else 0.0
+        ),
+    }
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 async def run_offline_evaluation(
     dataset_path: Path,
     output_dir: Path,
@@ -552,6 +626,8 @@ async def run_offline_evaluation(
     agent_engine: str = "deepeval",
     engine: Optional[str] = None,
     limit: Optional[int] = None,
+    case_ids: Optional[Sequence[str]] = None,
+    execution_metadata: Optional[Dict[str, Any]] = None,
     workflow_runner: Optional[WorkflowRunner] = None,
 ) -> Dict[str, Path]:
     # 兼容第一阶段调用；local 会同时切换两个评测器。
@@ -560,6 +636,17 @@ async def run_offline_evaluation(
         if engine == "local":
             agent_engine = "local"
     cases = load_evaluation_dataset(dataset_path)
+    if case_ids is not None:
+        requested = list(case_ids)
+        if len(requested) != len(set(requested)):
+            raise ValueError("case_ids must not contain duplicates.")
+        case_index = {case.id: case for case in cases}
+        missing = [case_id for case_id in requested if case_id not in case_index]
+        if missing:
+            raise ValueError("Unknown evaluation case ids: " + ", ".join(missing))
+        cases = [case_index[case_id] for case_id in requested]
+        if not cases:
+            raise ValueError("case_ids must select at least one evaluation case.")
     if limit is not None:
         if limit < 1:
             raise ValueError("limit must be greater than zero.")
@@ -572,5 +659,6 @@ async def run_offline_evaluation(
         rag_engine=rag_engine,
         agent_engine=agent_engine,
         dataset_path=dataset_path,
+        execution_metadata=execution_metadata,
     )
     return write_report(report, output_dir)

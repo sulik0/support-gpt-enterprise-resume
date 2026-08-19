@@ -7,7 +7,7 @@ from src.agents.resolver import resolution_agent
 from src.agents.tooling import tooling_agent
 from src.agents.quality_assurance import quality_assurance_agent
 from src.agents.escalation import escalation_agent
-from src.agents.graph import run_agent_workflow
+from src.agents.graph import _configured_llm_model_name, run_agent_workflow
 from src.models.schemas import Citation
 from src.rag.vector_store import vector_store
 from src.tools.registry import tool_registry
@@ -135,6 +135,19 @@ async def test_escalation_agent_routing():
     }
     res_low = await escalation_agent.evaluate(state_low_score)
     assert res_low["escalation_recommended"] is True
+
+
+def test_workflow_usage_uses_configured_model_name(monkeypatch):
+    """真实 Provider 的成本与 Metrics 应按模型名归因。"""
+    monkeypatch.setattr("src.agents.graph.settings.LLM_PROVIDER", "openai")
+    monkeypatch.setattr("src.agents.graph.settings.LLM_MODEL_NAME", "qwen-plus")
+    assert _configured_llm_model_name() == "qwen-plus"
+
+    monkeypatch.setattr("src.agents.graph.settings.LLM_PROVIDER", "azure")
+    monkeypatch.setattr(
+        "src.agents.graph.settings.AZURE_OPENAI_DEPLOYMENT", "support-gpt-4"
+    )
+    assert _configured_llm_model_name() == "support-gpt-4"
 
 
 @pytest.mark.asyncio

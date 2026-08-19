@@ -56,6 +56,37 @@ python scripts/run_agent_eval.py \
 
 Baseline 中包含针对已知能力边界的期望断言，失败样本用于暴露回归或待建设能力，不应通过降低期望来换取通过率。
 
+## 真实 LLM Workflow Regression
+
+`scripts/run_real_llm_regression.py` 会强制使用 `openai` 或 `azure` Provider，拒绝 Mock 和示例配置。`openai` 是通用 OpenAI-compatible 实现，因此可用于 OpenAI、DeepSeek、Qwen 和 vLLM。
+
+先执行不会调用模型的计划检查：
+
+```bash
+python scripts/run_real_llm_regression.py --suite smoke --dry-run
+```
+
+`smoke` 套件从 Baseline 100 中固定选取 12 条分层样本，覆盖退款 v1/v2、账户、API、Tool、知识边界、中文、Prompt Injection、Jailbreak、Base64 载荷和安全正常样本。当前预计 27 次 Workflow LLM 调用：
+
+```bash
+python scripts/run_real_llm_regression.py \
+  --suite smoke \
+  --confirm-live
+```
+
+`full` 套件运行全部 100 条，预计 258 次 Workflow LLM 调用，必须显式提高上限：
+
+```bash
+python scripts/run_real_llm_regression.py \
+  --suite full \
+  --max-workflow-calls 300 \
+  --confirm-live
+```
+
+默认使用 `local` RAG / Agent 评分以避免额外 Judge 费用。需要 Ragas + DeepEval 真实评委时，另行配置 `OPENAI_API_KEY` 并增加 `--rag-engine ragas --agent-engine deepeval`；评委调用不包含在 Workflow 调用预算中。
+
+真实回归报告默认写入 `evaluation/reports/real_llm/`，包含模型来源、用例套件、Token、估算成本、Workflow 延迟和原有 RAG / Agent / Security 指标。该目录已忽略，防止带业务输入输出的报告被误提交。
+
 ## Security Evaluation
 
 Security Evaluation 是独立的确定性指标引擎，不使用 LLM Judge。它从 Dataset 的 `security_expectations` 或 `prompt_injection` / `jailbreak` 标签读取攻击真值，并根据 Workflow Replay 的实际输出计算：

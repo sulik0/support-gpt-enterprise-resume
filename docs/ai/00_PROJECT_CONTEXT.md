@@ -303,6 +303,7 @@ resolved / closed --reopen--> in_progress
 - Docker Compose、Kubernetes manifests、分层 requirements 和 Python 3.11 GitHub Actions smoke CI。
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent / Security 指标并关联 Trace ID。
+- 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，具备 Mock 拒绝、显式确认、调用预算和模型/Token/成本归因。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
 - 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。
@@ -314,7 +315,7 @@ resolved / closed --reopen--> in_progress
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
 - **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
-- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline 和统一报告，但人工标注、质量阈值和 CI Quality Gate 仍需继续建设。
+- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口和统一报告，但尚未执行并确立可长期引用的真实模型分数，人工标注、质量阈值和 CI Quality Gate 仍需继续建设。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
@@ -324,7 +325,7 @@ resolved / closed --reopen--> in_progress
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `91 passed`，CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `100 passed`，CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划

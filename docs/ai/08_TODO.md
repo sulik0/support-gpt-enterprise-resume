@@ -20,6 +20,7 @@
 - [x] 将 Risk Engine 结果接入 LangGraph 路由、QA、Escalation、API、结构化日志、OpenTelemetry Trace 与 Metrics。
 - [x] 在 Dataset + Workflow Replay 中增加安全混淆矩阵、Precision / Recall / F1 / 误报率和安全处置正确率。
 - [x] 将业务回归 Baseline 扩展到 100 条，增加多语言、安全攻击与安全 hard negative 覆盖。
+- [x] 增加真实 LLM Regression 专用入口、smoke/full 套件、Dry Run、付费确认、调用预算和 Token/成本归因。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -29,6 +30,7 @@
 - [ ] 增加 Train / Validation / Test 划分及数据泄漏检查。
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
 - [ ] 增加 Prompt Registry、内容快照、灰度和回滚门禁。
+- [ ] 在明确预算后执行首次真实 LLM smoke 回归，固定模型版本并建立质量阈值。
 - [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 评估专用训练的 Prompt Injection 分类器，与当前确定性检测形成可降级组合。

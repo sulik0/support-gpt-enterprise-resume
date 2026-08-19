@@ -215,6 +215,16 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
     }
 
 
+def _configured_llm_model_name() -> str:
+    """返回当前 Workflow 实际使用的模型或 Azure deployment 名。"""
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "openai":
+        return settings.LLM_MODEL_NAME or provider
+    if provider == "azure":
+        return settings.AZURE_OPENAI_DEPLOYMENT or provider
+    return provider
+
+
 def _is_automation_blocked(state: AgentState) -> bool:
     """对安全威胁使用统一的自动化阻断条件。"""
     return (
@@ -365,12 +375,14 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     # Compute execution costs
     tokens_in = final_output.get("tokens_input", 0)
     tokens_out = final_output.get("tokens_output", 0)
-    cost = calculate_llm_cost(settings.LLM_PROVIDER, tokens_in, tokens_out)
+    model_name = _configured_llm_model_name()
+    cost = calculate_llm_cost(model_name, tokens_in, tokens_out)
 
     final_output["cost_usd"] = cost
     final_output["latency_seconds"] = round(time.time() - start_time, 4)
     span_attrs = {
         "llm.provider": settings.LLM_PROVIDER,
+        "llm.model": model_name,
         "llm.tokens_input": tokens_in,
         "llm.tokens_output": tokens_out,
         "llm.cost_usd": cost,
@@ -402,13 +414,9 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
 
     # Record OpenTelemetry usage metrics.
     try:
-        LLM_TOKENS_TOTAL.add(
-            tokens_in, {"model": settings.LLM_PROVIDER, "type": "input"}
-        )
-        LLM_TOKENS_TOTAL.add(
-            tokens_out, {"model": settings.LLM_PROVIDER, "type": "output"}
-        )
-        LLM_COST_TOTAL.add(cost, {"model": settings.LLM_PROVIDER})
+        LLM_TOKENS_TOTAL.add(tokens_in, {"model": model_name, "type": "input"})
+        LLM_TOKENS_TOTAL.add(tokens_out, {"model": model_name, "type": "output"})
+        LLM_COST_TOTAL.add(cost, {"model": model_name})
     except Exception:
         logger.debug("Unable to record LLM usage metrics")
 
