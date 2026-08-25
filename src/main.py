@@ -1,9 +1,10 @@
-import time
 import datetime
-import uuid
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -14,7 +15,20 @@ from src.observability.logging_config import configure_logging
 
 configure_logging(settings.LOG_LEVEL)
 
-from src.database import engine, init_db, get_db
+from src.agents.graph import run_agent_workflow
+from src.approval.workflows import human_it_loop_service
+from src.auth.jwt import create_access_token, get_password_hash, verify_password
+from src.auth.rbac import (
+    get_current_user,
+    get_optional_current_user,
+    require_admin,
+    require_agent,
+    require_manager,
+)
+from src.database import engine, get_db, init_db
+from src.evaluation.framework import run_deeval_evaluation
+from src.feedback.service import feedback_service
+from src.memory.redis_memory import redis_memory
 from src.models.db_models import (
     AgentRun,
     ResponseApproval,
@@ -23,48 +37,35 @@ from src.models.db_models import (
     User,
 )
 from src.models.schemas import (
-    UserCreate,
-    UserResponse,
-    LoginRequest,
-    Token,
+    AgentRunPageResponse,
+    AgentRunResponse,
     ChatRequest,
     ChatResponse,
     Citation,
     CostMetadata,
-    TicketCreate,
-    TicketResponse,
-    TicketSummaryResponse,
-    TicketSentimentResponse,
-    TicketEscalationResponse,
-    SuggestResponseRequest,
-    SuggestResponseResponse,
     CustomerContextRequest,
     CustomerContextResponse,
-    OrderInfo,
     EvaluateResponseRequest,
     EvaluateResponseResponse,
+    FeedbackEventResponse,
+    LoginRequest,
+    OrderInfo,
     ResponseApprovalRequest,
     ResponseApprovalResponse,
+    SuggestResponseRequest,
+    SuggestResponseResponse,
+    TicketCreate,
+    TicketEscalationResponse,
+    TicketResponse,
+    TicketSentimentResponse,
+    TicketSummaryResponse,
+    Token,
+    UserCreate,
     UserFeedbackRequest,
-    FeedbackEventResponse,
-    AgentRunResponse,
+    UserResponse,
 )
-from src.auth.jwt import verify_password, get_password_hash, create_access_token
-from src.auth.rbac import (
-    get_current_user,
-    get_optional_current_user,
-    require_admin,
-    require_agent,
-    require_manager,
-)
-from src.agents.graph import run_agent_workflow
-from src.approval.workflows import human_it_loop_service
-from src.tools.crm import crm_tool
-from src.tools.ticketing import ticketing_tool
-from src.tools.order_mgmt import order_mgmt_tool
-from src.memory.redis_memory import redis_memory
-from src.tickets.state_machine import TicketAction, ticket_state_machine
 from src.observability.instrumentation import instrument_dependencies
+from src.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from src.observability.tracing import (
     bind_request_id,
     get_current_trace_id,
@@ -74,9 +75,10 @@ from src.observability.tracing import (
     reset_request_id,
     set_span_attributes,
 )
-from src.observability.metrics import HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
-from src.evaluation.framework import run_deeval_evaluation
-from src.feedback.service import feedback_service
+from src.tickets.state_machine import TicketAction, ticket_state_machine
+from src.tools.crm import crm_tool
+from src.tools.order_mgmt import order_mgmt_tool
+from src.tools.ticketing import ticketing_tool
 
 tracer = get_tracer(__name__)
 logger = logging.getLogger("supportgpt.main")
@@ -716,6 +718,23 @@ async def get_feedback_run(
 ):
     """供主管按 Agent Run 查看 Trace、版本快照和全部反馈。"""
     return await feedback_service.get_agent_run(db, agent_run_id)
+
+
+@app.get("/observability/runs", response_model=AgentRunPageResponse)
+async def list_observability_runs(
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """供主管分页查看可关联 LangSmith Trace 的 Agent Run。"""
+    runs, total = await feedback_service.list_agent_runs(db, limit=limit, offset=offset)
+    return AgentRunPageResponse(
+        items=runs,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # --- HUMAN IN THE LOOP APPROVAL APIS ---

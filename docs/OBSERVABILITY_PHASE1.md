@@ -158,3 +158,13 @@ Grafana 启动后会自动加载 `SupportGPT Agent Observability` dashboard，�
 4. 在 Collector `:8889/metrics` 或 Prometheus 查询 `agent_requests_total`、`agent_tool_calls_total` 和 `llm_tokens_total`。
 5. 在 Grafana 检查九个预置面板。
 6. 停止 Collector 后再发送客服请求，确认 Agent 仍正常返回业务结果。
+
+## LangSmith 前端入口
+
+React 工作台已提供受 RBAC 保护的“Agent 可观测性”页面。页面通过 `GET /observability/runs` 分页读取 PostgreSQL 中的低敏 Agent Run 摘要，再通过现有 `GET /feedback/runs/{agent_run_id}` 读取单次执行详情。
+
+- 列表接口仅允许 `manager/admin`，不返回输入和回复正文。
+- 详情页显示的正文来自已脱敏的 Agent Run 快照。
+- 前端通过 `VITE_LANGSMITH_PROJECT_URL` 打开 LangSmith Project，用户可复制 Trace ID 定位完整 Span。
+- LangSmith API Key 不进入浏览器，仍由 OpenTelemetry Collector 使用。
+- 本阶段不强制 iframe 嵌入，避免受 LangSmith 登录态、CSP 和 `X-Frame-Options` 限制。

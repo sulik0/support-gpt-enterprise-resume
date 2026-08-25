@@ -305,6 +305,7 @@ resolved / closed --reopen--> in_progress
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent / Security 指标并关联 Trace ID。
 - 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，具备 Mock 拒绝、显式确认、调用预算和模型/Token/成本归因。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
+- LangSmith 前端入口：主管/管理员可分页查看 Agent Run、Trace ID、Workflow Path 和执行快照，并跳转至配置的 LangSmith Project 下钻。
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
 - Qwen3Guard-Gen-0.6B 已作为独立 OpenAI-compatible 语义安全 Adapter 接入三类信任边界；默认关闭外部服务，启用后将 `Safe / Controversial / Unsafe` 交给 Risk Engine。
 - 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。
@@ -319,7 +320,7 @@ resolved / closed --reopen--> in_progress
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口和统一报告，但尚未执行并确立可长期引用的真实模型分数，人工标注、质量阈值和 CI Quality Gate 仍需继续建设。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
-- **前端**：仓库保留原始 React Dashboard，尚未形成面向当前 Agent 审批闭环的完整客服工作台。
+- **前端**：React Dashboard 已增加 Agent Run / LangSmith 可观测入口，但尚未接入 Prometheus 真实趋势指标和内嵌 Span 时间轴。
 - **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
 
 ### 已知环境限制

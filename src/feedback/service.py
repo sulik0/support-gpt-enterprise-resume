@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,7 +23,6 @@ from src.observability.metrics import (
 )
 from src.observability.sanitization import redact_text, sanitize_value
 from src.observability.tracing import get_request_id, get_tracer, observed_span
-
 
 tracer = get_tracer(__name__)
 
@@ -285,6 +284,20 @@ class FeedbackService:
                 detail=f"Agent run {run_id} not found.",
             )
         return run
+
+    async def list_agent_runs(
+        self, db: AsyncSession, *, limit: int, offset: int
+    ) -> tuple[List[AgentRun], int]:
+        """按最新优先分页返回 Agent Run 及总数。"""
+        total_result = await db.execute(select(func.count()).select_from(AgentRun))
+        total = int(total_result.scalar_one())
+        result = await db.execute(
+            select(AgentRun)
+            .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars().all()), total
 
     async def export_training_candidates(
         self, db: AsyncSession, output_dir: Path

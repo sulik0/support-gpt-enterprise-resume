@@ -166,6 +166,34 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
         for event in run_detail.json()["feedback_events"]
     )
 
+    run_list = await client.get(
+        "/observability/runs?limit=10&offset=0", headers=headers
+    )
+    assert run_list.status_code == 200
+    page = run_list.json()
+    assert page["total"] >= 1
+    assert page["limit"] == 10
+    listed = next(item for item in page["items"] if item["id"] == run_id)
+    assert listed["trace_id"] == run_detail.json()["trace_id"]
+    assert listed["workflow_path"]
+    assert "input_text" not in listed
+
+    await client.post(
+        "/auth/register",
+        json={
+            "username": "observability_agent",
+            "password": "password",
+            "role": "agent",
+        },
+    )
+    agent_login = await client.post(
+        "/auth/token",
+        json={"username": "observability_agent", "password": "password"},
+    )
+    agent_headers = {"Authorization": f"Bearer {agent_login.json()['access_token']}"}
+    denied_runs = await client.get("/observability/runs", headers=agent_headers)
+    assert denied_runs.status_code == 403
+
     evaluation = await client.post(
         "/evaluate-response",
         headers=headers,

@@ -282,6 +282,8 @@ LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有�
 
 OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工具调用、RAG 查询与回退、审批创建和审批处理。
 
+React 前端已增加仅 `manager/admin` 可见的 Agent 可观测性页面，通过分页 API 查看 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并可跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
+
 ### 当前没有的性能数据
 
 没有可长期引用的 P50、P95、P99 延迟，QPS、并发上限、吞吐量、RAG Recall、工具成功率、缓存命中率或成本预算实测数据。

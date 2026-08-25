@@ -144,6 +144,15 @@ When the stack is running, you can access monitoring panels:
 
 Phase 1 的 OpenTelemetry 统一采集、Collector → LangSmith/Prometheus 导出和 Grafana 验收流程参见 [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md)。
 
+主管或管理员登录 React 工作台后，可打开“Agent 可观测性”页面，查看已持久化的 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要。在 `frontend/.env` 中配置 LangSmith Project 链接：
+
+```dotenv
+VITE_API_BASE_URL=http://localhost:8000
+VITE_LANGSMITH_PROJECT_URL=https://smith.langchain.com/<your-project-url>
+```
+
+前端只保存 Project URL，不得放置 LangSmith API Key。API Key 仍只存在 Collector 环境变量中。
+
 ---
 
 ## 🧪 Testing Suite

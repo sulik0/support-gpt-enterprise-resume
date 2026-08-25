@@ -3,8 +3,9 @@ import { fetchTickets, createTicket, login, register, logout } from './api/clien
 import MetricsGrid from './components/MetricsGrid';
 import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
+import ObservabilityPage from './components/ObservabilityPage';
 import { translateRole } from './i18n';
-import { Sparkles, LogOut } from 'lucide-react';
+import { Activity, Headphones, LogOut, Sparkles } from 'lucide-react';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -12,6 +13,7 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
+  const [activeView, setActiveView] = useState('workspace');
 
   // 页面主体状态
   const [tickets, setTickets] = useState([]);
@@ -77,6 +79,7 @@ export default function App() {
     setIsAuthenticated(false);
     setTickets([]);
     setSelectedTicket(null);
+    setActiveView('workspace');
   }
 
   async function handleCreateTicket(e) {
@@ -202,23 +205,40 @@ export default function App() {
         </div>
       </header>
 
-      {/* 指标概览 */}
-      <MetricsGrid metrics={sysMetrics} />
+      <nav className="view-tabs" aria-label="主要功能">
+        <button className={activeView === 'workspace' ? 'active' : ''} onClick={() => setActiveView('workspace')}>
+          <Headphones size={16} /> 工单工作台
+        </button>
+        {['manager', 'admin'].includes(userRole) && (
+          <button className={activeView === 'observability' ? 'active' : ''} onClick={() => setActiveView('observability')}>
+            <Activity size={16} /> Agent 可观测性
+          </button>
+        )}
+      </nav>
 
-      {/* 工单列表与详情 */}
-      <main className="grid-dashboard">
-        <TicketList
-          tickets={tickets}
-          selectedId={selectedTicket?.id}
-          onSelect={(t) => setSelectedTicket(t)}
-          onNewTicket={() => setShowModal(true)}
-        />
+      {activeView === 'observability' && ['manager', 'admin'].includes(userRole) ? (
+        <ObservabilityPage />
+      ) : (
+        <>
+          {/* 指标概览 */}
+          <MetricsGrid metrics={sysMetrics} />
 
-        <TicketDetails
-          ticket={selectedTicket ? { ...selectedTicket, kb_version: kbVersion } : null}
-          onActionComplete={handleActionComplete}
-        />
-      </main>
+          {/* 工单列表与详情 */}
+          <main className="grid-dashboard">
+            <TicketList
+              tickets={tickets}
+              selectedId={selectedTicket?.id}
+              onSelect={(t) => setSelectedTicket(t)}
+              onNewTicket={() => setShowModal(true)}
+            />
+
+            <TicketDetails
+              ticket={selectedTicket ? { ...selectedTicket, kb_version: kbVersion } : null}
+              onActionComplete={handleActionComplete}
+            />
+          </main>
+        </>
+      )}
 
       {/* 新建工单弹窗 */}
       {showModal && (

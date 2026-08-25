@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 function getHeaders() {
   const token = localStorage.getItem('token');
@@ -106,5 +106,22 @@ export async function evaluateResponse(query, context, responseText) {
     body: JSON.stringify({ query, context, response: responseText }),
   });
   if (!response.ok) throw new Error('评测请求失败');
+  return response.json();
+}
+
+export async function fetchAgentRuns(limit = 30, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(`${BASE_URL}/observability/runs?${params}`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('加载 Agent 运行记录失败');
+  return response.json();
+}
+
+export async function fetchAgentRun(agentRunId) {
+  const response = await fetch(`${BASE_URL}/feedback/runs/${encodeURIComponent(agentRunId)}`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('加载 Agent 运行详情失败');
   return response.json();
 }

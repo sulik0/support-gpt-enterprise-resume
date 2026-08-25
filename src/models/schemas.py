@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, EmailStr
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, EmailStr, Field
 
 
 # --- AUTH SCHEMAS ---
@@ -348,3 +349,42 @@ class AgentRunResponse(BaseModel):
         """允许响应模型从 ORM 对象读取字段。"""
 
         from_attributes = True
+
+
+class AgentRunSummaryResponse(BaseModel):
+    """定义可观测页面列表所需的低敏 Agent Run 摘要。"""
+
+    id: str
+    ticket_id: Optional[int]
+    request_id: str
+    trace_id: Optional[str]
+    endpoint: str
+    workflow_version: str
+    prompt_version: str
+    model_provider: str
+    model_name: str
+    kb_version: str
+    workflow_path: List[str]
+    qa_score: Optional[float]
+    hallucination_detected: bool
+    escalation_recommended: bool
+    approval_required: bool
+    workflow_errors: List[str]
+    tokens_input: int
+    tokens_output: int
+    latency_seconds: float
+    created_at: datetime
+
+    class Config:
+        """允许从 AgentRun ORM 实例读取摘要字段。"""
+
+        from_attributes = True
+
+
+class AgentRunPageResponse(BaseModel):
+    """返回 Agent Run 分页结果与总数。"""
+
+    items: List[AgentRunSummaryResponse]
+    total: int
+    limit: int
+    offset: int
