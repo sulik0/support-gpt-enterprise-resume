@@ -91,6 +91,18 @@ supportgpt-enterprise/
 
    如果本地曾被其他 ChromaDB 大版本写入，请使用新的 `VECTOR_DB_PERSIST_DIR` 并重新执行 `scripts/seed_kb.py`，不要直接复用不兼容的 SQLite schema。
 
+### Optional Fast Model for Analyzer and QA
+
+Resolver 默认继续使用 `LLM_MODEL_NAME`。Analyzer 与 QA 可以共用独立的 OpenAI-compatible 小模型服务，例如 Qwen Turbo：
+
+```dotenv
+LLM_FAST_MODEL_NAME=qwen-turbo
+LLM_FAST_BASE_URL=<Qwen OpenAI-compatible endpoint>
+LLM_FAST_API_KEY=<Qwen API key>
+```
+
+如需为两个节点选择不同模型，可再设置 `LLM_ANALYZER_MODEL_NAME` 和 `LLM_QA_MODEL_NAME`。未配置 Fast Model 时，两者自动回退主模型。
+
 ### Optional Qwen3Guard semantic safety service
 
 Qwen3Guard 与业务 LLM 使用独立端点，默认关闭，因此不影响无 GPU 的本地启动。可按官方 OpenAI-compatible 方式启动：

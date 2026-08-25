@@ -165,13 +165,25 @@ def _llm_span_attributes() -> Dict[str, Any]:
 
 def _llm_metric_model(operation: str) -> str:
     """返回当前 LLM 节点实际使用的模型名。"""
-    if operation.endswith("evaluate_qa") and settings.LLM_QA_MODEL_NAME:
-        return settings.LLM_QA_MODEL_NAME
     provider = settings.LLM_PROVIDER.lower()
-    if provider == "azure":
-        return settings.AZURE_OPENAI_DEPLOYMENT or "azure"
     if provider == "openai":
+        if operation.endswith("analyze_ticket"):
+            node_model = (
+                settings.LLM_ANALYZER_MODEL_NAME or settings.LLM_FAST_MODEL_NAME
+            )
+            if node_model:
+                return node_model
+        if operation.endswith("evaluate_qa"):
+            node_model = settings.LLM_QA_MODEL_NAME or settings.LLM_FAST_MODEL_NAME
+            if node_model:
+                return node_model
         return settings.LLM_MODEL_NAME or "openai-compatible"
+    if provider == "azure":
+        if operation.endswith("analyze_ticket") and settings.LLM_ANALYZER_MODEL_NAME:
+            return settings.LLM_ANALYZER_MODEL_NAME
+        if operation.endswith("evaluate_qa") and settings.LLM_QA_MODEL_NAME:
+            return settings.LLM_QA_MODEL_NAME
+        return settings.AZURE_OPENAI_DEPLOYMENT or "azure"
     return "mock"
 
 

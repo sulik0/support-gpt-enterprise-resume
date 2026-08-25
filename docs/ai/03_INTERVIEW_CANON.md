@@ -171,6 +171,8 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。不能说 Prompt 已版本化、已灰度或已通过线上实验优化。
 
+OpenAI-compatible Provider 支持主模型与 Fast Model 分离：Resolver 使用 `LLM_MODEL_NAME`，Analyzer 与 QA 优先使用 `LLM_FAST_MODEL_NAME`，并可通过节点级模型名覆盖。Fast Model 可配置独立 Base URL 与 API Key，例如接入 Qwen Turbo；未配置时回退主模型。
+
 ## 14. 安全与 Risk Engine
 
 Prompt Injection 不再只是英文关键词检测，当前实现为确定性多层检测：

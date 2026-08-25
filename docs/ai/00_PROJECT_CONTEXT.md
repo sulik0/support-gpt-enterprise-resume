@@ -181,7 +181,7 @@ resolved / closed --reopen--> in_progress
 | Agent 节点 | `src/agents/` | Analyzer、Tooling、Retriever、Resolver、QA、Escalation |
 | Tool Registry | `src/tools/registry.py` | 工具注册、Schema、RBAC、超时、内存审计和 Trace |
 | Mock Adapter | `src/tools/crm.py`、`order_mgmt.py`、`ticketing.py` | 模拟 CRM、OMS 和历史工单系统 |
-| LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure |
+| LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure，并支持 Analyzer/QA 独立 Fast Model 路由 |
 | Guardrails | `src/guardrails/` | PII 脱敏、Prompt Injection、Jailbreak 和 Response Filter |
 | Risk Engine | `src/risk/engine.py` | 统一综合安全、业务、置信度、QA 和异常信号，输出风险等级与处置建议 |
 | RAG | `src/rag/` | 文档解析、分块、Embedding、版本管理、Hybrid Retrieval 和 citation |
@@ -245,6 +245,7 @@ resolved / closed --reopen--> in_progress
 - `BaseLLMProvider` 定义 `analyze_ticket`、`generate_resolution`、`evaluate_qa` 和 `run_chat` 四类统一接口。
 - 默认 `LLM_PROVIDER=mock`，保证无 API Key 的本地开发、测试和演示可复现。
 - OpenAI 和 Azure OpenAI 使用 `temperature=0.0`；Analyzer 和 QA 要求 JSON Mode，Resolver 返回自然语言。
+- OpenAI-compatible Provider 支持通过 `LLM_FAST_*` 将 Analyzer 与 QA 路由到独立小模型服务（例如 Qwen Turbo），Resolver 继续使用 `LLM_MODEL_NAME`；未配置 Fast Model 时安全回退主模型。
 - 输入在到达 Prompt 前先经过安全检测与 PII 脱敏，输出在返回客户前经过 QA 和 Response Filter。
 
 ### Analyzer Prompt

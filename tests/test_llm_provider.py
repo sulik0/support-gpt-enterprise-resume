@@ -37,6 +37,19 @@ def test_openai_compatible_provider_uses_default_sdk_url(monkeypatch):
     assert provider.model == "chat-model"
 
 
+def test_fast_provider_requires_its_own_key_for_separate_endpoint(monkeypatch):
+    monkeypatch.setattr("src.llm.provider.settings.LLM_API_KEY", "main-key")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_MODEL_NAME", "main-model")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_FAST_MODEL_NAME", "qwen-turbo")
+    monkeypatch.setattr(
+        "src.llm.provider.settings.LLM_FAST_BASE_URL", "https://fast.example/v1"
+    )
+    monkeypatch.setattr("src.llm.provider.settings.LLM_FAST_API_KEY", None)
+
+    with pytest.raises(ValueError, match="LLM_FAST_API_KEY"):
+        OpenAILLMProvider()
+
+
 def test_compatible_chat_does_not_require_openai_embedding_key(monkeypatch):
     monkeypatch.setattr("src.rag.embedding.settings.LLM_PROVIDER", "openai")
     monkeypatch.setattr("src.rag.embedding.settings.OPENAI_API_KEY", None)
@@ -130,3 +143,67 @@ async def test_qa_uses_compact_schema_limits_and_optional_fast_model(monkeypatch
     assert call.kwargs["model"] == "fast-judge"
     assert call.kwargs["max_tokens"] == settings.LLM_QA_MAX_TOKENS
     assert "reasons" not in call.kwargs["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_analyzer_and_qa_use_separate_fast_provider(monkeypatch):
+    monkeypatch.setattr("src.llm.provider.settings.LLM_API_KEY", "main-key")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_MODEL_NAME", "main-model")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_BASE_URL", "https://main.example/v1")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_FAST_MODEL_NAME", "qwen-turbo")
+    monkeypatch.setattr(
+        "src.llm.provider.settings.LLM_FAST_BASE_URL", "https://fast.example/v1"
+    )
+    monkeypatch.setattr("src.llm.provider.settings.LLM_FAST_API_KEY", "fast-key")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_ANALYZER_MODEL_NAME", None)
+    monkeypatch.setattr("src.llm.provider.settings.LLM_QA_MODEL_NAME", None)
+
+    analyzer_completion = MagicMock()
+    analyzer_completion.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='{"intent":"general_query","priority":"medium",'
+                '"department":"general","sentiment":"neutral",'
+                '"confidence_score":0.8}'
+            )
+        )
+    ]
+    analyzer_completion.usage = MagicMock(prompt_tokens=50, completion_tokens=15)
+    qa_completion = MagicMock()
+    qa_completion.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='{"score":0.9,"hallucination_detected":false,'
+                '"citation_verified":true}'
+            )
+        )
+    ]
+    qa_completion.usage = MagicMock(prompt_tokens=70, completion_tokens=12)
+    resolver_completion = MagicMock()
+    resolver_completion.choices = [MagicMock(message=MagicMock(content="reply"))]
+    resolver_completion.usage = MagicMock(prompt_tokens=100, completion_tokens=20)
+
+    main_client = MagicMock()
+    main_client.chat.completions.create = AsyncMock(return_value=resolver_completion)
+    fast_client = MagicMock()
+    fast_client.chat.completions.create = AsyncMock(
+        side_effect=[analyzer_completion, qa_completion]
+    )
+
+    with patch("openai.AsyncOpenAI", side_effect=[main_client, fast_client]) as factory:
+        provider = OpenAILLMProvider()
+
+    await provider.analyze_ticket("Unclear support request")
+    await provider.generate_resolution("subject", "description", "context")
+    await provider.evaluate_qa("question", ["evidence"], "answer")
+
+    assert factory.call_count == 2
+    assert factory.call_args_list[1].kwargs == {
+        "api_key": "fast-key",
+        "base_url": "https://fast.example/v1",
+    }
+    fast_models = [
+        call.kwargs["model"] for call in fast_client.chat.completions.create.await_args_list
+    ]
+    assert fast_models == ["qwen-turbo", "qwen-turbo"]
+    assert main_client.chat.completions.create.await_args.kwargs["model"] == "main-model"

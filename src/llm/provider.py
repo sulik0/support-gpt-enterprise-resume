@@ -231,6 +231,45 @@ class OpenAILLMProvider(BaseLLMProvider):
             base_url=settings.LLM_BASE_URL or None,
         )
         self.model = settings.LLM_MODEL_NAME
+        self.fast_client = self.client
+        has_fast_endpoint = bool(
+            settings.LLM_FAST_BASE_URL or settings.LLM_FAST_API_KEY
+        )
+        has_fast_model = bool(
+            settings.LLM_FAST_MODEL_NAME
+            or settings.LLM_ANALYZER_MODEL_NAME
+            or settings.LLM_QA_MODEL_NAME
+        )
+        if has_fast_endpoint:
+            if not has_fast_model:
+                raise ValueError("独立 Fast Model 服务必须配置模型名")
+            if not settings.LLM_FAST_API_KEY:
+                raise ValueError("配置 LLM_FAST_BASE_URL 时必须同时配置 LLM_FAST_API_KEY")
+            # 小模型可部署在与主模型不同的 OpenAI-compatible 服务。
+            self.fast_client = AsyncOpenAI(
+                api_key=settings.LLM_FAST_API_KEY,
+                base_url=settings.LLM_FAST_BASE_URL or None,
+            )
+        self.analyzer_model = (
+            settings.LLM_ANALYZER_MODEL_NAME
+            or settings.LLM_FAST_MODEL_NAME
+            or self.model
+        )
+        self.qa_model = (
+            settings.LLM_QA_MODEL_NAME or settings.LLM_FAST_MODEL_NAME or self.model
+        )
+        self.analyzer_client = (
+            self.fast_client
+            if has_fast_endpoint
+            and (settings.LLM_ANALYZER_MODEL_NAME or settings.LLM_FAST_MODEL_NAME)
+            else self.client
+        )
+        self.qa_client = (
+            self.fast_client
+            if has_fast_endpoint
+            and (settings.LLM_QA_MODEL_NAME or settings.LLM_FAST_MODEL_NAME)
+            else self.client
+        )
 
     async def _call_gpt(
         self,
@@ -238,6 +277,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         json_mode: bool = False,
         max_tokens: int | None = None,
         model: str | None = None,
+        client: Any = None,
     ) -> Tuple[str, int, int]:
         kwargs = {}
         if json_mode:
@@ -247,7 +287,8 @@ class OpenAILLMProvider(BaseLLMProvider):
 
         selected_model = model or self.model
         record_current_llm_io(input_value=messages, model=selected_model)
-        response = await self.client.chat.completions.create(
+        selected_client = client or self.client
+        response = await selected_client.chat.completions.create(
             model=selected_model, messages=messages, temperature=0.0, **kwargs
         )
         content = response.choices[0].message.content or ""
@@ -276,6 +317,8 @@ class OpenAILLMProvider(BaseLLMProvider):
             messages,
             json_mode=True,
             max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
+            model=self.analyzer_model,
+            client=self.analyzer_client,
         )
         return json.loads(content), in_tok, out_tok
 
@@ -328,7 +371,8 @@ class OpenAILLMProvider(BaseLLMProvider):
             messages,
             json_mode=True,
             max_tokens=settings.LLM_QA_MAX_TOKENS,
-            model=settings.LLM_QA_MODEL_NAME or self.model,
+            model=self.qa_model,
+            client=self.qa_client,
         )
         return json.loads(content), in_tok, out_tok
 
@@ -407,6 +451,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             messages,
             json_mode=True,
             max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
+            model=settings.LLM_ANALYZER_MODEL_NAME or self.deployment,
         )
         return json.loads(content), in_tok, out_tok
 

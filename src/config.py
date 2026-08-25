@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: Optional[str] = Field(default=None)
     LLM_BASE_URL: Optional[str] = Field(default=None)
     LLM_API_KEY: Optional[str] = Field(default=None)
+    # Analyzer 与 QA 可共用独立的小模型服务，未配置时回退主模型。
+    LLM_FAST_MODEL_NAME: Optional[str] = Field(default=None)
+    LLM_FAST_BASE_URL: Optional[str] = Field(default=None)
+    LLM_FAST_API_KEY: Optional[str] = Field(default=None)
+    LLM_ANALYZER_MODEL_NAME: Optional[str] = Field(default=None)
     LLM_QA_MODEL_NAME: Optional[str] = Field(default=None)
     LLM_ANALYZER_MAX_TOKENS: int = Field(default=120, ge=32, le=512)
     LLM_RESOLVER_MAX_TOKENS: int = Field(default=320, ge=64, le=2048)
