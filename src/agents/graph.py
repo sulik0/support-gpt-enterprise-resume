@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
@@ -17,7 +18,6 @@ from src.observability.metrics import (
     AGENT_NODE_EXECUTIONS_TOTAL,
     AGENT_REQUESTS_TOTAL,
     LLM_COST_TOTAL,
-    LLM_TOKENS_TOTAL,
 )
 from src.observability.tracing import (
     get_current_trace_id,
@@ -27,7 +27,9 @@ from src.observability.tracing import (
     langsmith_span_attributes,
     observed_span,
     set_agent_trace_id,
+    set_span_attributes,
 )
+from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
@@ -50,6 +52,7 @@ class AgentState(TypedDict):
     intent: str
     department: str
     analyzer_confidence: float
+    analyzer_strategy: str
     security_threat_detected: bool
     security_risk_score: float
     security_source: Optional[str]
@@ -71,6 +74,8 @@ class AgentState(TypedDict):
     suggested_response: str
     qa_score: float
     hallucination_detected: bool
+    citation_verified: bool
+    qa_strategy: str
     escalation_recommended: bool
     escalation_reason: Optional[str]
     sla_hours: float
@@ -114,9 +119,14 @@ async def _run_node(
 
 
 async def analyze_node(state: AgentState) -> Dict[str, Any]:
-    with observed_span(tracer, "agent.analyzer", _trace_attrs(state, node="analyzer")):
+    with observed_span(
+        tracer, "agent.analyzer", _trace_attrs(state, node="analyzer")
+    ) as span:
         result = await _run_node(
             "ticket_analyzer", ticket_analyzer_agent.analyze, state
+        )
+        set_span_attributes(
+            span, {"analyzer.strategy": result.get("analyzer_strategy", "unknown")}
         )
         logger.info(
             "analyzer completed",
@@ -124,6 +134,7 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
                 "ticket_id": result.get("ticket_id"),
                 "intent": result.get("intent"),
                 "priority": result.get("priority"),
+                "strategy": result.get("analyzer_strategy"),
                 "risk_level": result.get("risk_level"),
                 "risk_score": result.get("risk_score"),
             },
@@ -167,6 +178,137 @@ async def tooling_node(state: AgentState) -> Dict[str, Any]:
         return result
 
 
+def _unique_values(*groups: List[Any]) -> List[Any]:
+    """合并并行分支的列表结果并保留顺序。"""
+    output = []
+    seen = set()
+    for group in groups:
+        for value in group:
+            marker = repr(value)
+            if marker not in seen:
+                seen.add(marker)
+                output.append(value)
+    return output
+
+
+def _merge_context_results(
+    state: AgentState,
+    tool_result: Dict[str, Any],
+    retrieval_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """安全合并 Tool 与 RAG 并行结果，风险信号只升不降。"""
+    label_rank = {"not_run": 0, "safe": 1, "controversial": 2, "unsafe": 3}
+    labels = [
+        str(tool_result.get("semantic_guard_label", "not_run")),
+        str(retrieval_result.get("semantic_guard_label", "not_run")),
+    ]
+    semantic_label = max(labels, key=lambda item: label_rank.get(item.lower(), 0))
+    merged = {
+        **state,
+        "tool_context": tool_result.get("tool_context", {}),
+        "tool_calls": tool_result.get("tool_calls", []),
+        "context_citations": retrieval_result.get("context_citations", []),
+        "errors": _unique_values(
+            state.get("errors", []),
+            tool_result.get("errors", []),
+            retrieval_result.get("errors", []),
+        ),
+        "security_threat_detected": bool(
+            tool_result.get("security_threat_detected")
+            or retrieval_result.get("security_threat_detected")
+        ),
+        "security_risk_score": max(
+            float(tool_result.get("security_risk_score", 0.0) or 0.0),
+            float(retrieval_result.get("security_risk_score", 0.0) or 0.0),
+        ),
+        "security_source": tool_result.get("security_source")
+        or retrieval_result.get("security_source"),
+        "security_findings": _unique_values(
+            tool_result.get("security_findings", []),
+            retrieval_result.get("security_findings", []),
+        ),
+        "semantic_guard_label": semantic_label,
+        "semantic_guard_categories": _unique_values(
+            tool_result.get("semantic_guard_categories", []),
+            retrieval_result.get("semantic_guard_categories", []),
+        ),
+        "semantic_guard_checks": _unique_values(
+            tool_result.get("semantic_guard_checks", []),
+            retrieval_result.get("semantic_guard_checks", []),
+        ),
+        "semantic_guard_degraded": bool(
+            tool_result.get("semantic_guard_degraded")
+            or retrieval_result.get("semantic_guard_degraded")
+        ),
+        "semantic_guard_model": tool_result.get("semantic_guard_model")
+        or retrieval_result.get("semantic_guard_model"),
+        "risk_score": max(
+            float(tool_result.get("risk_score", 0.0) or 0.0),
+            float(retrieval_result.get("risk_score", 0.0) or 0.0),
+        ),
+        "risk_reasons": _unique_values(
+            tool_result.get("risk_reasons", []),
+            retrieval_result.get("risk_reasons", []),
+        ),
+        "risk_requires_human": bool(
+            tool_result.get("risk_requires_human")
+            or retrieval_result.get("risk_requires_human")
+        ),
+        "risk_block_automation": bool(
+            tool_result.get("risk_block_automation")
+            or retrieval_result.get("risk_block_automation")
+        ),
+        "tokens_input": (
+            state.get("tokens_input", 0)
+            + max(
+                tool_result.get("tokens_input", 0) - state.get("tokens_input", 0),
+                0,
+            )
+            + max(
+                retrieval_result.get("tokens_input", 0)
+                - state.get("tokens_input", 0),
+                0,
+            )
+        ),
+        "tokens_output": (
+            state.get("tokens_output", 0)
+            + max(
+                tool_result.get("tokens_output", 0) - state.get("tokens_output", 0),
+                0,
+            )
+            + max(
+                retrieval_result.get("tokens_output", 0)
+                - state.get("tokens_output", 0),
+                0,
+            )
+        ),
+        "workflow_path": [
+            *state.get("workflow_path", []),
+            "tool_call",
+            "retriever",
+        ],
+    }
+    assessment = risk_engine.assess(merged, stage="input")
+    merged = {**merged, **assessment.state_updates()}
+    if merged.get("risk_block_automation"):
+        merged["tool_context"] = {}
+        merged["context_citations"] = []
+    return merged
+
+
+async def context_enrichment_node(state: AgentState) -> Dict[str, Any]:
+    """并行执行 Tool Calling 和 RAG Retrieval。"""
+    with observed_span(
+        tracer,
+        "agent.context_enrichment",
+        _trace_attrs(state, node="context_enrichment"),
+    ):
+        tool_result, retrieval_result = await asyncio.gather(
+            tooling_node(state), retrieve_node(state)
+        )
+        return _merge_context_results(state, tool_result, retrieval_result)
+
+
 async def resolve_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(tracer, "agent.resolver", _trace_attrs(state, node="resolver")):
         result = await _run_node("llm_generation", resolution_agent.resolve, state)
@@ -181,14 +323,16 @@ async def resolve_node(state: AgentState) -> Dict[str, Any]:
 
 
 async def qa_node(state: AgentState) -> Dict[str, Any]:
-    with observed_span(tracer, "agent.qa", _trace_attrs(state, node="qa")):
+    with observed_span(tracer, "agent.qa", _trace_attrs(state, node="qa")) as span:
         result = await _run_node("qa", quality_assurance_agent.verify, state)
+        set_span_attributes(span, {"qa.strategy": result.get("qa_strategy", "unknown")})
         logger.info(
             "qa completed",
             extra={
                 "ticket_id": result.get("ticket_id"),
                 "score": result.get("qa_score"),
                 "hallucination_detected": result.get("hallucination_detected", False),
+                "strategy": result.get("qa_strategy"),
                 "risk_level": result.get("risk_level"),
                 "risk_score": result.get("risk_score"),
             },
@@ -256,18 +400,11 @@ def route_after_analyzer(state: AgentState) -> str:
     """输入安全检查失败时直接进入人工升级。"""
     if _is_automation_blocked(state):
         return "escalation"
-    return "tooling"
+    return "context_enrichment"
 
 
-def route_after_tooling(state: AgentState) -> str:
-    """Tool 结果受污染时不再进入 RAG 和生成节点。"""
-    if _is_automation_blocked(state):
-        return "escalation"
-    return "retriever"
-
-
-def route_after_retriever(state: AgentState) -> str:
-    """RAG 文档受污染时不将内容交给生成模型。"""
+def route_after_context_enrichment(state: AgentState) -> str:
+    """Tool 或 RAG 任一分支高风险时跳过生成。"""
     if _is_automation_blocked(state):
         return "escalation"
     return "resolver"
@@ -279,8 +416,7 @@ def create_agent_graph() -> StateGraph:
 
     # Register Nodes
     workflow.add_node("analyzer", analyze_node)
-    workflow.add_node("tooling", tooling_node)
-    workflow.add_node("retriever", retrieve_node)
+    workflow.add_node("context_enrichment", context_enrichment_node)
     workflow.add_node("resolver", resolve_node)
     workflow.add_node("qa", qa_node)
     workflow.add_node("escalation", escalate_node)
@@ -291,21 +427,13 @@ def create_agent_graph() -> StateGraph:
         "analyzer",
         route_after_analyzer,
         {
-            "tooling": "tooling",
+            "context_enrichment": "context_enrichment",
             "escalation": "escalation",
         },
     )
     workflow.add_conditional_edges(
-        "tooling",
-        route_after_tooling,
-        {
-            "retriever": "retriever",
-            "escalation": "escalation",
-        },
-    )
-    workflow.add_conditional_edges(
-        "retriever",
-        route_after_retriever,
+        "context_enrichment",
+        route_after_context_enrichment,
         {
             "resolver": "resolver",
             "escalation": "escalation",
@@ -323,7 +451,7 @@ compiled_graph = create_agent_graph()
 
 async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Executes the multi-agent workflow sequentially using LangGraph.
+    Executes the Agent workflow with parallel context enrichment using LangGraph.
     Estimates latency, total tokens, and USD costs.
     """
     start_time = time.time()
@@ -343,6 +471,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "intent": "general",
         "department": "general",
         "analyzer_confidence": 1.0,
+        "analyzer_strategy": "not_run",
         "security_threat_detected": False,
         "security_risk_score": 0.0,
         "security_source": None,
@@ -364,6 +493,8 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "suggested_response": "",
         "qa_score": 1.0,
         "hallucination_detected": False,
+        "citation_verified": False,
+        "qa_strategy": "not_run",
         "escalation_recommended": False,
         "escalation_reason": None,
         "sla_hours": 24.0,
@@ -448,8 +579,6 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
 
     # Record OpenTelemetry usage metrics.
     try:
-        LLM_TOKENS_TOTAL.add(tokens_in, {"model": model_name, "type": "input"})
-        LLM_TOKENS_TOTAL.add(tokens_out, {"model": model_name, "type": "output"})
         LLM_COST_TOTAL.add(cost, {"model": model_name})
     except Exception:
         logger.debug("Unable to record LLM usage metrics")

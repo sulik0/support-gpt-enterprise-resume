@@ -64,7 +64,7 @@ FastAPI API 层（鉴权、工单、聊天、审批、评测、Metrics）
         |
         v
 LangGraph Agent Workflow
-  Analyzer -> Tooling -> Retriever -> Resolver -> QA -> Escalation
+  Analyzer -> Context Enrichment（Tooling 与 Retriever 并行） -> Resolver -> QA -> Escalation
        \-> 客户输入、Tool 结果或 RAG 文档命中安全风险时直接进入 Escalation
         |
         +-- ToolRegistry -> Mock CRM / OMS / Ticketing
@@ -79,7 +79,7 @@ LangGraph Agent Workflow
 Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 ```
 
-正常请求的固定顺序为：Analyzer → Tooling → Retriever → Resolver → QA → Escalation。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Tooling 或 Retriever 直接进入 Escalation，不调用后续 Resolver / QA。
+正常请求的固定顺序为：Analyzer → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Context Enrichment 直接进入 Escalation，不调用后续 Resolver / QA。
 
 ## 7. 技术栈
 
@@ -164,9 +164,9 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 | Prompt 阶段 | 当前约束 |
 |---|---|
-| Analyzer | 以脱敏后的工单进行分类，要求结构化 JSON 输出 |
-| Resolver | 只应依据 Knowledge Base Context 和 Structured Tool Context 生成回复；上下文不足时应升级 |
-| QA | 根据问题、citation 和草稿输出 QA 分数、幻觉判断及相关质量字段 |
+| Analyzer | 固定高置信度单意图优先规则；模糊或多意图才以脱敏工单调用 LLM，结构化输出必要分类字段 |
+| Resolver | 只依据 Top-2 citation 和必要 Tool 字段生成最终客服回复，限制输入字符数与输出 token |
+| QA | 确定性失败由规则短路；其余仅输出 score、hallucination_detected、citation_verified，可配置轻量模型 |
 | 输出过滤 | 删除可能泄露内部角色、指令或工作流的内容 |
 
 OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。不能说 Prompt 已版本化、已灰度或已通过线上实验优化。

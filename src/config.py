@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: Optional[str] = Field(default=None)
     LLM_BASE_URL: Optional[str] = Field(default=None)
     LLM_API_KEY: Optional[str] = Field(default=None)
+    LLM_QA_MODEL_NAME: Optional[str] = Field(default=None)
+    LLM_ANALYZER_MAX_TOKENS: int = Field(default=120, ge=32, le=512)
+    LLM_RESOLVER_MAX_TOKENS: int = Field(default=320, ge=64, le=2048)
+    LLM_QA_MAX_TOKENS: int = Field(default=96, ge=32, le=512)
+    LLM_RESOLVER_MAX_RAG_CHARS: int = Field(default=5000, ge=500, le=20000)
+    LLM_RESOLVER_MAX_TOOL_CHARS: int = Field(default=2500, ge=500, le=10000)
+    LLM_QA_MAX_CONTEXT_CHARS: int = Field(default=4000, ge=500, le=20000)
     PROMPT_VERSION: str = Field(default="support-v1")
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。

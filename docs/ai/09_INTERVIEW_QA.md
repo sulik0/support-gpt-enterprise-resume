@@ -26,7 +26,7 @@
 4. 数据层：SQLite / PostgreSQL 保存领域数据，Redis 可选保存短期会话，ChromaDB 保存向量分块。
 5. 治理层：Prompt Guardrails、RBAC、工单状态机、HITL、Prometheus 和 OpenTelemetry。
 
-正常路径是 Analyzer → Tooling → Retriever → Resolver → QA → Escalation；安全风险会从 Analyzer 直接短路到 Escalation。
+正常路径是 Analyzer → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation；安全风险会从 Analyzer 或上下文合并阶段直接短路到 Escalation。
 
 ### 4. 为什么选择 Agent，而不是普通 RAG 问答？
 
@@ -49,7 +49,7 @@
 
 系统先创建工单并读取会话存储，然后对当前输入进行 Prompt Injection、Jailbreak 和 PII 处理。安全请求被短路；正常请求进入分类，得到情绪、优先级、部门和意图。
 
-之后查询客户画像和历史工单，相关场景再查订单；接着按知识库版本和业务类别做 Hybrid RAG，得到最多 3 条 citation。Resolver 合并 Tool Context 与 citation 生成草稿，QA 检查依据、幻觉和泄露，Escalation 根据安全、优先级、情绪和 QA 决定是否审批。需要审批时创建待审批记录；不需要时返回草稿及审计信息。
+之后并行执行业务工具与 Hybrid RAG：工具侧查询客户画像、历史工单及相关订单，检索侧按知识库版本和业务类别召回 citation。Resolver 只使用最高相关的 Top-2 citation 和必要 Tool 字段生成草稿；QA 以规则短路或精简结构化 Judge 检查依据、幻觉和泄露，Escalation 根据安全、优先级、情绪和 QA 决定是否审批。需要审批时创建待审批记录；不需要时返回草稿及审计信息。
 
 要注意，“本次 Agent 返回回复”不等于“工单已关闭”。工单只有经过合法状态流转才进入 resolved 和 closed。
 
@@ -80,7 +80,7 @@ LangGraph 原生提供状态图、条件边和异步节点执行，适合表达�
 ```text
 Analyzer（包含 Input Guard 与分类）
   ├─ 安全风险 → Escalation → END
-  └─ 正常请求 → Tooling → Retriever → Resolver → QA → Escalation → END
+  └─ 正常请求 → Context Enrichment（Tooling ∥ Retriever）→ Resolver → QA → Escalation → END
 ```
 
 项目没有独立 Tool Planner、Tool Executor、Human Review Graph 节点。Tooling 内部按确定性规则调用受治理工具；Human Review 发生在 Graph 完成后的审批流程中。
@@ -101,7 +101,7 @@ State 包含：工单与客户标识、主题与描述、知识库版本；情�
 
 当前使用 `AgentState`，而不是示例中的独立 `TicketState` 或 `TaskState`。设计上按六类字段组织：输入标识、分类结果、工具上下文、RAG 结果、质量与风险、可观测元数据。
 
-选择单一 State 是因为当前流程短且线性。它的缺点是以后加入动态子任务、Checkpoint 或并行执行时会膨胀；到那时应拆分 `TaskState` 与执行状态，而不是继续无限加字段。
+选择单一 State 是因为当前流程短且大部分路径固定。并行 Context Enrichment 通过显式合并函数保证 Tooling 与 Retriever 的风险、token 和错误不会相互覆盖；若以后加入动态子任务或 Checkpoint，应拆分 `TaskState` 与执行状态，而不是继续无限加字段。
 
 ### 14. 为什么不用多个自治 Agent，而采用 Workflow？
 
@@ -443,7 +443,7 @@ Prompt Injection 更强调通过输入覆盖应用指令或操纵工具上下文
 
 ### 68. 幻觉检测怎么实现？
 
-在线 QA 把客户问题、检索 context 和草稿交给 QA Provider，得到 QA 分数和 hallucination 标记。默认 Mock 在无 context 时将其标为高风险；输出过滤命中时也会把分数降到 0.5 并标记风险。
+在线 QA 先执行确定性规则：空回复、输出泄露或完全无依据时直接给出保守结果，不调用模型。其余场景只把问题、Top-2 citation 和草稿交给 QA Provider，结构化返回 score、hallucination_detected 和 citation_verified；默认 Mock 在无 context 时将其标为高风险。
 
 离线评测还可用 DeepEval，或在无 API Key 时使用基于词项覆盖的本地启发式 Hallucination Rate。
 
@@ -475,7 +475,7 @@ QA Score 是对当前回复草稿可信度和质量的 0 到 1 风险信号，�
 
 ### 73. QA 评分指标有哪些？
 
-在线 QA 输出 `qa_score`、`hallucination_detected`、reasons、faithfulness、context_precision 和 citation_verified。输出过滤也会影响最终风险结果。
+在线 QA 输出 `qa_score`、`hallucination_detected` 和 `citation_verified`。输出过滤及确定性规则也会影响最终风险结果。
 
 离线评测还包含 Context Recall、Answer Relevance 和 Hallucination Rate。当前没有独立“礼貌度”或“是否解决问题”分类器，不能把示例指标全部写成现状。
 

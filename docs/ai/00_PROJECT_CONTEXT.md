@@ -107,7 +107,8 @@ LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为�
 - 权限与工具：`operator_role`、`tool_context`、`tool_calls`。
 - RAG 与回复：`context_citations`、`suggested_response`。
 - 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`semantic_guard_label`、`semantic_guard_categories`、`semantic_guard_checks`、`semantic_guard_degraded`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
-- 质量结果：`qa_score`、`hallucination_detected`、`errors`。
+- 质量结果：`qa_score`、`hallucination_detected`、`citation_verified`、`errors`。
+- 性能策略：`analyzer_strategy`、`qa_strategy`，用于区分规则短路与 LLM 评估。
 - 闭环决策：`escalation_recommended`、`escalation_reason`、`approval_required`。
 - 成本与延迟：`tokens_input`、`tokens_output`、`cost_usd`、`latency_seconds`。
 
@@ -121,9 +122,11 @@ analyzer
   |      `--> escalation --> END
   |
   `-- 正常请求
-         `--> tooling --工具注入--> escalation --> END
-                    `--> retriever --文档注入--> escalation --> END
-                                  `--> resolver --> qa --> escalation --> END
+         `--> context_enrichment
+                |-- tooling（并行）
+                `-- retriever（并行）
+                      |-- 任一上下文命中注入 --> escalation --> END
+                      `-- 合并安全结果与上下文 --> resolver --> qa --> escalation --> END
 ```
 
 ### 节点职责
@@ -131,7 +134,7 @@ analyzer
 1. **Analyzer**
    - 先执行多层 Prompt Injection 和 Jailbreak 检测。
    - 命中安全风险时写入 `errors`，设置紧急优先级和拒绝回复，不执行后续 Tooling、RAG、Resolver 和 QA。
-   - 正常请求先对 PII 脱敏，再调用 LLM 分析情绪、优先级、部门和意图。
+   - 正常请求先对 PII 脱敏；固定单意图且高置信度时使用规则输出必要字段，模糊或多意图时才调用 LLM。
 2. **Tooling**
    - 始终查询客户画像和历史工单。
    - 只在 billing、shipping 或相关意图下查询订单历史。
@@ -142,12 +145,13 @@ analyzer
    - 强制带 `kb_version`，并优先按 `department` 过滤类别。
    - 类别过滤无结果时，保留版本过滤并放宽类别再检索一次。
    - citation 在交给 Resolver 前扫描间接 Prompt Injection；命中后清空 citation 并短路。
+   - 与 Tooling 并行执行，由 Context Enrichment 统一合并结果；风险信号只升不降。
 4. **Resolver**
-   - 将 citation 格式化为 Knowledge Base Context。
-   - 将 `tool_context` 序列化为 Structured Tool Context。
-   - 将两类上下文合并后交给 LLM Provider 生成草稿。
+   - 只选取最高相关的 Top-2 citation 与必要 Tool 字段，并限制上下文字符数。
+   - 将精简上下文交给 LLM Provider，只生成最终客服回复并限制输出 token。
 5. **QA**
-   - 根据原始问题、citation 和回复评估 `qa_score` 与幻觉风险。
+   - 空回复、输出泄露或完全缺少依据等确定性失败优先使用规则判断，不调用 LLM。
+   - 其余请求使用可单独配置的轻量模型，仅返回 `score`、`hallucination_detected`、`citation_verified`。
    - 通过 Response Filter 删除内部指令或工作流泄露；命中时将 QA 分数降为 `0.5` 并标记幻觉。
 6. **Escalation**
    - 按优先级计算 SLA：urgent `2h`、high `12h`、medium `24h`、low `48h`。
@@ -207,8 +211,8 @@ resolved / closed --reopen--> in_progress
 3. API 查询或创建 `SessionMemory`，优先从 Redis 读取历史；Redis 无数据或不可用时使用 SQL 历史。
 4. API 以当前工单信息构造 `AgentState`并调用 `run_agent_workflow()`。
 5. Analyzer 进行输入多层安全检测、PII 脱敏、工单分类和初始风险评估。
-6. Tooling 通过 ToolRegistry 补充客户、订单和历史工单上下文，并扫描工具结果的间接注入。
-7. Retriever 按知识库版本和部门检索 citation，并在生成前扫描 RAG 文档的间接注入。
+6. Context Enrichment 并行执行 Tooling 与 Retriever：前者补充客户、订单和历史工单上下文，后者按知识库版本和部门检索 citation；两条分支分别扫描间接注入。
+7. 系统以风险只升不降的方式合并两条分支；任一分支命中安全威胁就清空受污染上下文并直接进入 Escalation。
 8. Resolver 合并 Knowledge Base Context 和 Structured Tool Context 生成回复草稿。
 9. QA 校验草稿，Risk Engine 更新输出风险，Escalation 计算 SLA 并决定是否升级。
 10. API 回写工单的情绪、优先级、部门和 SLA。

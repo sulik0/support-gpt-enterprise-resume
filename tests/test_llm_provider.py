@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import settings
 from src.llm.provider import MockLLMProvider, OpenAILLMProvider
 from src.rag.embedding import MockEmbeddingProvider, get_embedding_provider
 
@@ -78,7 +79,9 @@ async def test_openai_compatible_prompts_define_response_language_policy(monkeyp
         provider = OpenAILLMProvider()
 
     await provider.generate_resolution("English subject", "我要查询物流", "English context")
-    resolution_messages = client.chat.completions.create.await_args.kwargs["messages"]
+    resolution_call = client.chat.completions.create.await_args
+    resolution_messages = resolution_call.kwargs["messages"]
+    assert resolution_call.kwargs["max_tokens"] == settings.LLM_RESOLVER_MAX_TOKENS
     assert "current Description" in resolution_messages[0]["content"]
     assert (
         "explicitly asks for a different response language"
@@ -96,3 +99,34 @@ async def test_openai_compatible_prompts_define_response_language_policy(monkeyp
     chat_messages = client.chat.completions.create.await_args.kwargs["messages"]
     assert "latest user message" in chat_messages[0]["content"]
     assert "Do not preserve a previous response language" in chat_messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_qa_uses_compact_schema_limits_and_optional_fast_model(monkeypatch):
+    monkeypatch.setattr("src.llm.provider.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_MODEL_NAME", "main-model")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_QA_MODEL_NAME", "fast-judge")
+
+    completion = MagicMock()
+    completion.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='{"score":0.9,"hallucination_detected":false,'
+                '"citation_verified":true}'
+            )
+        )
+    ]
+    completion.usage = MagicMock(prompt_tokens=120, completion_tokens=20)
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=completion)
+
+    with patch("openai.AsyncOpenAI", return_value=client):
+        provider = OpenAILLMProvider()
+
+    result, _, _ = await provider.evaluate_qa("question", ["evidence"], "answer")
+    call = client.chat.completions.create.await_args
+
+    assert result["score"] == 0.9
+    assert call.kwargs["model"] == "fast-judge"
+    assert call.kwargs["max_tokens"] == settings.LLM_QA_MAX_TOKENS
+    assert "reasons" not in call.kwargs["messages"][1]["content"]

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -39,19 +40,6 @@ class ToolingAgent:
         )
 
         try:
-            profile_call = await tool_registry.call_tool(
-                "crm.get_customer_profile",
-                {"customer_id": customer_id},
-                role=operator_role,
-                ticket_id=ticket_id,
-            )
-            ticket_call = await tool_registry.call_tool(
-                "tickets.get_past_tickets",
-                {"customer_id": customer_id},
-                role=operator_role,
-                ticket_id=ticket_id,
-            )
-
             should_fetch_orders = department in {"billing", "shipping"} or any(
                 token in intent.lower()
                 for token in [
@@ -63,21 +51,36 @@ class ToolingAgent:
                     "invoice",
                 ]
             )
-            order_call = None
-            if should_fetch_orders:
-                order_call = await tool_registry.call_tool(
-                    "orders.get_order_history",
+            pending_calls = [
+                tool_registry.call_tool(
+                    "crm.get_customer_profile",
                     {"customer_id": customer_id},
                     role=operator_role,
                     ticket_id=ticket_id,
+                ),
+                tool_registry.call_tool(
+                    "tickets.get_past_tickets",
+                    {"customer_id": customer_id},
+                    role=operator_role,
+                    ticket_id=ticket_id,
+                ),
+            ]
+            if should_fetch_orders:
+                pending_calls.append(
+                    tool_registry.call_tool(
+                        "orders.get_order_history",
+                        {"customer_id": customer_id},
+                        role=operator_role,
+                        ticket_id=ticket_id,
+                    )
                 )
+            tool_calls = list(await asyncio.gather(*pending_calls))
+            profile_call, ticket_call = tool_calls[:2]
+            order_call = tool_calls[2] if len(tool_calls) > 2 else None
 
             profile = profile_call.get("result") or {}
             past_tickets = ticket_call.get("result") or []
             orders = order_call.get("result") if order_call else []
-            tool_calls = [profile_call, ticket_call]
-            if order_call:
-                tool_calls.append(order_call)
 
             public_tool_calls = [
                 {key: value for key, value in call.items() if key != "result"}

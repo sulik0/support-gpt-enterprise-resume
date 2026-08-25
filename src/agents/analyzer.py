@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from typing import Any, Dict
 
@@ -16,6 +17,119 @@ from src.observability.sanitization import redact_text
 from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.analyzer")
+
+_INTENT_RULES = (
+    {
+        "intent": "billing_dispute",
+        "priority": "high",
+        "department": "billing",
+        "sentiment": "negative",
+        "tokens": (
+            "refund",
+            "request a refund",
+            "need a refund",
+            "want a refund",
+            "charged twice",
+            "duplicate charge",
+            "incorrect charge",
+            "unauthorized charge",
+            "退款",
+            "申请退款",
+            "重复扣款",
+            "错误扣款",
+            "未授权扣款",
+        ),
+    },
+    {
+        "intent": "outage_report",
+        "priority": "urgent",
+        "department": "technical",
+        "sentiment": "negative",
+        "tokens": (
+            "api is down",
+            "service down",
+            "offline",
+            "service outage",
+            "api timeout",
+            "504",
+            "503",
+            "服务宕机",
+            "接口故障",
+            "接口超时",
+            "服务无法访问",
+        ),
+    },
+    {
+        "intent": "order_cancellation",
+        "priority": "high",
+        "department": "shipping",
+        "sentiment": "negative",
+        "tokens": (
+            "cancel my order",
+            "cancel order",
+            "order cancellation",
+            "取消订单",
+        ),
+    },
+    {
+        "intent": "order_status",
+        "priority": "medium",
+        "department": "shipping",
+        "sentiment": "neutral",
+        "tokens": (
+            "order status",
+            "where is my order",
+            "tracking number",
+            "shipment",
+            "delivery status",
+            "not received",
+            "物流",
+            "快递",
+            "订单状态",
+            "还没收到",
+            "没有收到",
+        ),
+    },
+    {
+        "intent": "account_support",
+        "priority": "medium",
+        "department": "general",
+        "sentiment": "neutral",
+        "tokens": (
+            "account settings",
+            "reset password",
+            "cannot login",
+            "can't login",
+            "update my profile",
+            "账户设置",
+            "账号设置",
+            "重置密码",
+            "无法登录",
+            "修改资料",
+        ),
+    },
+    {
+        "intent": "warranty_claim",
+        "priority": "medium",
+        "department": "general",
+        "sentiment": "neutral",
+        "tokens": (
+            "warranty",
+            "repair",
+            "replacement",
+            "保修",
+            "维修",
+            "换货",
+        ),
+    },
+    {
+        "intent": "feedback",
+        "priority": "low",
+        "department": "general",
+        "sentiment": "positive",
+        "tokens": ("thank you", "thanks", "great service", "谢谢", "感谢"),
+    },
+)
 
 
 class TicketAnalyzerAgent:
@@ -87,11 +201,18 @@ class TicketAnalyzerAgent:
                 ],
             )
 
-        # 5. Perform LLM analysis
+        # 5. 高置信度固定意图优先走规则，模糊请求再调用 LLM。
         try:
-            analysis, in_tok, out_tok = await llm_provider.analyze_ticket(
-                f"Subject: {clean_subject}\nDescription: {clean_description}"
+            analysis = (
+                None if semantic_result.degraded else self._match_rule(semantic_text)
             )
+            strategy = "rule" if analysis else "llm"
+            in_tok = 0
+            out_tok = 0
+            if analysis is None:
+                analysis, in_tok, out_tok = await llm_provider.analyze_ticket(
+                    f"Subject: {clean_subject}\nDescription: {clean_description}"
+                )
 
             # Increment token and latency stats
             state["tokens_input"] = state.get("tokens_input", 0) + in_tok
@@ -117,8 +238,11 @@ class TicketAnalyzerAgent:
                 "intent": analysis.get("intent", "general_query"),
                 "department": analysis.get("department", "general"),
                 "analyzer_confidence": self._confidence(
-                    analysis.get("confidence_score", 0.0)
+                    analysis.get(
+                        "confidence_score", analysis.get("confidence", 0.0)
+                    )
                 ),
+                "analyzer_strategy": strategy,
                 "errors": state.get("errors", []),
             }
             assessment = risk_engine.assess(next_state, stage="input")
@@ -135,6 +259,36 @@ class TicketAnalyzerAgent:
             }
             assessment = risk_engine.assess(next_state, stage="input")
             return {**next_state, **assessment.state_updates()}
+
+    @staticmethod
+    def _match_rule(text: str) -> Dict[str, Any] | None:
+        """仅在唯一意图组命中时返回高置信度分类。"""
+        normalized = " ".join(text.lower().split())
+        matches = [
+            rule
+            for rule in _INTENT_RULES
+            if any(
+                TicketAnalyzerAgent._contains_token(normalized, token)
+                for token in rule["tokens"]
+            )
+        ]
+        if len(matches) != 1:
+            return None
+        rule = matches[0]
+        return {
+            "intent": rule["intent"],
+            "priority": rule["priority"],
+            "department": rule["department"],
+            "sentiment": rule["sentiment"],
+            "confidence_score": 0.95,
+        }
+
+    @staticmethod
+    def _contains_token(text: str, token: str) -> bool:
+        """英文关键词使用单词边界，中文关键词使用子串匹配。"""
+        if token.isascii():
+            return bool(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text))
+        return token in text
 
     @staticmethod
     def _confidence(value: Any) -> float:

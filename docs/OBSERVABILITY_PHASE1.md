@@ -86,7 +86,8 @@ Prometheus exporter 在 `:8889` 暴露聚合结果，Prometheus 只抓取 Collec
 | `agent_requests_total` | Agent workflow 成功/失败数 |
 | `agent_node_executions_total` | Agent 节点执行数 |
 | `agent_node_duration_seconds` | Agent 节点耗时 Histogram |
-| `llm_tokens_total` | LLM input/output token |
+| `llm_tokens_total` | 按 operation/model 区分的 LLM input/output token |
+| `llm_latency_seconds` | 按 operation/model 区分的 LLM 耗时 Histogram |
 | `agent_tool_calls_total` | Tool 各状态调用数 |
 | `agent_tool_call_duration_seconds` | Tool 耗时 Histogram |
 | `qa_score_ratio` | QA Score 分布 |
@@ -108,6 +109,15 @@ Agent 节点 P95：
 histogram_quantile(
   0.95,
   sum by (le, node) (rate(agent_node_duration_seconds_bucket[5m]))
+)
+```
+
+LLM 节点 P95：
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, operation, model) (rate(llm_latency_seconds_bucket[5m]))
 )
 ```
 

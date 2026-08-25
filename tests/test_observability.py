@@ -12,6 +12,7 @@ from src.observability.metrics import (
     AGENT_REQUESTS_TOTAL,
     FEEDBACK_EVENTS_TOTAL,
     HUMAN_APPROVALS_TOTAL,
+    LLM_LATENCY_SECONDS,
     LLM_TOKENS_TOTAL,
     SEMANTIC_GUARD_CHECKS_TOTAL,
     SEMANTIC_GUARD_DURATION_SECONDS,
@@ -94,6 +95,7 @@ def test_otel_metric_instruments_record_natively():
         return getattr(instrument, "name", getattr(instrument, "_name", None))
 
     assert instrument_name(LLM_TOKENS_TOTAL) == "llm_tokens"
+    assert instrument_name(LLM_LATENCY_SECONDS) == "llm_latency_seconds"
     assert instrument_name(AGENT_REQUESTS_TOTAL) == "agent_requests"
     assert instrument_name(AGENT_NODE_DURATION_SECONDS) == "agent_node_duration_seconds"
     assert instrument_name(TOOL_CALLS_TOTAL) == "agent_tool_calls"
@@ -258,6 +260,7 @@ def test_grafana_dashboard_covers_phase_one_metrics():
         "agent_requests_total",
         "agent_node_duration_seconds_bucket",
         "llm_tokens_total",
+        "llm_latency_seconds_bucket",
         "agent_tool_calls_total",
         "qa_score_ratio_bucket",
         "human_approvals_total",

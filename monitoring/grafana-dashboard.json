@@ -36,7 +36,7 @@
       "type": "timeseries",
       "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
       "targets": [
-        {"expr": "sum by (type) (rate(llm_tokens_total[5m]))", "legendFormat": "{{type}}", "refId": "A"}
+        {"expr": "sum by (operation, type) (rate(llm_tokens_total[5m]))", "legendFormat": "{{operation}} / {{type}}", "refId": "A"}
       ]
     },
     {
@@ -102,6 +102,15 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
       "targets": [
         {"expr": "sum by (dataset_type) (increase(training_candidates_total[1h]))", "legendFormat": "{{dataset_type}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 12,
+      "title": "LLM Node P95 Latency",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, operation, model) (rate(llm_latency_seconds_bucket[5m])))", "legendFormat": "{{operation}} / {{model}}", "refId": "A"}
       ]
     }
   ],

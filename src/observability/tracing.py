@@ -163,6 +163,47 @@ def _llm_span_attributes() -> Dict[str, Any]:
     }
 
 
+def _llm_metric_model(operation: str) -> str:
+    """返回当前 LLM 节点实际使用的模型名。"""
+    if operation.endswith("evaluate_qa") and settings.LLM_QA_MODEL_NAME:
+        return settings.LLM_QA_MODEL_NAME
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "azure":
+        return settings.AZURE_OPENAI_DEPLOYMENT or "azure"
+    if provider == "openai":
+        return settings.LLM_MODEL_NAME or "openai-compatible"
+    return "mock"
+
+
+def _record_llm_metrics(
+    operation: str,
+    *,
+    duration_seconds: float,
+    status: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> None:
+    """按 LLM 节点记录 Token 和调用耗时。"""
+    try:
+        from src.observability.metrics import LLM_LATENCY_SECONDS, LLM_TOKENS_TOTAL
+
+        attributes = {
+            "operation": operation,
+            "model": _llm_metric_model(operation),
+            "status": status,
+        }
+        LLM_LATENCY_SECONDS.record(duration_seconds, attributes)
+        if status == "success":
+            LLM_TOKENS_TOTAL.add(
+                input_tokens, {**attributes, "type": "input"}
+            )
+            LLM_TOKENS_TOTAL.add(
+                output_tokens, {**attributes, "type": "output"}
+            )
+    except Exception as exc:
+        logger.debug("Unable to record LLM metrics: %s", exc)
+
+
 def serialize_llm_content(value: Any) -> str:
     """将 LLM 内容脱敏并限长后写入 Trace。"""
     safe_value = sanitize_value(value)
@@ -177,23 +218,22 @@ def serialize_llm_content(value: Any) -> str:
 
 
 def record_current_llm_io(
-    *, input_value: Any = None, output_value: Any = None
+    *, input_value: Any = None, output_value: Any = None, model: Optional[str] = None
 ) -> None:
     """向当前 LLM Span 记录脱敏后的实际输入输出。"""
-    if (
-        not settings.LANGSMITH_CAPTURE_LLM_CONTENT
-        or not _langsmith_agent_context.get()
-    ):
+    if not _langsmith_agent_context.get():
         return
     try:
         from opentelemetry import trace
 
         span = trace.get_current_span()
         attributes: Dict[str, Any] = {}
-        if input_value is not None:
+        if settings.LANGSMITH_CAPTURE_LLM_CONTENT and input_value is not None:
             attributes["gen_ai.prompt"] = serialize_llm_content(input_value)
-        if output_value is not None:
+        if settings.LANGSMITH_CAPTURE_LLM_CONTENT and output_value is not None:
             attributes["gen_ai.completion"] = serialize_llm_content(output_value)
+        if model:
+            attributes["gen_ai.request.model"] = model
         set_span_attributes(span, attributes)
     except Exception as exc:
         logger.debug("Unable to record LLM input/output: %s", exc)
@@ -276,7 +316,7 @@ def observed_span(
 
 
 def trace_operation(*, name: str, component: str) -> Callable:
-    """使用纯 OpenTelemetry 装饰同步或异步操作，不采集输入输出正文。"""
+    """使用纯 OpenTelemetry 记录操作耗时和脱敏后的 LLM 内容。"""
 
     def decorator(function: Callable) -> Callable:
         tracer = get_tracer(function.__module__)
@@ -285,39 +325,60 @@ def trace_operation(*, name: str, component: str) -> Callable:
 
             @functools.wraps(function)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # 仅记录低敏元数据，避免 Prompt 和业务结果进入观测系统。
-                with observed_span(
-                    tracer,
-                    name,
-                    {
-                        "observability.component": component,
-                        "code.function.name": function.__qualname__,
-                        **(_llm_span_attributes() if component == "llm" else {}),
-                    },
-                ) as span:
-                    if (
-                        component == "llm"
-                        and settings.LANGSMITH_CAPTURE_LLM_CONTENT
-                    ):
-                        record_current_llm_io(
-                            input_value=_bound_llm_inputs(function, args, kwargs)
+                started = time.perf_counter()
+                try:
+                    with observed_span(
+                        tracer,
+                        name,
+                        {
+                            "observability.component": component,
+                            "code.function.name": function.__qualname__,
+                            "llm.operation": name if component == "llm" else None,
+                            **(_llm_span_attributes() if component == "llm" else {}),
+                        },
+                    ) as span:
+                        if (
+                            component == "llm"
+                            and settings.LANGSMITH_CAPTURE_LLM_CONTENT
+                        ):
+                            record_current_llm_io(
+                                input_value=_bound_llm_inputs(function, args, kwargs)
+                            )
+                        result = await function(*args, **kwargs)
+                        if (
+                            component == "llm"
+                            and isinstance(result, tuple)
+                            and len(result) >= 3
+                        ):
+                            input_tokens = int(result[-2] or 0)
+                            output_tokens = int(result[-1] or 0)
+                            set_span_attributes(
+                                span,
+                                {
+                                    "gen_ai.usage.input_tokens": input_tokens,
+                                    "gen_ai.usage.output_tokens": output_tokens,
+                                    "gen_ai.usage.total_tokens": (
+                                        input_tokens + output_tokens
+                                    ),
+                                },
+                            )
+                            record_current_llm_io(output_value=result[0])
+                            _record_llm_metrics(
+                                name,
+                                duration_seconds=time.perf_counter() - started,
+                                status="success",
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                            )
+                        return result
+                except BaseException:
+                    if component == "llm":
+                        _record_llm_metrics(
+                            name,
+                            duration_seconds=time.perf_counter() - started,
+                            status="error",
                         )
-                    result = await function(*args, **kwargs)
-                    if (
-                        component == "llm"
-                        and isinstance(result, tuple)
-                        and len(result) >= 3
-                    ):
-                        set_span_attributes(
-                            span,
-                            {
-                                "gen_ai.usage.input_tokens": result[-2],
-                                "gen_ai.usage.output_tokens": result[-1],
-                                "gen_ai.usage.total_tokens": result[-2] + result[-1],
-                            },
-                        )
-                        record_current_llm_io(output_value=result[0])
-                    return result
+                    raise
 
             return async_wrapper
 

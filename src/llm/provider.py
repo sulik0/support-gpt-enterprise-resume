@@ -98,7 +98,6 @@ class MockLLMProvider(BaseLLMProvider):
         sentiment = "neutral"
         priority = "medium"
         department = "general"
-        detected_emotions = ["calm"]
         intent = "information_request"
 
         if any(
@@ -108,7 +107,6 @@ class MockLLMProvider(BaseLLMProvider):
             sentiment = "negative"
             priority = "high"
             department = "billing"
-            detected_emotions = ["frustrated", "annoyed"]
             intent = "billing_dispute"
         elif any(
             x in text_lower
@@ -117,12 +115,10 @@ class MockLLMProvider(BaseLLMProvider):
             sentiment = "negative"
             priority = "urgent"
             department = "technical"
-            detected_emotions = ["anxious", "frustrated"]
             intent = "outage_report"
         elif "thank" in text_lower or "great" in text_lower or "love" in text_lower:
             sentiment = "positive"
             priority = "low"
-            detected_emotions = ["happy", "grateful"]
             intent = "feedback"
 
         analysis = {
@@ -130,7 +126,6 @@ class MockLLMProvider(BaseLLMProvider):
             "priority": priority,
             "department": department,
             "intent": intent,
-            "detected_emotions": detected_emotions,
             "confidence_score": 0.95,
         }
         return analysis, 150, 45
@@ -185,24 +180,17 @@ class MockLLMProvider(BaseLLMProvider):
         # If response mentions policy and context has policy, high score.
         qa_score = 0.92
         hallucination_detected = False
-        reasons = ["Response matches facts retrieved from context."]
 
         if len(context) == 0:
             qa_score = 0.45
             hallucination_detected = True
-            reasons = [
-                "No retrieval context was provided, leading to potential hallucination."
-            ]
 
         evaluation = {
-            "qa_score": qa_score,
+            "score": qa_score,
             "hallucination_detected": hallucination_detected,
-            "reasons": reasons,
-            "faithfulness": qa_score,
-            "context_precision": 0.90 if len(context) > 0 else 0.0,
-            "citation_verified": True,
+            "citation_verified": len(context) > 0,
         }
-        return evaluation, 350, 60
+        return evaluation, 220, 30
 
     @trace_operation(name="supportgpt.llm.run_chat", component="llm")
     async def run_chat(
@@ -245,15 +233,22 @@ class OpenAILLMProvider(BaseLLMProvider):
         self.model = settings.LLM_MODEL_NAME
 
     async def _call_gpt(
-        self, messages: List[Dict[str, str]], json_mode: bool = False
+        self,
+        messages: List[Dict[str, str]],
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+        model: str | None = None,
     ) -> Tuple[str, int, int]:
         kwargs = {}
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
-        record_current_llm_io(input_value=messages)
+        selected_model = model or self.model
+        record_current_llm_io(input_value=messages, model=selected_model)
         response = await self.client.chat.completions.create(
-            model=self.model, messages=messages, temperature=0.0, **kwargs
+            model=selected_model, messages=messages, temperature=0.0, **kwargs
         )
         content = response.choices[0].message.content or ""
         record_current_llm_io(output_value=content)
@@ -264,20 +259,24 @@ class OpenAILLMProvider(BaseLLMProvider):
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         prompt = (
-            "Analyze the following support ticket and return a JSON object with: "
-            "sentiment (positive, neutral, negative), priority (low, medium, high, urgent), "
-            "department (billing, technical, shipping, general), intent (short description), "
-            "detected_emotions (list of strings), and confidence_score (float 0 to 1).\n\n"
-            f"Ticket Content: {text}"
+            "Classify this support ticket. Return only JSON with exactly these fields: "
+            "intent, priority, department, sentiment, confidence_score. "
+            "priority: low|medium|high|urgent; department: "
+            "billing|technical|shipping|general; sentiment: positive|neutral|negative; "
+            f"confidence_score: 0..1. Ticket: {text}"
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert customer service ticket analyzer. Always output JSON.",
+                "content": "Classify customer support tickets. Output compact JSON only.",
             },
             {"role": "user", "content": prompt},
         ]
-        content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
+        content, in_tok, out_tok = await self._call_gpt(
+            messages,
+            json_mode=True,
+            max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
+        )
         return json.loads(content), in_tok, out_tok
 
     @trace_operation(name="supportgpt.llm.generate_resolution", component="llm")
@@ -287,46 +286,50 @@ class OpenAILLMProvider(BaseLLMProvider):
         prompt = (
             f"Subject: {subject}\n"
             f"Description: {description}\n\n"
-            f"Retrieved Context:\n{context}\n\n"
-            "Generate a professional response to the customer. Ensure you cite your sources where appropriate."
+            f"Relevant Context:\n{context}\n\n"
+            "Write only the final customer reply. Be concise, actionable, and cite the "
+            "provided source labels for policy claims. Do not explain your reasoning."
         )
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a customer support agent. Address the issue using only the "
-                    "provided context. If the context doesn't have the answer, state that "
-                    f"you need to escalate. {RESOLUTION_LANGUAGE_POLICY}"
+                    "Answer using only the supplied context. Never invent policy or promise "
+                    "an irreversible action. If evidence is insufficient, say human review "
+                    f"is needed. {RESOLUTION_LANGUAGE_POLICY}"
                 ),
             },
             {"role": "user", "content": prompt},
         ]
-        return await self._call_gpt(messages, json_mode=False)
+        return await self._call_gpt(
+            messages,
+            json_mode=False,
+            max_tokens=settings.LLM_RESOLVER_MAX_TOKENS,
+        )
 
     @trace_operation(name="supportgpt.llm.evaluate_qa", component="llm")
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
         prompt = (
-            f"Query: {query}\n"
-            f"Context: {json.dumps(context)}\n"
-            f"Response: {response}\n\n"
-            "Evaluate this response for hallucination and quality. Output a JSON object with:\n"
-            "qa_score (0.0 to 1.0),\n"
-            "hallucination_detected (boolean),\n"
-            "reasons (list of strings),\n"
-            "faithfulness (0.0 to 1.0),\n"
-            "context_precision (0.0 to 1.0),\n"
-            "citation_verified (boolean)"
+            f"Question: {query}\nEvidence: {json.dumps(context, ensure_ascii=False)}\n"
+            f"Answer: {response}\n"
+            'Return only JSON: {"score":0.0,"hallucination_detected":false,'
+            '"citation_verified":false}. Judge whether the answer is supported by evidence.'
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are an AI quality assurance agent verifying customer support answers. Output JSON only.",
+                "content": "Verify answer grounding. Output only the requested compact JSON.",
             },
             {"role": "user", "content": prompt},
         ]
-        content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
+        content, in_tok, out_tok = await self._call_gpt(
+            messages,
+            json_mode=True,
+            max_tokens=settings.LLM_QA_MAX_TOKENS,
+            model=settings.LLM_QA_MODEL_NAME or self.model,
+        )
         return json.loads(content), in_tok, out_tok
 
     @trace_operation(name="supportgpt.llm.run_chat", component="llm")
@@ -361,15 +364,22 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         self.deployment = settings.AZURE_OPENAI_DEPLOYMENT
 
     async def _call_gpt(
-        self, messages: List[Dict[str, str]], json_mode: bool = False
+        self,
+        messages: List[Dict[str, str]],
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+        model: str | None = None,
     ) -> Tuple[str, int, int]:
         kwargs = {}
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
-        record_current_llm_io(input_value=messages)
+        selected_model = model or self.deployment
+        record_current_llm_io(input_value=messages, model=selected_model)
         response = await self.client.chat.completions.create(
-            model=self.deployment, messages=messages, temperature=0.0, **kwargs
+            model=selected_model, messages=messages, temperature=0.0, **kwargs
         )
         content = response.choices[0].message.content or ""
         record_current_llm_io(output_value=content)
@@ -380,20 +390,24 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
         prompt = (
-            "Analyze the following support ticket and return a JSON object with: "
-            "sentiment (positive, neutral, negative), priority (low, medium, high, urgent), "
-            "department (billing, technical, shipping, general), intent (short description), "
-            "detected_emotions (list of strings), and confidence_score (float 0 to 1).\n\n"
-            f"Ticket Content: {text}"
+            "Classify this support ticket. Return only JSON with exactly these fields: "
+            "intent, priority, department, sentiment, confidence_score. "
+            "priority: low|medium|high|urgent; department: "
+            "billing|technical|shipping|general; sentiment: positive|neutral|negative; "
+            f"confidence_score: 0..1. Ticket: {text}"
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert customer service ticket analyzer. Always output JSON.",
+                "content": "Classify customer support tickets. Output compact JSON only.",
             },
             {"role": "user", "content": prompt},
         ]
-        content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
+        content, in_tok, out_tok = await self._call_gpt(
+            messages,
+            json_mode=True,
+            max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
+        )
         return json.loads(content), in_tok, out_tok
 
     @trace_operation(name="supportgpt.llm.generate_resolution", component="llm")
@@ -403,46 +417,50 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         prompt = (
             f"Subject: {subject}\n"
             f"Description: {description}\n\n"
-            f"Retrieved Context:\n{context}\n\n"
-            "Generate a professional response to the customer. Ensure you cite your sources where appropriate."
+            f"Relevant Context:\n{context}\n\n"
+            "Write only the final customer reply. Be concise, actionable, and cite the "
+            "provided source labels for policy claims. Do not explain your reasoning."
         )
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a customer support agent. Address the issue using only the "
-                    "provided context. If the context doesn't have the answer, state that "
-                    f"you need to escalate. {RESOLUTION_LANGUAGE_POLICY}"
+                    "Answer using only the supplied context. Never invent policy or promise "
+                    "an irreversible action. If evidence is insufficient, say human review "
+                    f"is needed. {RESOLUTION_LANGUAGE_POLICY}"
                 ),
             },
             {"role": "user", "content": prompt},
         ]
-        return await self._call_gpt(messages, json_mode=False)
+        return await self._call_gpt(
+            messages,
+            json_mode=False,
+            max_tokens=settings.LLM_RESOLVER_MAX_TOKENS,
+        )
 
     @trace_operation(name="supportgpt.llm.evaluate_qa", component="llm")
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
         prompt = (
-            f"Query: {query}\n"
-            f"Context: {json.dumps(context)}\n"
-            f"Response: {response}\n\n"
-            "Evaluate this response for hallucination and quality. Output a JSON object with:\n"
-            "qa_score (0.0 to 1.0),\n"
-            "hallucination_detected (boolean),\n"
-            "reasons (list of strings),\n"
-            "faithfulness (0.0 to 1.0),\n"
-            "context_precision (0.0 to 1.0),\n"
-            "citation_verified (boolean)"
+            f"Question: {query}\nEvidence: {json.dumps(context, ensure_ascii=False)}\n"
+            f"Answer: {response}\n"
+            'Return only JSON: {"score":0.0,"hallucination_detected":false,'
+            '"citation_verified":false}. Judge whether the answer is supported by evidence.'
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are an AI quality assurance agent verifying customer support answers. Output JSON only.",
+                "content": "Verify answer grounding. Output only the requested compact JSON.",
             },
             {"role": "user", "content": prompt},
         ]
-        content, in_tok, out_tok = await self._call_gpt(messages, json_mode=True)
+        content, in_tok, out_tok = await self._call_gpt(
+            messages,
+            json_mode=True,
+            max_tokens=settings.LLM_QA_MAX_TOKENS,
+            model=settings.LLM_QA_MODEL_NAME or self.deployment,
+        )
         return json.loads(content), in_tok, out_tok
 
     @trace_operation(name="supportgpt.llm.run_chat", component="llm")

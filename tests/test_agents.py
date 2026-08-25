@@ -1,10 +1,15 @@
 import logging
+import asyncio
 
 import pytest
 
 from src.agents.analyzer import ticket_analyzer_agent
 from src.agents.escalation import escalation_agent
-from src.agents.graph import _configured_llm_model_name, run_agent_workflow
+from src.agents.graph import (
+    _configured_llm_model_name,
+    context_enrichment_node,
+    run_agent_workflow,
+)
 from src.agents.quality_assurance import quality_assurance_agent
 from src.agents.resolver import resolution_agent
 from src.agents.retriever import knowledge_retriever_agent
@@ -49,6 +54,55 @@ async def test_analyzer_agent_logic():
     assert res_block["escalation_recommended"] is True
     assert res_block["risk_level"] == "critical"
     assert res_block["risk_block_automation"] is True
+
+
+@pytest.mark.asyncio
+async def test_analyzer_rule_match_skips_business_llm(monkeypatch):
+    async def unexpected_llm_call(text):
+        raise AssertionError("fixed intent should not call the business LLM")
+
+    monkeypatch.setattr(
+        "src.agents.analyzer.llm_provider.analyze_ticket", unexpected_llm_call
+    )
+    result = await ticket_analyzer_agent.analyze(
+        {"subject": "Refund", "description": "I need a refund for this charge."}
+    )
+
+    assert result["analyzer_strategy"] == "rule"
+    assert result["intent"] == "billing_dispute"
+    assert result.get("tokens_input", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_analyzer_ambiguous_intent_falls_back_to_llm(monkeypatch):
+    called = False
+
+    async def classify(text):
+        nonlocal called
+        called = True
+        return (
+            {
+                "intent": "refund_after_delivery_issue",
+                "priority": "high",
+                "department": "billing",
+                "sentiment": "negative",
+                "confidence_score": 0.84,
+            },
+            80,
+            20,
+        )
+
+    monkeypatch.setattr("src.agents.analyzer.llm_provider.analyze_ticket", classify)
+    result = await ticket_analyzer_agent.analyze(
+        {
+            "subject": "Missing order and refund",
+            "description": "My order was not received and I also need a refund.",
+        }
+    )
+
+    assert called is True
+    assert result["analyzer_strategy"] == "llm"
+    assert result["tokens_input"] == 80
 
 
 @pytest.mark.asyncio
@@ -232,6 +286,38 @@ async def test_tooling_guard_failure_isolates_untrusted_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_and_retriever_execute_in_parallel(monkeypatch):
+    tool_started = asyncio.Event()
+    retrieval_started = asyncio.Event()
+
+    async def slow_tool(state):
+        tool_started.set()
+        await retrieval_started.wait()
+        return {**state, "tool_context": {"ready": True}, "tool_calls": []}
+
+    async def slow_retriever(state):
+        retrieval_started.set()
+        await tool_started.wait()
+        return {**state, "context_citations": []}
+
+    monkeypatch.setattr(tooling_agent, "enrich", slow_tool)
+    monkeypatch.setattr(knowledge_retriever_agent, "retrieve", slow_retriever)
+    state = {
+        "ticket_id": 901,
+        "workflow_path": ["ticket_analyzer"],
+        "errors": [],
+        "tokens_input": 0,
+        "tokens_output": 0,
+    }
+
+    result = await asyncio.wait_for(context_enrichment_node(state), timeout=0.2)
+
+    assert tool_started.is_set() and retrieval_started.is_set()
+    assert result["tool_context"] == {"ready": True}
+    assert result["workflow_path"] == ["ticket_analyzer", "tool_call", "retriever"]
+
+
+@pytest.mark.asyncio
 async def test_retriever_blocks_semantic_attack_in_rag_document(monkeypatch):
     async def safe_retrieval(**kwargs):
         return [
@@ -323,6 +409,29 @@ async def test_qa_agent_scoring():
     res_val = await quality_assurance_agent.verify(state_valid)
     assert res_val["qa_score"] < 0.8
     assert res_val["hallucination_detected"] is True
+
+
+@pytest.mark.asyncio
+async def test_qa_without_context_skips_llm(monkeypatch):
+    async def unexpected_qa_call(**kwargs):
+        raise AssertionError("deterministic QA failure should not call LLM")
+
+    monkeypatch.setattr(
+        "src.agents.quality_assurance.llm_provider.evaluate_qa",
+        unexpected_qa_call,
+    )
+    result = await quality_assurance_agent.verify(
+        {
+            "description": "How do I configure settings?",
+            "suggested_response": "Open account settings.",
+            "context_citations": [],
+            "errors": [],
+        }
+    )
+
+    assert result["qa_strategy"] == "rule"
+    assert result["qa_score"] == 0.45
+    assert result["tokens_input"] == 0
 
 
 @pytest.mark.asyncio

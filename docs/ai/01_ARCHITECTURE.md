@@ -36,10 +36,15 @@ flowchart TB
         Analyzer[Analyzer + Guardrails]
         Tooling[Tooling]
         Retriever[Retriever]
+        ContextJoin[Context Enrichment]
         Resolver[Resolver]
         QA[QA + Response Filter]
         Escalation[Escalation]
-        Analyzer -->|normal| Tooling --> Retriever --> Resolver --> QA --> Escalation
+        Analyzer -->|normal| Tooling
+        Analyzer -->|normal| Retriever
+        Tooling --> ContextJoin
+        Retriever --> ContextJoin
+        ContextJoin --> Resolver --> QA --> Escalation
         Analyzer -->|security threat| Escalation
         Tooling -->|infected tool result| Escalation
         Retriever -->|infected RAG document| Escalation
@@ -96,11 +101,15 @@ flowchart TB
 stateDiagram-v2
     [*] --> Analyzer
     Analyzer --> Escalation: Prompt Injection / Jailbreak
-    Analyzer --> Tooling: 正常请求
-    Tooling --> Escalation: Tool 间接注入
-    Tooling --> Retriever: 安全工具结果
-    Retriever --> Escalation: RAG 间接注入
-    Retriever --> Resolver: 安全 citation
+    Analyzer --> ContextFork: 正常请求
+    state ContextFork <<fork>>
+    ContextFork --> Tooling
+    ContextFork --> Retriever
+    state ContextJoin <<join>>
+    Tooling --> ContextJoin
+    Retriever --> ContextJoin
+    ContextJoin --> Escalation: Tool / RAG 高风险
+    ContextJoin --> Resolver: 上下文安全合并
     Resolver --> QA
     QA --> Escalation
     Escalation --> [*]
@@ -110,11 +119,12 @@ stateDiagram-v2
 
 | 节点 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前取舍 |
 |---|---|---|---|---|---|---|
-| Analyzer | 规则与 Qwen3Guard 语义安全检测、PII 脱敏、情绪/优先级/部门/意图分类和初始风险评估 | 主题、描述 | 分类结果、置信度、脱敏文本、语义安全结果或安全阻断 | 在早期阻断风险，减少越权工具和无效 LLM 调用 | 只用规则、只用专用分类模型 | 规则处理确定性攻击，Qwen3Guard-Gen-0.6B 补充语义变体，Risk Engine 统一决策 |
+| Analyzer | 规则与 Qwen3Guard 语义安全检测、PII 脱敏、情绪/优先级/部门/意图分类和初始风险评估 | 主题、描述 | 分类结果、置信度、脱敏文本、语义安全结果或安全阻断 | 在早期阻断风险，减少越权工具和无效 LLM 调用 | 只用规则、只用专用分类模型 | 固定高置信度意图优先规则分类，模糊/多意图才调用精简 LLM Schema |
+| Context Enrichment | 并行执行 Tooling 与 Retriever，以风险只升不降策略合并 State | Analyzer State | Tool Context、citation、联合风险结果 | 两分支无强依赖，并行可降低等待时间 | LangGraph 串行节点 | 并行分支后集中合并，任一分支高风险都清空上下文并转人工 |
 | Tooling | 补充客户、订单、历史工单上下文，检查工具结果的间接注入 | 客户 ID、角色、部门、意图 | `tool_context`、`tool_calls` 或安全阻断 | 先补齐业务事实，但不信任外部工具文本 | 让 LLM 自行决定工具 | 确定性调用后执行规则 + Qwen3Guard 扫描；语义服务不可用时隔离未扫描的 Tool Context |
 | Retriever | 召回售后政策、FAQ 和操作指引，检查文档间接注入 | 工单主题、描述、版本、类别 | citation 列表或安全阻断 | 给回复提供知识依据，且不把受污染文档交给模型 | 纯关键字搜索、纯向量搜索 | 混合检索后执行规则 + Qwen3Guard 扫描；语义服务不可用时隔离 citation |
-| Resolver | 合并检索与业务上下文生成客服草稿 | 工单、citation、Tool Context | `suggested_response` | 将业务事实与知识事实统一供给模型 | 模板化回复、单一 RAG 上下文 | 当前保留 LLM 生成的弹性，同时限制为给定上下文 |
-| QA | 评估回复质量和幻觉风险，过滤内部信息泄露 | 问题、citation、草稿 | QA 分数、幻觉标记、过滤后的草稿 | 生成后再加一道独立风险门 | Resolver 自检、人工全量审核 | 单独 QA 节点更易观测和调阈值 |
+| Resolver | 合并检索与业务上下文生成客服草稿 | 工单、Top-2 citation、必要 Tool Context | `suggested_response` | 将业务事实与知识事实统一供给模型 | 模板化回复、全量上下文 | 限制 Context 和 max_tokens，只生成最终客服回复 |
+| QA | 评估回复质量和幻觉风险，过滤内部信息泄露 | 问题、精简 citation、草稿 | score、幻觉和 citation 验证标记 | 生成后再加一道独立风险门 | Resolver 自检、人工全量审核 | 确定性失败优先规则，其余使用可单独配置的轻量 Judge Model |
 | Escalation | 调用 Risk Engine、计算 SLA 并决定是否升级 | 安全、优先级、情绪、意图、置信度、QA、幻觉、错误 | 风险等级/分数/原因、升级结论、SLA | 将风险策略与生成逻辑解耦 | 在 Prompt 内决定、分散 if/else | 独立确定性规则更可审计、可测试并可统一调阈值 |
 
 ### 3.3 设计原因
@@ -167,7 +177,7 @@ stateDiagram-v2
 
 ### 5.1 Agent 编排
 
-当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Tooling → Retriever → Resolver → QA → Escalation；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，从当前节点直接路由到 Escalation。
+当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Tooling/Retriever 并行 → Context Enrichment 合并 → Resolver → QA → Escalation；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，直接路由到 Escalation。
 
 **职责**：控制节点顺序与唯一条件分支。
 
@@ -370,9 +380,9 @@ flowchart LR
 |---|---|---|---|---|---|---|
 | 输入 Guardrails | 阻断攻击、脱敏 PII | 原始主题和描述 | 结构化安全结果或脱敏文本 | 防止不可信输入进入后续链路 | 只用规则、只用模型、人工初筛 | 规则先拦截确定性特征；PII 脱敏后由 Qwen3Guard-Gen-0.6B 识别语义变体，Risk Engine 融合结果 |
 | 上下文 Guardrails | 阻断间接 Prompt Injection | Tool 结果、RAG 文档 | 可信上下文、安全短路或隔离 | 防止受污染的外部数据改写模型任务 | 内容签名、沙箱摘要、人工审查 | 敏感业务字段过滤后执行规则 + Qwen3Guard；语义服务失效时不将未扫描内容交给业务 LLM |
-| Analyzer Prompt | 分类工单 | 脱敏工单 | 情绪、优先级、部门、意图 JSON | 为路由提供结构化决策信号 | 专用分类器、规则分类 | Provider 抽象便于替换；分类质量依赖模型 |
-| Resolver Prompt | 基于事实与知识生成草稿 | 工单、citation、Tool Context | 客服回复 | 强制让生成依赖可见上下文 | 模板引擎、Function Calling 循环 | 自然语言表达灵活；上下文不足仍需升级 |
-| QA Prompt | 评估依据与幻觉风险 | 问题、citation、草稿 | QA JSON | 将质量门从生成职责中分离 | 规则、Judge Model、人工审核 | 一次性 QA 成本可控；没有自动反思重写 |
+| Analyzer Prompt | 模糊或多意图工单分类 | 脱敏工单 | 五个必要分类字段 | 高置信度规则未命中时才产生 LLM 成本 | 全量 LLM 分类 | 精简 JSON Schema 并限制 max_tokens |
+| Resolver Prompt | 基于事实与知识生成草稿 | 工单、Top-2 citation、精简 Tool Context | 最终客服回复 | 强制让生成依赖可见上下文 | 全量上下文 | 限长与 max_tokens 同时降低输入和生成成本 |
+| QA Prompt | 评估依据与幻觉风险 | 问题、Top-2 citation、草稿 | score / hallucination / citation JSON | 将质量门从生成职责中分离 | 长文 Judge | 确定性失败规则短路，其余使用轻量结构化 Judge |
 | 输出过滤 | 删除内部信息泄露 | 草稿 | 过滤后的回复和风险标记 | 防止提示词与工作流暴露 | DLP 服务、关键词规则 | 当前规则简单，需持续维护覆盖面 |
 
 Prompt 当前直接维护在 LLM Provider 中，没有 Prompt Registry、版本号、灰度发布或 A/B 实验。采用这种方式的原因是项目仍处于单工作流、少量 Prompt 阶段；代价是 Prompt 变更不可独立审计。未来应在 Golden Set 建立后再引入版本治理。
