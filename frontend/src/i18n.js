@@ -13,7 +13,9 @@ const SENTIMENT_LABELS = {
 
 const STATUS_LABELS = {
   open: '处理中',
+  in_progress: '处理中',
   pending: '待处理',
+  pending_approval: '待审批',
   approved: '已批准',
   modified: '已修改',
   rejected: '已拒绝',
