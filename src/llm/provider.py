@@ -2,7 +2,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple
 from src.config import settings
-from src.observability.tracing import trace_operation
+from src.observability.tracing import record_current_llm_io, trace_operation
 
 
 RESOLUTION_LANGUAGE_POLICY = (
@@ -251,10 +251,12 @@ class OpenAILLMProvider(BaseLLMProvider):
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
+        record_current_llm_io(input_value=messages)
         response = await self.client.chat.completions.create(
             model=self.model, messages=messages, temperature=0.0, **kwargs
         )
         content = response.choices[0].message.content or ""
+        record_current_llm_io(output_value=content)
         input_tokens = response.usage.prompt_tokens
         output_tokens = response.usage.completion_tokens
         return content, input_tokens, output_tokens
@@ -365,10 +367,12 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
+        record_current_llm_io(input_value=messages)
         response = await self.client.chat.completions.create(
             model=self.deployment, messages=messages, temperature=0.0, **kwargs
         )
         content = response.choices[0].message.content or ""
+        record_current_llm_io(output_value=content)
         input_tokens = response.usage.prompt_tokens
         output_tokens = response.usage.completion_tokens
         return content, input_tokens, output_tokens

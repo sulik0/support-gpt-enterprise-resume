@@ -26,7 +26,9 @@ from src.observability.tracing import (
     get_request_id,
     langsmith_agent_trace_context,
     langsmith_span_attributes,
+    record_current_llm_io,
     reset_request_id,
+    serialize_llm_content,
     set_span_attributes,
 )
 
@@ -175,6 +177,45 @@ def test_langsmith_collector_pipeline_filters_non_agent_spans():
     assert 'span.attributes["langsmith.export"] != true' in collector_config
     assert "traces/langsmith:" in collector_config
     assert "traces/debug:" in collector_config
+    assert "attributes/drop_llm_content:" in collector_config
+    langsmith_pipeline = collector_config.split("traces/langsmith:", 1)[1].split(
+        "metrics:", 1
+    )[0]
+    assert "attributes/drop_llm_content" not in langsmith_pipeline
+
+
+def test_langsmith_llm_content_is_redacted_and_limited(monkeypatch):
+    monkeypatch.setattr(
+        "src.observability.tracing.settings.LANGSMITH_LLM_CONTENT_MAX_CHARS", 1000
+    )
+    content = serialize_llm_content(
+        {"message": "alice@example.com " + "x" * 1200, "api_key": "secret-value"}
+    )
+
+    assert "alice@example.com" not in content
+    assert "secret-value" not in content
+    assert content.endswith("[TRUNCATED]")
+
+
+def test_langsmith_llm_span_records_redacted_input_and_output(monkeypatch):
+    class RecordingSpan:
+        def __init__(self):
+            self.attributes = {}
+
+        def set_attributes(self, attributes):
+            self.attributes.update(attributes)
+
+    span = RecordingSpan()
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", lambda: span)
+
+    with langsmith_agent_trace_context():
+        record_current_llm_io(
+            input_value=[{"role": "user", "content": "alice@example.com"}],
+            output_value="Call me at 13800138000",
+        )
+
+    assert "alice@example.com" not in span.attributes["gen_ai.prompt"]
+    assert "13800138000" not in span.attributes["gen_ai.completion"]
 
 
 def test_application_logging_configuration_is_idempotent():

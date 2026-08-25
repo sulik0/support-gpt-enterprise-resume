@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     OTEL_COLLECTOR_LANGSMITH_ENDPOINT: str = Field(
         default="https://api.smith.langchain.com/otel"
     )
+    LANGSMITH_CAPTURE_LLM_CONTENT: bool = Field(default=True)
+    LANGSMITH_LLM_CONTENT_MAX_CHARS: int = Field(
+        default=50000, ge=1000, le=200000
+    )
 
     # Guardrails Settings
     PII_ANONYMIZATION_ENABLED: bool = Field(default=True)

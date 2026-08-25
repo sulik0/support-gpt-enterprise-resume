@@ -23,13 +23,15 @@ processors:
         action: delete
       - key: db.redis.args
         action: delete
-      - key: gen_ai.prompt
-        action: delete
-      - key: gen_ai.completion
-        action: delete
       - key: exception.message
         action: delete
       - key: exception.stacktrace
+        action: delete
+  attributes/drop_llm_content:
+    actions:
+      - key: gen_ai.prompt
+        action: delete
+      - key: gen_ai.completion
         action: delete
   filter/langsmith_main_agent:
     error_mode: ignore
@@ -62,7 +64,11 @@ service:
   pipelines:
     traces/debug:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/data_protection, batch]
+      processors:
+        - memory_limiter
+        - attributes/data_protection
+        - attributes/drop_llm_content
+        - batch
       exporters: [debug]
     traces/langsmith:
       receivers: [otlp]

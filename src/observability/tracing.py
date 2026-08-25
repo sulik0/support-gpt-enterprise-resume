@@ -1,5 +1,6 @@
 import functools
 import inspect
+import json
 import logging
 import socket
 import time
@@ -9,7 +10,11 @@ from typing import Any, Callable, Dict, Iterator, Optional
 from urllib.parse import urlparse
 
 from src.config import settings
-from src.observability.sanitization import redact_text, sanitize_attributes
+from src.observability.sanitization import (
+    redact_text,
+    sanitize_attributes,
+    sanitize_value,
+)
 
 logger = logging.getLogger("supportgpt.observability.tracing")
 _initialized = False
@@ -158,6 +163,57 @@ def _llm_span_attributes() -> Dict[str, Any]:
     }
 
 
+def serialize_llm_content(value: Any) -> str:
+    """将 LLM 内容脱敏并限长后写入 Trace。"""
+    safe_value = sanitize_value(value)
+    if isinstance(safe_value, str):
+        content = safe_value
+    else:
+        content = json.dumps(safe_value, ensure_ascii=False, default=str)
+    max_chars = settings.LANGSMITH_LLM_CONTENT_MAX_CHARS
+    if len(content) > max_chars:
+        return f"{content[:max_chars]}\n[TRUNCATED]"
+    return content
+
+
+def record_current_llm_io(
+    *, input_value: Any = None, output_value: Any = None
+) -> None:
+    """向当前 LLM Span 记录脱敏后的实际输入输出。"""
+    if (
+        not settings.LANGSMITH_CAPTURE_LLM_CONTENT
+        or not _langsmith_agent_context.get()
+    ):
+        return
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        attributes: Dict[str, Any] = {}
+        if input_value is not None:
+            attributes["gen_ai.prompt"] = serialize_llm_content(input_value)
+        if output_value is not None:
+            attributes["gen_ai.completion"] = serialize_llm_content(output_value)
+        set_span_attributes(span, attributes)
+    except Exception as exc:
+        logger.debug("Unable to record LLM input/output: %s", exc)
+
+
+def _bound_llm_inputs(
+    function: Callable, args: tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Dict[str, Any]:
+    """从 Provider 方法参数中提取可展示的 LLM 输入。"""
+    try:
+        bound = inspect.signature(function).bind_partial(*args, **kwargs)
+        bound.arguments.pop("self", None)
+        return dict(bound.arguments)
+    except Exception:
+        return {
+            "argument_count": max(len(args) - 1, 0),
+            "keyword_keys": sorted(kwargs),
+        }
+
+
 def mark_span_error(span: Any, error: BaseException) -> None:
     """Record a sanitized exception while preserving the original exception flow."""
     try:
@@ -239,6 +295,13 @@ def trace_operation(*, name: str, component: str) -> Callable:
                         **(_llm_span_attributes() if component == "llm" else {}),
                     },
                 ) as span:
+                    if (
+                        component == "llm"
+                        and settings.LANGSMITH_CAPTURE_LLM_CONTENT
+                    ):
+                        record_current_llm_io(
+                            input_value=_bound_llm_inputs(function, args, kwargs)
+                        )
                     result = await function(*args, **kwargs)
                     if (
                         component == "llm"
@@ -253,6 +316,7 @@ def trace_operation(*, name: str, component: str) -> Callable:
                                 "gen_ai.usage.total_tokens": result[-2] + result[-1],
                             },
                         )
+                        record_current_llm_io(output_value=result[0])
                     return result
 
             return async_wrapper
@@ -268,7 +332,15 @@ def trace_operation(*, name: str, component: str) -> Callable:
                     **(_llm_span_attributes() if component == "llm" else {}),
                 },
             ):
-                return function(*args, **kwargs)
+                if component == "llm" and settings.LANGSMITH_CAPTURE_LLM_CONTENT:
+                    record_current_llm_io(
+                        input_value=_bound_llm_inputs(function, args, kwargs)
+                    )
+                result = function(*args, **kwargs)
+                if component == "llm":
+                    output_value = result[0] if isinstance(result, tuple) else result
+                    record_current_llm_io(output_value=output_value)
+                return result
 
         return sync_wrapper
 

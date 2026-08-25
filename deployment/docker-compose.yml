@@ -20,6 +20,8 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://otel-collector:4318/v1/metrics
       - OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS=15000
       - OTEL_EXPORTER_PREFLIGHT_ENABLED=false
+      - LANGSMITH_CAPTURE_LLM_CONTENT=${LANGSMITH_CAPTURE_LLM_CONTENT:-true}
+      - LANGSMITH_LLM_CONTENT_MAX_CHARS=${LANGSMITH_LLM_CONTENT_MAX_CHARS:-50000}
     volumes:
       - chromadb-data:/app/chromadb_store
     depends_on:
