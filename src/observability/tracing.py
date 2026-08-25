@@ -1,13 +1,15 @@
 import functools
 import inspect
 import logging
+import socket
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Any, Callable, Dict, Iterator, Optional
+from urllib.parse import urlparse
 
 from src.config import settings
-from src.observability.sanitization import sanitize_attributes, redact_text
+from src.observability.sanitization import redact_text, sanitize_attributes
 
 logger = logging.getLogger("supportgpt.observability.tracing")
 _initialized = False
@@ -20,6 +22,36 @@ def get_tracer(name: str = "supportgpt"):
     from opentelemetry import trace
 
     return trace.get_tracer(name)
+
+
+def _should_enable_otlp_exporter(endpoint: Optional[str], signal: str) -> bool:
+    """本地启动时预检 Collector，避免后台 exporter 重试刷屏。"""
+    if not endpoint:
+        return False
+    is_local = settings.APP_ENV.lower() in {"development", "dev", "local", "test"}
+    if not settings.OTEL_EXPORTER_PREFLIGHT_ENABLED or not is_local:
+        return True
+
+    parsed = urlparse(endpoint)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if not host:
+        logger.warning("Skipping OTLP %s exporter: invalid endpoint.", signal)
+        return False
+    try:
+        with socket.create_connection(
+            (host, port), timeout=settings.OTEL_EXPORTER_PREFLIGHT_TIMEOUT_SECONDS
+        ):
+            return True
+    except OSError:
+        logger.warning(
+            "Skipping OTLP %s exporter because Collector is unreachable at %s:%s; "
+            "start Collector and restart backend to enable export.",
+            signal,
+            host,
+            port,
+        )
+        return False
 
 
 def set_span_attributes(span: Any, attributes: Dict[str, Any]) -> None:
@@ -182,6 +214,13 @@ def init_tracing() -> None:
         _initialized = True
         return
 
+    traces_otlp_enabled = _should_enable_otlp_exporter(
+        settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, "traces"
+    )
+    metrics_otlp_enabled = _should_enable_otlp_exporter(
+        settings.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, "metrics"
+    )
+
     try:
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
@@ -203,7 +242,7 @@ def init_tracing() -> None:
             )
             trace.set_tracer_provider(tracer_provider)
 
-        if settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:
+        if traces_otlp_enabled:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                 OTLPSpanExporter,
             )
@@ -235,7 +274,7 @@ def init_tracing() -> None:
         current_meter_provider = metrics.get_meter_provider()
         if not isinstance(current_meter_provider, MeterProvider):
             metric_readers = []
-            if settings.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:
+            if metrics_otlp_enabled:
                 from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
                     OTLPMetricExporter,
                 )
@@ -284,6 +323,6 @@ def init_tracing() -> None:
     logger.info(
         "OpenTelemetry initialized: service=%s, traces_otlp=%s, metrics_otlp=%s",
         settings.OTEL_SERVICE_NAME,
-        bool(settings.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
-        bool(settings.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT),
+        traces_otlp_enabled,
+        metrics_otlp_enabled,
     )

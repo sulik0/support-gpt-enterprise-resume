@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: Optional[str] = Field(default=None)
     OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS: int = Field(default=15000, ge=1000)
     OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS: float = Field(default=3.0)
+    OTEL_EXPORTER_PREFLIGHT_ENABLED: bool = Field(default=True)
+    OTEL_EXPORTER_PREFLIGHT_TIMEOUT_SECONDS: float = Field(
+        default=0.25, ge=0.05, le=5.0
+    )
     OTEL_CONSOLE_EXPORTER: bool = Field(default=False)
     OTEL_TRACE_SAMPLE_RATIO: float = Field(default=1.0, ge=0.0, le=1.0)
     OTEL_EXCLUDED_URLS: str = Field(default="health")

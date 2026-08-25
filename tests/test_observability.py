@@ -21,11 +21,44 @@ from src.observability.metrics import (
 from src.observability.sanitization import sanitize_attributes, sanitize_value
 from src.observability.token_tracking import estimate_tokens
 from src.observability.tracing import (
+    _should_enable_otlp_exporter,
     bind_request_id,
     get_request_id,
     reset_request_id,
     set_span_attributes,
 )
+
+
+def test_local_otlp_preflight_skips_unreachable_collector(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(
+        "src.observability.tracing.settings.OTEL_EXPORTER_PREFLIGHT_ENABLED", True
+    )
+    monkeypatch.setattr("src.observability.tracing.settings.APP_ENV", "development")
+    monkeypatch.setattr(
+        "src.observability.tracing.socket.create_connection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionRefusedError()),
+    )
+    monkeypatch.setattr(
+        "src.observability.tracing.logger.warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+
+    enabled = _should_enable_otlp_exporter("http://localhost:4318/v1/traces", "traces")
+
+    assert enabled is False
+    assert "Collector is unreachable" in warnings[0]
+
+
+def test_production_otlp_exporter_does_not_depend_on_startup_preflight(monkeypatch):
+    monkeypatch.setattr(
+        "src.observability.tracing.settings.OTEL_EXPORTER_PREFLIGHT_ENABLED", True
+    )
+    monkeypatch.setattr("src.observability.tracing.settings.APP_ENV", "production")
+    assert (
+        _should_enable_otlp_exporter("http://otel-collector:4318/v1/traces", "traces")
+        is True
+    )
 
 
 def test_token_estimation():

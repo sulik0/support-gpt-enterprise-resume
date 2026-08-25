@@ -120,6 +120,8 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics
 OTEL_METRIC_EXPORT_INTERVAL_MILLISECONDS=15000
 OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS=3
+OTEL_EXPORTER_PREFLIGHT_ENABLED=true
+OTEL_EXPORTER_PREFLIGHT_TIMEOUT_SECONDS=0.25
 OTEL_TRACE_SAMPLE_RATIO=1.0
 ```
 
@@ -132,6 +134,8 @@ OTEL_COLLECTOR_LANGSMITH_ENDPOINT=https://api.smith.langchain.com/otel
 ```
 
 Docker Compose 默认将 Application Trace 和 Metrics 统一发送到 Collector。代码中不存在 LangSmith SDK `traceable` 双轨路径，Collector 或下游不可用时，应用遥测保持 fail-open，不影响客服业务主流程。
+
+本地 `development/local/test` 环境默认在注册 OTLP exporter 前检查 Collector 端口。如果 `localhost:4318` 不可达，应用只记录一条 warning 并跳过当次 exporter，避免后台重试刷屏；本地启动 Collector 后需重启 Backend 以恢复上报。生产环境不依赖这个启动前检，Compose 中也显式关闭了 preflight。
 
 ## 运行
 

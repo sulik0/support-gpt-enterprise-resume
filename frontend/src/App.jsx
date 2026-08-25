@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchTickets, createTicket, login, register, logout } from './api/client';
+import { AUTH_EXPIRED_EVENT, fetchTickets, createTicket, login, register, logout } from './api/client';
 import MetricsGrid from './components/MetricsGrid';
 import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
@@ -14,6 +14,7 @@ export default function App() {
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [activeView, setActiveView] = useState('workspace');
+  const [authNotice, setAuthNotice] = useState('');
 
   // 页面主体状态
   const [tickets, setTickets] = useState([]);
@@ -42,6 +43,20 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    function handleAuthExpired() {
+      setIsAuthenticated(false);
+      setUserRole('');
+      setUsername('');
+      setTickets([]);
+      setSelectedTicket(null);
+      setActiveView('workspace');
+      setAuthNotice('登录已过期，请重新登录。');
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
+
   async function loadTickets() {
     try {
       const list = await fetchTickets();
@@ -55,6 +70,7 @@ export default function App() {
     e.preventDefault();
     try {
       await login(loginUser, loginPass);
+      setAuthNotice('');
       setIsAuthenticated(true);
     } catch (err) {
       alert('登录失败，请检查用户名和密码。');
@@ -118,6 +134,10 @@ export default function App() {
             </h1>
             <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: '#9ca3af' }}>企业级 AI 客服平台</p>
           </div>
+
+          {authNotice && (
+            <div className="auth-notice" role="alert">{authNotice}</div>
+          )}
 
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>

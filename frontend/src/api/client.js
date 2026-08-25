@@ -1,4 +1,5 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const AUTH_EXPIRED_EVENT = 'supportgpt:auth-expired';
 
 function getHeaders() {
   const token = localStorage.getItem('token');
@@ -9,6 +10,15 @@ function getHeaders() {
     headers['Authorization'] = `Bearer ${token}`;
   }
   return headers;
+}
+
+async function authenticatedFetch(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: options.headers || getHeaders() });
+  if (response.status === 401) {
+    logout();
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+  }
+  return response;
 }
 
 export async function login(username, password) {
@@ -44,7 +54,7 @@ export async function register(username, password, role = 'agent') {
 }
 
 export async function fetchTickets() {
-  const response = await fetch(`${BASE_URL}/tickets`, {
+  const response = await authenticatedFetch(`${BASE_URL}/tickets`, {
     headers: getHeaders(),
   });
   if (!response.ok) throw new Error('加载工单失败');
@@ -52,7 +62,7 @@ export async function fetchTickets() {
 }
 
 export async function createTicket(customerId, subject, description) {
-  const response = await fetch(`${BASE_URL}/tickets`, {
+  const response = await authenticatedFetch(`${BASE_URL}/tickets`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ customer_id: customerId, subject, description }),
@@ -62,7 +72,7 @@ export async function createTicket(customerId, subject, description) {
 }
 
 export async function fetchPendingApprovals() {
-  const response = await fetch(`${BASE_URL}/approvals/pending`, {
+  const response = await authenticatedFetch(`${BASE_URL}/approvals/pending`, {
     headers: getHeaders(),
   });
   if (!response.ok) throw new Error('加载审批记录失败');
@@ -70,7 +80,7 @@ export async function fetchPendingApprovals() {
 }
 
 export async function submitApproval(approvalId, status, modifiedResponse) {
-  const response = await fetch(`${BASE_URL}/approvals/${approvalId}`, {
+  const response = await authenticatedFetch(`${BASE_URL}/approvals/${approvalId}`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ approval_id: approvalId, status, modified_response: modifiedResponse }),
@@ -80,7 +90,7 @@ export async function submitApproval(approvalId, status, modifiedResponse) {
 }
 
 export async function submitChat(message, customerId, sessionId, kbVersion = 'v1') {
-  const response = await fetch(`${BASE_URL}/chat`, {
+  const response = await authenticatedFetch(`${BASE_URL}/chat`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ message, customer_id: customerId, session_id: sessionId, kb_version: kbVersion }),
@@ -90,7 +100,7 @@ export async function submitChat(message, customerId, sessionId, kbVersion = 'v1
 }
 
 export async function fetchCustomerContext(customerId) {
-  const response = await fetch(`${BASE_URL}/customer-context`, {
+  const response = await authenticatedFetch(`${BASE_URL}/customer-context`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ customer_id: customerId }),
@@ -100,7 +110,7 @@ export async function fetchCustomerContext(customerId) {
 }
 
 export async function evaluateResponse(query, context, responseText) {
-  const response = await fetch(`${BASE_URL}/evaluate-response`, {
+  const response = await authenticatedFetch(`${BASE_URL}/evaluate-response`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ query, context, response: responseText }),
@@ -111,7 +121,7 @@ export async function evaluateResponse(query, context, responseText) {
 
 export async function fetchAgentRuns(limit = 30, offset = 0) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  const response = await fetch(`${BASE_URL}/observability/runs?${params}`, {
+  const response = await authenticatedFetch(`${BASE_URL}/observability/runs?${params}`, {
     headers: getHeaders(),
   });
   if (!response.ok) throw new Error('加载 Agent 运行记录失败');
@@ -119,7 +129,7 @@ export async function fetchAgentRuns(limit = 30, offset = 0) {
 }
 
 export async function fetchAgentRun(agentRunId) {
-  const response = await fetch(`${BASE_URL}/feedback/runs/${encodeURIComponent(agentRunId)}`, {
+  const response = await authenticatedFetch(`${BASE_URL}/feedback/runs/${encodeURIComponent(agentRunId)}`, {
     headers: getHeaders(),
   });
   if (!response.ok) throw new Error('加载 Agent 运行详情失败');

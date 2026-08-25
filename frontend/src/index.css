@@ -97,6 +97,16 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.auth-notice {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  color: #fcd34d;
+  background: rgba(120, 53, 15, 0.18);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
 /* 状态徽标 */
 .badge {
   display: inline-flex;

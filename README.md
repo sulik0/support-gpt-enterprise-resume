@@ -153,6 +153,8 @@ VITE_LANGSMITH_PROJECT_URL=https://smith.langchain.com/<your-project-url>
 
 前端只保存 Project URL，不得放置 LangSmith API Key。API Key 仍只存在 Collector 环境变量中。
 
+如果本地未启动 Collector，Backend 会在启动时跳过不可达的 OTLP exporter，避免 `localhost:4318` 重试日志刷屏。需要恢复 LangSmith Trace 时，先启动 Collector，再重启 Backend。前端 JWT 过期时会自动清理旧登录态并要求重新登录。
+
 ---
 
 ## 🧪 Testing Suite
