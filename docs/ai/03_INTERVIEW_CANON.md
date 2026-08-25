@@ -255,12 +255,13 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 第一阶段已实现线上反馈采集和训练候选沉淀：
 
-- `/chat` 与 `/suggest-response` 成功后创建 `AgentRun`，记录 `request_id`、OpenTelemetry `trace_id`、Prompt / Workflow / Model / KB 版本、脱敏后的输入输出、Workflow Path、Tool Call 摘要、citation、QA、幻觉、Token 和延迟。
+- 工单工作台通过 `POST /tickets` 创建唯一工单并立即执行 Workflow；`/chat`、`/tickets` 与 `/suggest-response` 成功后创建 `AgentRun`，记录 `request_id`、OpenTelemetry `trace_id`、Prompt / Workflow / Model / KB 版本、脱敏后的输入输出、Workflow Path、Tool Call 摘要、citation、QA、幻觉、Token 和延迟。
+- 打开工作台详情只调用 `GET /tickets/{ticket_id}/agent-result` 读取最新持久化结果，不会重新执行 Agent，也不会新增 Ticket、AgentRun 或审批记录。
 - 用户通过 `agent_run_id + feedback_token` 提交评分；数据库只保存 Token 的 SHA-256 摘要，每个 Run 只接受一条不可变用户反馈。
 - 人工审批的通过、修改和拒绝结果自动写入 `FeedbackEvent`；人工修改可形成 SFT 与 DPO 候选。
 - 可信评测结果可关联 Agent Run；离线导入同时要求 Agent Evaluation 通过、citation 命中和 RAG 平均分达到 `0.75`。
 - 导出脚本生成脱敏、去重、原子写入且权限为 `0600` 的 `sft_candidates.jsonl`、`dpo_candidates.jsonl` 和 `manifest.json`。
-- Feedback Pipeline 使用独立数据库事务并 fail-open；采集失败不回滚客服主流程。
+- `/chat` 与 `/suggest-response` 的 Feedback 采集使用独立事务并 fail-open；工作台的 `POST /tickets` 将 AgentRun 作为详情结果来源，必须在 AgentRun 和审批关联写入成功后才返回成功，避免产生没有可读处理结果的成功响应。
 
 本阶段只生成训练候选，不执行 SFT / DPO 训练，不包含 Dataset Registry、人工标注平台、训练任务编排、模型自动发布或 vLLM Serving。
 
@@ -307,7 +308,7 @@ React 前端已增加仅 `manager/admin` 可见的 Agent 可观测性页面，�
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
-| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；Python 3.12 环境 119 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
+| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；Python 3.12 环境 121 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |

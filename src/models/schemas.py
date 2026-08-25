@@ -127,6 +127,7 @@ class TicketCreate(BaseModel):
     customer_id: str
     subject: str
     description: str
+    kb_version: str = Field(default="v1")
 
 
 class TicketResponse(BaseModel):
@@ -148,6 +149,26 @@ class TicketResponse(BaseModel):
         """允许响应模型从 ORM 工单对象读取字段。"""
 
         from_attributes = True
+
+
+class TicketAgentResultResponse(BaseModel):
+    """返回工单已持久化的 Agent 处理结果，不触发新的 Workflow。"""
+
+    ticket_id: int
+    agent_run_id: str
+    kb_version: str
+    response: str
+    citations: List[Citation] = Field(default_factory=list)
+    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    qa_score: Optional[float] = None
+    hallucination_detected: bool = False
+    escalation_recommended: bool = False
+    escalation_reason: Optional[str] = None
+    approval_required: bool = False
+    approval_id: Optional[int] = None
+    approval_status: Optional[str] = None
+    cost_metadata: CostMetadata
+    created_at: datetime
 
 
 class TicketSummaryResponse(BaseModel):

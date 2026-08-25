@@ -31,7 +31,7 @@ SFT Candidates / DPO Candidates
 
 ### AgentRun
 
-`AgentRun` 是 Feedback Pipeline 的统一关联主键。每次 `/chat` 或 `/suggest-response` 执行后保存：
+`AgentRun` 是 Feedback Pipeline 的统一关联主键。每次 `/chat`、`/tickets` 或 `/suggest-response` 执行后保存：
 
 - `request_id`、OpenTelemetry `trace_id` 和不可逆的 `session_id_hash`。
 - `prompt_version`、`workflow_version`、`model_provider`、`model_name`、`kb_version`。
@@ -125,7 +125,7 @@ python scripts/import_evaluation_feedback.py \
 
 - 输入、输出、评论和人工修正进入反馈域前统一 PII 脱敏。
 - 原始 `session_id` 不进入反馈域，仅保存 HMAC-SHA256 摘要。
-- Agent Run 和审批关联使用独立数据库事务，采集失败不会回滚客服主流程。
+- `/chat`、`/suggest-response` 的 Feedback 采集使用独立事务并 fail-open；工单工作台将 AgentRun 同时作为详情结果来源，因此 `POST /tickets` 只有在 AgentRun 与审批关联可靠写入后才返回成功，避免工单创建成功但详情无结果。
 - Tool Call 只保存允许的审计字段，不保存 Tool Result 中的客户业务数据。
 - 训练候选继承脱敏后的文本。
 - 导出文件默认写入 `evaluation/training_candidates/`，该目录不会提交 Git。

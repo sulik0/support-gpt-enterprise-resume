@@ -34,6 +34,7 @@ export default function App() {
   const [newCustId, setNewCustId] = useState('cust_101');
   const [newSubject, setNewSubject] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [creatingTicket, setCreatingTicket] = useState(false);
 
   // 性能观测指标
   const [sysMetrics, setSysMetrics] = useState({
@@ -71,6 +72,7 @@ export default function App() {
     try {
       const list = await fetchTickets();
       setTickets(list);
+      return list;
     } catch (err) {
       console.error('加载工单失败：', err);
     }
@@ -110,15 +112,18 @@ export default function App() {
 
   async function handleCreateTicket(e) {
     e.preventDefault();
+    setCreatingTicket(true);
     try {
-      await createTicket(newCustId, newSubject, newDesc);
+      const createdTicket = await createTicket(newCustId, newSubject, newDesc, kbVersion);
       setShowModal(false);
       setNewSubject('');
       setNewDesc('');
-      loadTickets();
-      alert('工单提交成功！');
+      await loadTickets();
+      setSelectedTicket(createdTicket);
     } catch (err) {
       alert(err.message);
+    } finally {
+      setCreatingTicket(false);
     }
   }
 
@@ -246,7 +251,7 @@ export default function App() {
             <div className="topbar-actions">
               <label className="kb-selector">
                 <BookOpen size={15} />
-                <span>知识库</span>
+                <span>新工单知识库</span>
                 <select value={kbVersion} onChange={(e) => setKbVersion(e.target.value)}>
                   <option value="v1">v1 · 当前政策</option>
                   <option value="v2">v2 · 60 天政策</option>
@@ -269,7 +274,7 @@ export default function App() {
                 <div>
                   <span className="workspace-eyebrow"><Headphones size={14} /> 今日客服队列</span>
                   <h2>{workspaceStats.active > 0 ? `还有 ${workspaceStats.active} 张工单等待处理` : '当前工单已全部处理'}</h2>
-                  <p>选择左侧工单后，Agent 会自动补全客户上下文、检索政策并生成可审核回复。</p>
+                  <p>提交工单时，Agent 会自动补全上下文、检索政策并保存回复；选择工单只读取已保存结果。</p>
                 </div>
                 <div className="workspace-hero-actions">
                   {workspaceStats.attention > 0 && <span className="attention-pill">{workspaceStats.attention} 张高优工单</span>}
@@ -287,7 +292,7 @@ export default function App() {
                   onNewTicket={() => setShowModal(true)}
                 />
                 <TicketDetails
-                  ticket={selectedTicket ? { ...selectedTicket, kb_version: kbVersion } : null}
+                  ticket={selectedTicket}
                   onActionComplete={handleActionComplete}
                 />
               </main>
@@ -297,11 +302,11 @@ export default function App() {
       </div>
 
       {showModal && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setShowModal(false)}>
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => !creatingTicket && event.target === event.currentTarget && setShowModal(false)}>
           <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="new-ticket-title">
             <div className="modal-heading">
               <div><span>创建新任务</span><h2 id="new-ticket-title">提交客户工单</h2></div>
-              <button className="icon-button" type="button" onClick={() => setShowModal(false)} aria-label="关闭">×</button>
+              <button className="icon-button" type="button" onClick={() => setShowModal(false)} aria-label="关闭" disabled={creatingTicket}>×</button>
             </div>
             <form onSubmit={handleCreateTicket} className="ticket-form">
               <label><span>客户</span><select value={newCustId} onChange={(e) => setNewCustId(e.target.value)}>
@@ -312,8 +317,10 @@ export default function App() {
               <label><span>工单主题</span><input type="text" value={newSubject} onChange={(e) => setNewSubject(e.target.value)} placeholder="例如：订单退款进度咨询" required /></label>
               <label><span>客户问题</span><textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="请完整描述客户诉求、订单信息和期望结果……" required /></label>
               <div className="modal-actions">
-                <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary">取消</button>
-                <button type="submit" className="btn btn-primary"><Plus size={16} /> 创建并进入队列</button>
+                <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary" disabled={creatingTicket}>取消</button>
+                <button type="submit" className="btn btn-primary" disabled={creatingTicket}>
+                  {creatingTicket ? <><RefreshCw size={16} className="spin" /> Agent 正在处理…</> : <><Plus size={16} /> 创建并进入队列</>}
+                </button>
               </div>
             </form>
           </div>

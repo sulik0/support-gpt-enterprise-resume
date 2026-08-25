@@ -61,13 +61,21 @@ export async function fetchTickets() {
   return response.json();
 }
 
-export async function createTicket(customerId, subject, description) {
+export async function createTicket(customerId, subject, description, kbVersion = 'v1') {
   const response = await authenticatedFetch(`${BASE_URL}/tickets`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ customer_id: customerId, subject, description }),
+    body: JSON.stringify({ customer_id: customerId, subject, description, kb_version: kbVersion }),
   });
   if (!response.ok) throw new Error('创建工单失败');
+  return response.json();
+}
+
+export async function fetchTicketAgentResult(ticketId) {
+  const response = await authenticatedFetch(`${BASE_URL}/tickets/${encodeURIComponent(ticketId)}/agent-result`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error(response.status === 404 ? '该工单暂无已保存的 Agent 处理结果' : '加载 Agent 处理结果失败');
   return response.json();
 }
 

@@ -12,7 +12,7 @@ import {
   Sparkles,
   User,
 } from 'lucide-react';
-import { evaluateResponse, fetchCustomerContext, submitApproval, submitChat } from '../api/client';
+import { evaluateResponse, fetchCustomerContext, fetchTicketAgentResult, submitApproval } from '../api/client';
 import {
   translateEscalationReason,
   translateOrderItem,
@@ -48,12 +48,7 @@ export default function TicketDetails({ ticket, onActionComplete }) {
     try {
       const crmProfile = await fetchCustomerContext(ticket.customer_id);
       setCustomer(crmProfile);
-      const chatRes = await submitChat(
-        ticket.description,
-        ticket.customer_id,
-        `session_${ticket.id}`,
-        ticket.kb_version,
-      );
+      const chatRes = await fetchTicketAgentResult(ticket.id);
       setChatOutput(chatRes);
       setEditedResponse(chatRes.response);
     } catch (err) {
@@ -97,7 +92,7 @@ export default function TicketDetails({ ticket, onActionComplete }) {
         <span className="empty-state-icon"><ClipboardCheck size={34} /></span>
         <span className="section-label">等待处理</span>
         <h2>从队列中选择一张工单</h2>
-        <p>系统将自动读取客户画像与订单信息，运行知识检索，并生成带引用依据的回复草稿。</p>
+        <p>新工单提交后，系统会完成客户画像补全、知识检索和回复生成；在此选择工单只读取保存结果。</p>
         <div className="empty-workflow">
           <span>1. 理解诉求</span><i />
           <span>2. 补全上下文</span><i />
@@ -121,10 +116,10 @@ export default function TicketDetails({ ticket, onActionComplete }) {
             <span className={`priority-chip priority-${ticket.priority || 'medium'}`}>{translatePriority(ticket.priority)}优先级</span>
           </div>
           <h2>{translateSubject(ticket.subject)}</h2>
-          <p>客户 {ticket.customer_id} · 知识库 {ticket.kb_version || 'v1'}</p>
+          <p>客户 {ticket.customer_id} · 处理结果知识库 {chatOutput?.kb_version || '加载中'}</p>
         </div>
         <button className="btn btn-secondary compact-button" onClick={loadDetails} disabled={loading}>
-          <RefreshCw size={15} className={loading ? 'spin' : ''} /> 重新运行
+          <RefreshCw size={15} className={loading ? 'spin' : ''} /> 刷新保存结果
         </button>
       </header>
 
@@ -172,7 +167,7 @@ export default function TicketDetails({ ticket, onActionComplete }) {
       {loading && (
         <div className="agent-loading-card">
           <span className="agent-orbit"><Sparkles size={22} /></span>
-          <div><strong>Agent 正在处理这张工单</strong><p>正在补全上下文、检索政策并校验回复，请稍候……</p></div>
+          <div><strong>正在加载已保存的 Agent 结果</strong><p>正在读取客户上下文、引用依据与回复草稿，请稍候……</p></div>
           <span className="loading-dots"><i /><i /><i /></span>
         </div>
       )}

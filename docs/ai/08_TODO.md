@@ -45,7 +45,7 @@
 
 ## 已知问题与风险
 
-- [x] 在 Python 3.12 环境完成 119 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 在 Python 3.12 环境完成 121 条全量测试；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。

@@ -153,6 +153,8 @@ VITE_LANGSMITH_PROJECT_URL=https://smith.langchain.com/<your-project-url>
 
 前端只保存 Project URL，不得放置 LangSmith API Key。API Key 仍只存在 Collector 环境变量中。
 
+工单工作台在提交 `POST /tickets` 时执行并持久化 Agent Workflow。之后打开详情只读取 `GET /tickets/{ticket_id}/agent-result`，不会因查看或刷新页面重复调用模型、创建工单或生成审批记录。
+
 如果本地未启动 Collector，Backend 会在启动时跳过不可达的 OTLP exporter，避免 `localhost:4318` 重试日志刷屏。需要恢复 LangSmith Trace 时，先启动 Collector，再重启 Backend。前端 JWT 过期时会自动清理旧登录态并要求重新登录。
 
 ---

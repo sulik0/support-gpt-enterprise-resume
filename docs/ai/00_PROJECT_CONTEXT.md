@@ -191,6 +191,15 @@ resolved / closed --reopen--> in_progress
 
 ## 数据流
 
+### 工单工作台主链路
+
+1. 客服通过 `POST /tickets` 提交客户、主题、描述和新工单使用的 `kb_version`。
+2. API 先创建唯一业务工单，再以该 `ticket_id` 执行 LangGraph Workflow。
+3. Workflow 完成后回写情绪、优先级、部门和 SLA，并按风险创建必要的 `ResponseApproval`。
+4. 系统保存关联该工单的 `AgentRun`，包含回复、citation、Tool Call、QA、版本、Token、延迟和 Trace ID。
+5. 前端打开工单详情时调用 `GET /tickets/{ticket_id}/agent-result`，只读取最新持久化结果，不重新执行 Workflow，也不会新增工单、审批或 AgentRun。
+6. 没有历史 AgentRun 的旧工单返回明确的 `404`，由客服决定后续处理，不在读取路径隐式重跑。
+
 ### `/chat` 主链路
 
 1. Client 提交 `session_id`、`customer_id`、`message` 和 `kb_version`。
@@ -327,7 +336,7 @@ resolved / closed --reopen--> in_progress
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `119 passed`，CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；在 Python 3.12 环境中全量测试 `121 passed`，CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划

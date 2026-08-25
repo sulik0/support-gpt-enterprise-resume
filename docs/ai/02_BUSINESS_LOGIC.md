@@ -28,13 +28,19 @@ flowchart TD
     Retrieve --> Draft[生成处理草稿]
     Draft --> Review[自动 Review 与输出过滤]
     Review --> Risk{是否需人工审批}
-    Risk -->|No| Return[返回 AI 草稿，当次执行结束]
+    Risk -->|No| Persist[保存工单与 Agent 处理结果]
     Risk -->|Yes| Escalate
-    Escalate --> Human[人工通过 / 修改 / 拒绝]
+    Escalate --> Persist
+    Persist --> View[客服打开详情读取已保存回复]
+    View --> ReviewNeeded{是否待人工审批}
+    ReviewNeeded -->|No| End[本次自动处理结束]
+    ReviewNeeded -->|Yes| Human[人工通过 / 修改 / 拒绝]
     Human --> Resolve[解决、重处理或关闭工单]
 ```
 
 这个流程的核心不是让模型自由探索，而是让每类售后问题都经过一致的安全、事实、质量和审批关卡。这样做的原因是退款、物流、保修和投诉都具有明确的业务后果，稳定性与责任边界比开放式自治更重要。
+
+Agent 执行由“提交工单”触发，而不是由“打开详情”触发。提交完成前，系统会把 Workflow 结果关联到唯一 `ticket_id` 并持久化；客服之后查看、刷新或重复打开详情，都只是读取同一份最新结果。这样可以避免读操作重复消耗模型、重复创建审批记录或改变工单状态，并保证审计、反馈和人工处理始终指向同一次 Agent Run。
 
 ## 3. Agent 如何理解任务
 

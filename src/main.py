@@ -55,6 +55,7 @@ from src.models.schemas import (
     SuggestResponseRequest,
     SuggestResponseResponse,
     TicketCreate,
+    TicketAgentResultResponse,
     TicketEscalationResponse,
     TicketResponse,
     TicketSentimentResponse,
@@ -135,6 +136,99 @@ async def _link_approval_fail_open(
             await feedback_db.commit()
     except Exception as exc:
         logger.warning("Unable to link approval to Agent Run: %s", exc)
+
+
+async def _record_ticket_result_required(
+    *,
+    db: AsyncSession,
+    agent_output: dict,
+    input_text: str,
+    endpoint: str,
+    session_id: str | None,
+    approval_id: int | None,
+) -> AgentRun:
+    """可靠保存工作台处理结果；写入失败时不返回虚假的创建成功。"""
+    try:
+        agent_run = await feedback_service.record_agent_run(
+            db,
+            agent_output=agent_output,
+            input_text=input_text,
+            endpoint=endpoint,
+            session_id=session_id,
+            trace_id=get_current_trace_id(),
+        )
+        if approval_id:
+            await feedback_service.link_entity(
+                db,
+                agent_run_id=agent_run.id,
+                entity_type="approval",
+                entity_id=approval_id,
+            )
+        await db.commit()
+        return agent_run
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Unable to persist required ticket Agent result: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ticket was received but its Agent result could not be persisted.",
+        ) from exc
+
+
+async def _process_ticket_with_agent(
+    *,
+    db: AsyncSession,
+    ticket: Ticket,
+    kb_version: str,
+    endpoint: str,
+    session_id: str | None = None,
+    require_persisted_result: bool = False,
+) -> tuple[dict, int | None, AgentRun | None]:
+    """执行并持久化工单 Workflow，供创建工单和对话入口复用。"""
+    agent_output = await run_agent_workflow(
+        {
+            "ticket_id": ticket.id,
+            "customer_id": ticket.customer_id,
+            "subject": ticket.subject,
+            "description": ticket.description,
+            "kb_version": kb_version,
+        }
+    )
+    ticket.sentiment = agent_output.get("sentiment")
+    ticket.priority = agent_output.get("priority")
+    ticket.department = agent_output.get("department")
+    ticket.sla_hours = agent_output.get("sla_hours")
+
+    approval_id = None
+    if agent_output.get("approval_required"):
+        approval = await human_it_loop_service.create_pending_approval(
+            db=db,
+            ticket_id=ticket.id,
+            drafted_response=agent_output.get("suggested_response", ""),
+        )
+        approval_id = approval.id
+    await db.commit()
+
+    if require_persisted_result:
+        agent_run = await _record_ticket_result_required(
+            db=db,
+            agent_output=agent_output,
+            input_text=ticket.description,
+            endpoint=endpoint,
+            session_id=session_id,
+            approval_id=approval_id,
+        )
+    else:
+        agent_run = await _record_agent_run_fail_open(
+            primary_db=db,
+            agent_output=agent_output,
+            input_text=ticket.description,
+            endpoint=endpoint,
+            session_id=session_id,
+        )
+        if agent_run and approval_id:
+            await _link_approval_fail_open(db, agent_run.id, approval_id)
+    return agent_output, approval_id, agent_run
 
 
 async def _record_evaluation_fail_open(
@@ -391,32 +485,14 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     )
     session_history.append({"role": "user", "content": req.message})
 
-    # 3. Invoke multi-agent graph
-    initial_agent_state = {
-        "ticket_id": ticket.id,
-        "customer_id": req.customer_id,
-        "subject": ticket.subject,
-        "description": req.message,
-        "kb_version": req.kb_version,
-    }
-
-    agent_output = await run_agent_workflow(initial_agent_state)
-
-    # Update ticket details in SQL DB
-    ticket.sentiment = agent_output.get("sentiment")
-    ticket.priority = agent_output.get("priority")
-    ticket.department = agent_output.get("department")
-    ticket.sla_hours = agent_output.get("sla_hours")
-
-    # 4. Save to Response Approval if HITL is required
-    approval_id = None
-    if agent_output.get("approval_required"):
-        appr_obj = await human_it_loop_service.create_pending_approval(
-            db=db,
-            ticket_id=ticket.id,
-            drafted_response=agent_output.get("suggested_response", ""),
-        )
-        approval_id = appr_obj.id
+    # 3. 执行 Workflow，并持久化工单分析、审批与 Agent Run。
+    agent_output, approval_id, agent_run = await _process_ticket_with_agent(
+        db=db,
+        ticket=ticket,
+        kb_version=req.kb_version,
+        endpoint="/chat",
+        session_id=req.session_id,
+    )
 
     # Append assistant message
     session_history.append(
@@ -426,17 +502,6 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     await redis_memory.save_messages(req.session_id, session_history)
 
     await db.commit()
-
-    # Feedback Pipeline 使用独立事务，失败时不阻断客服主流程。
-    agent_run = await _record_agent_run_fail_open(
-        primary_db=db,
-        agent_output=agent_output,
-        input_text=req.message,
-        endpoint="/chat",
-        session_id=req.session_id,
-    )
-    if agent_run and approval_id:
-        await _link_approval_fail_open(db, agent_run.id, approval_id)
 
     # Build schema output
     citations = [
@@ -788,6 +853,7 @@ async def process_approval(
     "/tickets", response_model=TicketResponse, status_code=status.HTTP_201_CREATED
 )
 async def create_ticket(req: TicketCreate, db: AsyncSession = Depends(get_db)):
+    """创建工单后立即执行 Agent，并在响应前保存处理结果。"""
     ticket = Ticket(
         customer_id=req.customer_id,
         subject=req.subject,
@@ -798,7 +864,77 @@ async def create_ticket(req: TicketCreate, db: AsyncSession = Depends(get_db)):
     db.add(ticket)
     await db.commit()
     await db.refresh(ticket)
+    await _process_ticket_with_agent(
+        db=db,
+        ticket=ticket,
+        kb_version=req.kb_version,
+        endpoint="/tickets",
+        session_id=f"ticket_{ticket.id}",
+        require_persisted_result=True,
+    )
+    await db.refresh(ticket)
     return ticket
+
+
+@app.get(
+    "/tickets/{ticket_id}/agent-result",
+    response_model=TicketAgentResultResponse,
+)
+async def get_ticket_agent_result(ticket_id: int, db: AsyncSession = Depends(get_db)):
+    """读取工单最新的持久化 Agent 结果，不重新执行 Workflow。"""
+    run_result = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.ticket_id == ticket_id)
+        .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
+        .limit(1)
+    )
+    agent_run = run_result.scalars().first()
+    if not agent_run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No persisted Agent result exists for this ticket.",
+        )
+
+    approval_result = await db.execute(
+        select(ResponseApproval)
+        .where(ResponseApproval.ticket_id == ticket_id)
+        .order_by(ResponseApproval.created_at.desc(), ResponseApproval.id.desc())
+        .limit(1)
+    )
+    approval = approval_result.scalars().first()
+    response_text = (
+        approval.modified_response
+        if approval and approval.modified_response
+        else agent_run.output_text
+    )
+    approval_required = bool(approval and approval.status == "pending")
+    citations = [Citation(**citation) for citation in (agent_run.citations or [])]
+
+    return TicketAgentResultResponse(
+        ticket_id=ticket_id,
+        agent_run_id=agent_run.id,
+        kb_version=agent_run.kb_version,
+        response=response_text,
+        citations=citations,
+        tool_calls=agent_run.tool_calls or [],
+        qa_score=agent_run.qa_score,
+        hallucination_detected=agent_run.hallucination_detected,
+        escalation_recommended=agent_run.escalation_recommended,
+        escalation_reason=(
+            "系统基于风险、优先级或质量规则建议升级人工处理。"
+            if agent_run.escalation_recommended
+            else None
+        ),
+        approval_required=approval_required,
+        approval_id=approval.id if approval_required else None,
+        approval_status=approval.status if approval else None,
+        cost_metadata=CostMetadata(
+            tokens_input=agent_run.tokens_input,
+            tokens_output=agent_run.tokens_output,
+            latency_seconds=agent_run.latency_seconds,
+        ),
+        created_at=agent_run.created_at,
+    )
 
 
 @app.post("/tickets/{ticket_id}/close", response_model=TicketResponse)
