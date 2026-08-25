@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field, ValidationError
 from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
-from src.observability.tracing import get_tracer, observed_span, set_span_attributes
+from src.observability.tracing import (
+    get_tracer,
+    langsmith_span_attributes,
+    observed_span,
+    set_span_attributes,
+)
 from src.observability.metrics import TOOL_CALLS_TOTAL, TOOL_CALL_DURATION_SECONDS
 
 
@@ -89,6 +94,8 @@ class ToolRegistry:
             tracer,
             "supportgpt.tool.call",
             {
+                **langsmith_span_attributes("tool"),
+                "gen_ai.tool.name": name,
                 "tool.name": name,
                 "tool.role": role,
                 "ticket.id": ticket_id,

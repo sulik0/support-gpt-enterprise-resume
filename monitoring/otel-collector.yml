@@ -31,6 +31,10 @@ processors:
         action: delete
       - key: exception.stacktrace
         action: delete
+  filter/langsmith_main_agent:
+    error_mode: ignore
+    trace_conditions:
+      - 'span.attributes["langsmith.export"] != true'
   batch:
     timeout: 2s
     send_batch_size: 512
@@ -56,10 +60,14 @@ service:
                 host: 0.0.0.0
                 port: 8888
   pipelines:
-    traces:
+    traces/debug:
       receivers: [otlp]
       processors: [memory_limiter, attributes/data_protection, batch]
-      exporters: [debug, otlp_http/langsmith]
+      exporters: [debug]
+    traces/langsmith:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/data_protection, filter/langsmith_main_agent, batch]
+      exporters: [otlp_http/langsmith]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]

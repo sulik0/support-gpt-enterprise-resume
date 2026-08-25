@@ -24,6 +24,8 @@ from src.observability.tracing import (
     _should_enable_otlp_exporter,
     bind_request_id,
     get_request_id,
+    langsmith_agent_trace_context,
+    langsmith_span_attributes,
     reset_request_id,
     set_span_attributes,
 )
@@ -151,6 +153,28 @@ def test_request_id_context_is_scoped():
     finally:
         reset_request_id(token)
     assert get_request_id() is None
+
+
+def test_langsmith_export_is_scoped_to_main_agent_workflow():
+    assert langsmith_span_attributes("llm") == {}
+
+    with langsmith_agent_trace_context():
+        attributes = langsmith_span_attributes("llm")
+
+    assert attributes["langsmith.export"] is True
+    assert attributes["langsmith.span.kind"] == "llm"
+    assert langsmith_span_attributes("tool") == {}
+
+
+def test_langsmith_collector_pipeline_filters_non_agent_spans():
+    collector_config = (
+        Path(__file__).resolve().parents[1] / "monitoring" / "otel-collector.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "filter/langsmith_main_agent:" in collector_config
+    assert 'span.attributes["langsmith.export"] != true' in collector_config
+    assert "traces/langsmith:" in collector_config
+    assert "traces/debug:" in collector_config
 
 
 def test_application_logging_configuration_is_idempotent():

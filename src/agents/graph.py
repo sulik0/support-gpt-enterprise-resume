@@ -19,7 +19,15 @@ from src.observability.metrics import (
     LLM_COST_TOTAL,
     LLM_TOKENS_TOTAL,
 )
-from src.observability.tracing import get_request_id, get_tracer, observed_span
+from src.observability.tracing import (
+    get_current_trace_id,
+    get_request_id,
+    get_tracer,
+    langsmith_agent_trace_context,
+    langsmith_span_attributes,
+    observed_span,
+    set_agent_trace_id,
+)
 
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
@@ -207,6 +215,7 @@ async def escalate_node(state: AgentState) -> Dict[str, Any]:
 
 def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
     return {
+        **langsmith_span_attributes("chain"),
         "agent.node": node,
         "request.id": state.get("request_id"),
         "ticket.id": state.get("ticket_id"),
@@ -369,12 +378,23 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info(f"Invoking LangGraph flow for ticket ID {state_input['ticket_id']}")
     try:
-        with observed_span(
-            tracer,
-            "supportgpt.langgraph.workflow",
-            _trace_attrs(state_input, node="workflow"),
-        ):
-            final_output = await compiled_graph.ainvoke(state_input)
+        with langsmith_agent_trace_context():
+            with observed_span(
+                tracer,
+                "supportgpt.langgraph.workflow",
+                {
+                    **_trace_attrs(state_input, node="workflow"),
+                    **langsmith_span_attributes(
+                        "chain",
+                        trace_name="SupportGPT Agent Workflow",
+                        force=True,
+                    ),
+                },
+                root=True,
+            ):
+                final_output = await compiled_graph.ainvoke(state_input)
+                final_output["trace_id"] = get_current_trace_id()
+                set_agent_trace_id(final_output["trace_id"])
         try:
             AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
         except Exception:

@@ -7,7 +7,12 @@ from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 from src.observability.sanitization import redact_text
-from src.observability.tracing import get_tracer, observed_span, set_span_attributes
+from src.observability.tracing import (
+    get_tracer,
+    langsmith_span_attributes,
+    observed_span,
+    set_span_attributes,
+)
 from src.rag.vector_store import vector_store
 from src.risk.engine import risk_engine
 
@@ -45,6 +50,7 @@ class KnowledgeRetrievalAgent:
                 tracer,
                 "supportgpt.rag.hybrid_retriever",
                 {
+                    **langsmith_span_attributes("retriever"),
                     "request.id": state.get("request_id"),
                     "ticket.id": state.get("ticket_id"),
                     "customer.id": state.get("customer_id"),
@@ -71,6 +77,7 @@ class KnowledgeRetrievalAgent:
                     tracer,
                     "rag.query_fallback",
                     {
+                        **langsmith_span_attributes("retriever"),
                         "request.id": state.get("request_id"),
                         "ticket.id": state.get("ticket_id"),
                         "kb.version": kb_version,

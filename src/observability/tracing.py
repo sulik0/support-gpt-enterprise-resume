@@ -16,6 +16,12 @@ _initialized = False
 _request_id_context: ContextVar[Optional[str]] = ContextVar(
     "supportgpt_request_id", default=None
 )
+_langsmith_agent_context: ContextVar[bool] = ContextVar(
+    "supportgpt_langsmith_agent_context", default=False
+)
+_agent_trace_id_context: ContextVar[Optional[str]] = ContextVar(
+    "supportgpt_agent_trace_id", default=None
+)
 
 
 def get_tracer(name: str = "supportgpt"):
@@ -89,6 +95,69 @@ def get_current_trace_id() -> Optional[str]:
     return None
 
 
+def bind_agent_trace_id() -> Token:
+    """为当前请求初始化 Agent Trace ID 上下文。"""
+    return _agent_trace_id_context.set(None)
+
+
+def set_agent_trace_id(trace_id: Optional[str]) -> None:
+    _agent_trace_id_context.set(trace_id)
+
+
+def get_agent_trace_id() -> Optional[str]:
+    return _agent_trace_id_context.get()
+
+
+def reset_agent_trace_id(token: Token) -> None:
+    try:
+        _agent_trace_id_context.reset(token)
+    except Exception:
+        return
+
+
+@contextmanager
+def langsmith_agent_trace_context() -> Iterator[None]:
+    """仅在主 Agent Workflow 执行期间允许 Span 进入 LangSmith。"""
+    token = _langsmith_agent_context.set(True)
+    try:
+        yield
+    finally:
+        _langsmith_agent_context.reset(token)
+
+
+def langsmith_span_attributes(
+    kind: str, *, trace_name: Optional[str] = None, force: bool = False
+) -> Dict[str, Any]:
+    """为主 Agent 链路补充 LangSmith 可识别的 Run 类型。"""
+    if not force and not _langsmith_agent_context.get():
+        return {}
+    attributes: Dict[str, Any] = {
+        "langsmith.export": True,
+        "langsmith.span.kind": kind,
+    }
+    if trace_name:
+        attributes["langsmith.trace.name"] = trace_name
+    return attributes
+
+
+def _llm_span_attributes() -> Dict[str, Any]:
+    """记录模型识别信息，不上报 Prompt 和回复正文。"""
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "azure":
+        model = settings.AZURE_OPENAI_DEPLOYMENT or "azure"
+    elif provider == "openai":
+        model = settings.LLM_MODEL_NAME or "openai-compatible"
+    else:
+        model = "mock"
+    return {
+        **langsmith_span_attributes("llm"),
+        "gen_ai.operation.name": "chat",
+        "gen_ai.system": provider,
+        "gen_ai.provider.name": provider,
+        "gen_ai.request.model": model,
+    }
+
+
 def mark_span_error(span: Any, error: BaseException) -> None:
     """Record a sanitized exception while preserving the original exception flow."""
     try:
@@ -108,12 +177,24 @@ def mark_span_error(span: Any, error: BaseException) -> None:
 
 @contextmanager
 def observed_span(
-    tracer: Any, name: str, attributes: Optional[Dict[str, Any]] = None
+    tracer: Any,
+    name: str,
+    attributes: Optional[Dict[str, Any]] = None,
+    *,
+    root: bool = False,
 ) -> Iterator[Any]:
     """创建统一 OTel Span，并以脱敏属性记录耗时和异常。"""
     started = time.perf_counter()
+    span_context = None
+    if root:
+        from opentelemetry.context import Context
+
+        span_context = Context()
     with tracer.start_as_current_span(
-        name, record_exception=False, set_status_on_exception=False
+        name,
+        context=span_context,
+        record_exception=False,
+        set_status_on_exception=False,
     ) as span:
         set_span_attributes(
             span,
@@ -155,6 +236,7 @@ def trace_operation(*, name: str, component: str) -> Callable:
                     {
                         "observability.component": component,
                         "code.function.name": function.__qualname__,
+                        **(_llm_span_attributes() if component == "llm" else {}),
                     },
                 ) as span:
                     result = await function(*args, **kwargs)
@@ -168,6 +250,7 @@ def trace_operation(*, name: str, component: str) -> Callable:
                             {
                                 "gen_ai.usage.input_tokens": result[-2],
                                 "gen_ai.usage.output_tokens": result[-1],
+                                "gen_ai.usage.total_tokens": result[-2] + result[-1],
                             },
                         )
                     return result
@@ -182,6 +265,7 @@ def trace_operation(*, name: str, component: str) -> Callable:
                 {
                     "observability.component": component,
                     "code.function.name": function.__qualname__,
+                    **(_llm_span_attributes() if component == "llm" else {}),
                 },
             ):
                 return function(*args, **kwargs)

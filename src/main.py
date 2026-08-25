@@ -68,11 +68,14 @@ from src.models.schemas import (
 from src.observability.instrumentation import instrument_dependencies
 from src.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from src.observability.tracing import (
+    bind_agent_trace_id,
     bind_request_id,
+    get_agent_trace_id,
     get_current_trace_id,
     get_tracer,
     init_tracing,
     observed_span,
+    reset_agent_trace_id,
     reset_request_id,
     set_span_attributes,
 )
@@ -107,7 +110,7 @@ async def _record_agent_run_fail_open(
                 input_text=input_text,
                 endpoint=endpoint,
                 session_id=session_id,
-                trace_id=get_current_trace_id(),
+                trace_id=agent_output.get("trace_id") or get_current_trace_id(),
             )
             await feedback_db.commit()
             return agent_run
@@ -155,7 +158,7 @@ async def _record_ticket_result_required(
             input_text=input_text,
             endpoint=endpoint,
             session_id=session_id,
-            trace_id=get_current_trace_id(),
+            trace_id=agent_output.get("trace_id") or get_current_trace_id(),
         )
         if approval_id:
             await feedback_service.link_entity(
@@ -323,6 +326,7 @@ async def track_http_telemetry(request: Request, call_next):
 
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request_token = bind_request_id(request_id)
+    agent_trace_token = bind_agent_trace_id()
     logger.info(
         "http request started",
         extra={"request_id": request_id, "method": method},
@@ -353,7 +357,7 @@ async def track_http_telemetry(request: Request, call_next):
                     },
                 )
                 response.headers["X-Request-ID"] = request_id
-                trace_id = get_current_trace_id()
+                trace_id = get_agent_trace_id() or get_current_trace_id()
                 if trace_id:
                     response.headers["X-Trace-ID"] = trace_id
                 logger.info(
@@ -389,6 +393,7 @@ async def track_http_telemetry(request: Request, call_next):
                 )
                 raise
     finally:
+        reset_agent_trace_id(agent_trace_token)
         reset_request_id(request_token)
 
 
