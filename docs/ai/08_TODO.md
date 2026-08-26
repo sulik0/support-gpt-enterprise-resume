@@ -25,6 +25,7 @@
 - [x] 拆分用户咨询页与客服员工后台；普通问题自动回复，异常请求进入受 RBAC 保护的人工审批队列。
 - [x] 建立统一 `IntentType`，让规则、LLM Provider、AgentState、Tooling、Risk Engine 和 Agent Evaluation 共用同一套意图枚举与兜底策略。
 - [x] 实现 Baseline Workflow Replay V1：固定 100 条完整 Ticket State 回放、六项确定性行为指标、逐 Case 结果和 OTel Trace 同源性能汇总。
+- [x] 建立 Evaluation Report 生命周期：清理旧 `report_*.json`、单条评测最多保留 20 份、Baseline 使用时间戳快照与 latest 软链接，并固化完整实验配置。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -34,7 +35,7 @@
 - [ ] 增加 Train / Validation / Test 划分及数据泄漏检查。
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
 - [ ] 增加 Prompt Registry、内容快照、灰度和回滚门禁。
-- [ ] 在明确预算后执行首次真实 LLM smoke 回归，固定模型版本并建立质量阈值。
+- [ ] 基于首次真实 100 条 Baseline 的 46 条失败 Case 完成归因修复，建立稳定质量阈值并执行同配置复测。
 - [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。

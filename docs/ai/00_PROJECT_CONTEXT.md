@@ -292,6 +292,7 @@ resolved / closed --reopen--> in_progress
 - 离线统一入口是 Dataset + Workflow Replay Pipeline，RAG 采用 RAGAS，Agent 行为采用 DeepEval。
 - 第一版真实 Baseline 入口是 `scripts/run_baseline_eval.py`：固定读取 100 条 Baseline，逐 Case 构造完整 Ticket State 并回放当前 LangGraph Workflow。Case Pass 仅使用 intent、department、Required/Forbidden Tool、HITL 和 Approval 六类确定性比较；暂不读取 reference answer、priority、expected nodes 和安全标签参与判定。
 - Baseline V1 在同一次 OTel Trace 中采集端到端与 Analyzer / Tool / RAG / Resolver / QA 节点耗时、Token、模型、Analyzer 策略和 LLM 调用明细，报告汇总 Average、P50、P95、平均 Token 与 Rule Hit Rate，并关联实际 Agent Trace ID。
+- 每次 Baseline V1 正式运行同时保存带本地时间戳的不可变 JSON / Markdown 快照，`baseline_v1_latest.*` 仅作为相对软链接；报告固定记录 Dataset SHA256、Evaluator 范围、Workflow/Prompt 版本、模型、生成限制、Risk 阈值与 Observability 配置。旧单条评测隔离到 `single_response/` 并最多保留 20 份，所有运行报告默认不提交 Git。
 - 正式离线报告同时输出 Faithfulness、Answer Relevancy、Context Precision、Context Recall、Agent 行为指标、Security Precision / Recall / F1 / 误报率、安全处置正确率、citation hit rate、Workflow Path 和 Trace ID。
 - 没有可用 API Key 时可显式选择 `local` 确定性指标进行 CI 烟测；正式 RAGAS / DeepEval 模式缺少依赖或密钥会直接失败，不会自动伪装为正式结果。
 - 报告写入 `evaluation/reports/evaluation_latest.json` 和 `evaluation_latest.md`。
@@ -334,7 +335,7 @@ resolved / closed --reopen--> in_progress
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
 - **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
-- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口和统一报告，但尚未执行并确立可长期引用的真实模型分数，人工标注、质量阈值和 CI Quality Gate 仍需继续建设。
+- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口和统一报告；2026-08-26 已完成一次 DeepSeek + Qwen 真实全量 Baseline V1，Case Pass Rate 为 `0.54`，平均耗时约 `2.50s`、P95 约 `4.15s`。这只是首轮可复现实验基线，人工标注、稳定质量阈值和 CI Quality Gate 仍需继续建设。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。

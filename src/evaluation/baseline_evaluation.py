@@ -1,6 +1,10 @@
 """第一版 Baseline Workflow Replay 与确定性 Agent 行为评测。"""
 
+import hashlib
 import json
+import os
+import shutil
+import subprocess
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -8,6 +12,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, Mapping, Optional, Sequence
 
+from src.config import settings
 from src.evaluation.offline_rag import (
     EvaluationRecord,
     WorkflowRunner,
@@ -423,6 +428,9 @@ def build_baseline_report(
         "enabled_behavior_metrics": list(ENABLED_BEHAVIOR_METRICS),
         "ignored_dataset_fields": list(IGNORED_DATASET_FIELDS),
         "execution": sanitize_value(execution_metadata or {}),
+        "experiment_config": _build_experiment_config(
+            dataset_path, execution_metadata or {}
+        ),
         "behavior_summary": aggregate_behavior(behavior_results),
         "performance_summary": aggregate_performance(performance_cases),
         "cases": case_rows,
@@ -430,16 +438,33 @@ def build_baseline_report(
 
 
 def write_baseline_report(report: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
-    """以稳定 latest 文件名输出 JSON 与 Markdown 报告。"""
+    """同时写入不可变快照，并让 latest 仅指向最新一次正式结果。"""
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "baseline_v1_latest.json"
-    markdown_path = output_dir / "baseline_v1_latest.md"
-    json_path.write_text(
+    snapshot_stem = _next_snapshot_stem(output_dir, report.get("generated_at"))
+    report["run_id"] = snapshot_stem.removeprefix("baseline_v1_")
+    snapshot_json = output_dir / f"{snapshot_stem}.json"
+    snapshot_markdown = output_dir / f"{snapshot_stem}.md"
+    latest_json = output_dir / "baseline_v1_latest.json"
+    latest_markdown = output_dir / "baseline_v1_latest.md"
+    report["artifacts"] = {
+        "snapshot_json": snapshot_json.name,
+        "snapshot_markdown": snapshot_markdown.name,
+        "latest_json": latest_json.name,
+        "latest_markdown": latest_markdown.name,
+    }
+    snapshot_json.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
-    markdown_path.write_text(_render_markdown(report), encoding="utf-8")
-    return {"json": json_path, "markdown": markdown_path}
+    snapshot_markdown.write_text(_render_markdown(report), encoding="utf-8")
+    _replace_latest_alias(latest_json, snapshot_json)
+    _replace_latest_alias(latest_markdown, snapshot_markdown)
+    return {
+        "json": latest_json,
+        "markdown": latest_markdown,
+        "snapshot_json": snapshot_json,
+        "snapshot_markdown": snapshot_markdown,
+    }
 
 
 async def run_baseline_evaluation_v1(
@@ -482,9 +507,16 @@ def _render_markdown(report: Dict[str, Any]) -> str:
     lines = [
         "# Baseline Workflow Replay V1 评测报告",
         "",
+        f"- Run ID：`{report['run_id']}`",
         f"- Dataset：`{report['dataset']}`",
         f"- Case 数：{report['case_count']}",
         "- Case Pass 仅由当前启用的六项确定性行为指标决定。",
+        "",
+        "## 实验配置",
+        "",
+        "```json",
+        json.dumps(report["experiment_config"], ensure_ascii=False, indent=2),
+        "```",
         "",
         "## Agent 行为汇总",
         "",
@@ -609,3 +641,129 @@ def _safe_float(value: Any) -> float:
 
 def _metric(value: Any) -> str:
     return "N/A" if value is None else f"{float(value):.4f}"
+
+
+def _build_experiment_config(
+    dataset_path: Path, execution_metadata: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """固定记录复现实验所需的 Dataset、模型、Workflow 与阈值。"""
+    dataset_bytes = dataset_path.read_bytes()
+    dataset_payload = json.loads(dataset_bytes.decode("utf-8"))
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "azure":
+        resolver_model = settings.AZURE_OPENAI_DEPLOYMENT or "azure"
+    elif provider == "openai":
+        resolver_model = settings.LLM_MODEL_NAME or "openai-compatible"
+    else:
+        resolver_model = "mock"
+    analyzer_model = (
+        settings.LLM_ANALYZER_MODEL_NAME
+        or settings.LLM_FAST_MODEL_NAME
+        or resolver_model
+    )
+    qa_model = (
+        settings.LLM_QA_MODEL_NAME or settings.LLM_FAST_MODEL_NAME or resolver_model
+    )
+    return sanitize_value(
+        {
+            "dataset": {
+                "dataset_name": dataset_payload.get("name"),
+                "version": dataset_payload.get("version"),
+                "sha256": hashlib.sha256(dataset_bytes).hexdigest(),
+                "declared_case_count": len(dataset_payload.get("cases", [])),
+                "kb_versions": sorted(
+                    {
+                        str(case.get("kb_version", "v1"))
+                        for case in dataset_payload.get("cases", [])
+                    }
+                ),
+            },
+            "evaluator": {
+                "version": "baseline_v1",
+                "enabled_behavior_metrics": list(ENABLED_BEHAVIOR_METRICS),
+                "ignored_dataset_fields": list(IGNORED_DATASET_FIELDS),
+            },
+            "workflow": {
+                "version": settings.AGENT_WORKFLOW_VERSION,
+                "prompt_version": settings.PROMPT_VERSION,
+                "source_revision": _source_revision(),
+            },
+            "models": {
+                "provider": provider,
+                "resolver": resolver_model,
+                "analyzer": analyzer_model,
+                "qa": qa_model,
+                "qwen3_guard_enabled": settings.QWEN3_GUARD_ENABLED,
+                "qwen3_guard_model": settings.QWEN3_GUARD_MODEL_NAME,
+            },
+            "limits": {
+                "temperature": 0.0,
+                "analyzer_max_tokens": settings.LLM_ANALYZER_MAX_TOKENS,
+                "resolver_max_tokens": settings.LLM_RESOLVER_MAX_TOKENS,
+                "qa_max_tokens": settings.LLM_QA_MAX_TOKENS,
+                "resolver_max_rag_chars": settings.LLM_RESOLVER_MAX_RAG_CHARS,
+                "resolver_max_tool_chars": settings.LLM_RESOLVER_MAX_TOOL_CHARS,
+                "qa_max_context_chars": settings.LLM_QA_MAX_CONTEXT_CHARS,
+            },
+            "risk_thresholds": {
+                "medium": settings.RISK_MEDIUM_THRESHOLD,
+                "high": settings.RISK_HIGH_THRESHOLD,
+                "critical": settings.RISK_CRITICAL_THRESHOLD,
+                "low_confidence": settings.RISK_LOW_CONFIDENCE_THRESHOLD,
+                "qa_score": settings.RISK_QA_SCORE_THRESHOLD,
+            },
+            "observability": {
+                "otel_enabled": settings.OTEL_ENABLED,
+                "service_name": settings.OTEL_SERVICE_NAME,
+                "langsmith_project": settings.OTEL_COLLECTOR_LANGSMITH_PROJECT,
+            },
+            "execution": dict(execution_metadata),
+        }
+    )
+
+
+def _next_snapshot_stem(
+    output_dir: Path, generated_at: Optional[str] = None
+) -> str:
+    """按报告生成时间创建快照名，同秒重复运行时追加序号。"""
+    generated_time = datetime.now().astimezone()
+    if generated_at:
+        try:
+            generated_time = datetime.fromisoformat(generated_at).astimezone()
+        except ValueError:
+            pass
+    base = "baseline_v1_" + generated_time.strftime("%Y%m%d_%H%M%S")
+    candidate = base
+    sequence = 2
+    while (output_dir / f"{candidate}.json").exists():
+        candidate = f"{base}_{sequence:02d}"
+        sequence += 1
+    return candidate
+
+
+def _replace_latest_alias(latest: Path, snapshot: Path) -> None:
+    """优先创建相对软链接，不支持软链接的平台退化为最新副本。"""
+    if latest.exists() or latest.is_symlink():
+        latest.unlink()
+    try:
+        latest.symlink_to(snapshot.name)
+    except OSError:
+        shutil.copy2(snapshot, latest)
+
+
+def _source_revision() -> str:
+    """优先读取 CI Revision，本地则记录当前 Git Commit。"""
+    configured = os.getenv("GIT_COMMIT_SHA") or os.getenv("GITHUB_SHA")
+    if configured:
+        return configured[:40]
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return result.stdout.strip()[:40] or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"

@@ -208,6 +208,8 @@ python scripts/run_baseline_eval.py --confirm-live
 
 Case Pass 只由 Intent Accuracy、Department Accuracy、Required Tool Hit Rate、Forbidden Tool Violation Rate、HITL Accuracy 和 Approval Accuracy 决定。报告同时输出端到端及各节点 Average / P50 / P95、Token、模型、Analyzer Rule Hit Rate、LLM 调用次数和 Trace ID；`reference_answer`、priority、expected nodes 与安全标签保留在 Dataset 和报告快照中，但暂不参与本版判定。
 
+每次正式运行会在 `evaluation/reports/baseline_v1/` 写入一组不可变时间戳快照，例如 `baseline_v1_20260826_215300.json/md`；`baseline_v1_latest.json/md` 只是指向最新快照的相对软链接，不替代历史版本。JSON 和 Markdown 都固定记录 Dataset 名称/版本/SHA256、Evaluator 指标范围、Workflow/Prompt 版本、各节点模型、Token/Context 限制、Risk 阈值和 Observability 配置。旧版单条评测报告改存 `evaluation/reports/single_response/` 并自动只保留最近 20 份；整个运行报告目录不进入 Git。
+
 ### Feedback Pipeline
 
 `/chat` 和 `/suggest-response` 返回 `agent_run_id`。用户评分、人工审批修正和质量评测可据此关联 OpenTelemetry Trace、Prompt / Workflow / Model 版本与执行快照。

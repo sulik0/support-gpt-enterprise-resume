@@ -104,6 +104,8 @@ async def main() -> None:
     )
     print(f"JSON report: {paths['json']}")
     print(f"Markdown report: {paths['markdown']}")
+    print(f"JSON snapshot: {paths['snapshot_json']}")
+    print(f"Markdown snapshot: {paths['snapshot_markdown']}")
 
 
 if __name__ == "__main__":

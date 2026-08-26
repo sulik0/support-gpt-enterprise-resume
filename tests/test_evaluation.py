@@ -1,9 +1,9 @@
 import pytest
-import os
 from src.evaluation.hallucination import hallucination_evaluator
 from src.evaluation.retrieval_metrics import retrieval_metrics_evaluator
 from src.evaluation.response_metrics import response_metrics_evaluator
 from src.evaluation.framework import run_deeval_evaluation
+from src.evaluation.framework import _save_single_response_report
 
 def test_hallucination_scorer():
     context = ["Corporate billing rules assert refunds are valid up to 30 days."]
@@ -35,18 +35,32 @@ def test_response_metrics():
     assert relevance > 0.5
 
 @pytest.mark.asyncio
-async def test_unified_evaluation_framework():
+async def test_unified_evaluation_framework(tmp_path, monkeypatch):
     query = "api outage devops"
     context = ["API outages are resolved by DevOps."]
     response = "API outages are resolved by DevOps."
     
+    report_dir = tmp_path / "single_response"
+    monkeypatch.setattr("src.evaluation.framework.SINGLE_REPORT_DIR", report_dir)
     res = await run_deeval_evaluation(query, context, response)
     
     assert res.overall_quality_score >= 0.70
     assert res.passed_evaluation is True
     assert len(res.report_summary) > 0
     
-    # Verify report was saved in evaluation/reports/
-    reports_dir = os.path.join("evaluation", "reports")
-    assert os.path.isdir(reports_dir)
-    assert len(os.listdir(reports_dir)) > 0
+    reports = list(report_dir.glob("single_response_*.json"))
+    assert len(reports) == 1
+    payload = __import__("json").loads(reports[0].read_text(encoding="utf-8"))
+    assert payload["experiment_config"]["evaluator"] == "single_response_v1"
+
+
+def test_single_response_reports_apply_retention(tmp_path, monkeypatch):
+    report_dir = tmp_path / "single_response"
+    monkeypatch.setattr("src.evaluation.framework.SINGLE_REPORT_DIR", report_dir)
+    monkeypatch.setattr("src.evaluation.framework.SINGLE_REPORT_RETENTION", 2)
+
+    for sequence in range(3):
+        _save_single_response_report({"sequence": sequence})
+
+    reports = sorted(report_dir.glob("single_response_*.json"))
+    assert len(reports) == 2

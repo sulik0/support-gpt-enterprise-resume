@@ -1,7 +1,8 @@
-import time
-import os
 import json
 import logging
+import time
+from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any
 
 from src.evaluation.ragas_eval import ragas_evaluator
@@ -9,13 +10,29 @@ from src.evaluation.deepeval_eval import deepeval_evaluator
 from src.models.schemas import EvaluateResponseResponse
 
 logger = logging.getLogger("supportgpt.evaluation.framework")
+SINGLE_REPORT_DIR = Path("evaluation/reports/single_response")
+SINGLE_REPORT_RETENTION = 20
+
+
+def _save_single_response_report(report_data: Dict[str, Any]) -> Path:
+    """将旧单条评测隔离保存，并自动清理超过保留上限的快照。"""
+    SINGLE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+    report_path = SINGLE_REPORT_DIR / f"single_response_{timestamp}.json"
+    report_path.write_text(
+        json.dumps(report_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    snapshots = sorted(SINGLE_REPORT_DIR.glob("single_response_*.json"))
+    for expired in snapshots[:-SINGLE_REPORT_RETENTION]:
+        expired.unlink(missing_ok=True)
+    return report_path
 
 async def run_deeval_evaluation(
     query: str, context: List[str], response: str
 ) -> EvaluateResponseResponse:
     """
     Unified evaluation runner combining RAGAS and DeepEval metrics.
-    Saves evaluations as JSON reports in evaluation/reports/.
+    Saves evaluations as retained JSON snapshots in a dedicated directory.
     """
     start_time = time.time()
     
@@ -49,6 +66,13 @@ async def run_deeval_evaluation(
     # 4. Save report in reports directory
     report_data = {
         "timestamp": time.time(),
+        "experiment_config": {
+            "evaluator": "single_response_v1",
+            "rag_evaluator": "ragas_adapter",
+            "semantic_evaluator": "deepeval_adapter",
+            "quality_threshold": 0.75,
+            "hallucination_rate_threshold": 0.35,
+        },
         "query": query,
         "context": context,
         "response": response,
@@ -64,13 +88,8 @@ async def run_deeval_evaluation(
         "summary": report_summary
     }
 
-    # Ensure reports directory exists
-    reports_dir = os.path.join("evaluation", "reports")
     try:
-        os.makedirs(reports_dir, exist_ok=True)
-        report_path = os.path.join(reports_dir, f"report_{int(time.time())}.json")
-        with open(report_path, "w", encoding="utf-8") as f:
-            json.dump(report_data, f, indent=2)
+        _save_single_response_report(report_data)
     except Exception as e:
         logger.error(f"Failed to save evaluation report to disk: {e}")
 

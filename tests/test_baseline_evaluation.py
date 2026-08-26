@@ -163,6 +163,7 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
     report = json.loads(paths["json"].read_text(encoding="utf-8"))
     row = report["cases"][0]
     assert report["evaluation_type"] == "baseline_workflow_replay_v1"
+    assert report["run_id"]
     assert report["case_count"] == 1
     assert "rag_evaluation" not in report
     assert "security_evaluation" not in report
@@ -181,6 +182,18 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
     )
     assert report["performance_summary"]["analyzer"]["rule_hit_rate"] == 1.0
     assert "reference_answer" in report["ignored_dataset_fields"]
+    assert len(report["experiment_config"]["dataset"]["sha256"]) == 64
+    assert report["experiment_config"]["dataset"]["dataset_name"] == (
+        "supportgpt_business_baseline_100"
+    )
+    assert report["experiment_config"]["dataset"]["version"] == "2.0"
+    assert report["experiment_config"]["workflow"]["version"]
+    assert report["experiment_config"]["models"]["provider"] == "mock"
+    assert paths["snapshot_json"].name.startswith("baseline_v1_20")
+    assert paths["snapshot_markdown"].name.startswith("baseline_v1_20")
+    assert paths["json"].resolve() == paths["snapshot_json"].resolve()
+    assert paths["markdown"].resolve() == paths["snapshot_markdown"].resolve()
     markdown = paths["markdown"].read_text(encoding="utf-8")
     assert "Baseline Workflow Replay V1" in markdown
     assert "Analyzer Rule Hit Rate" in markdown
+    assert "实验配置" in markdown

@@ -15,9 +15,7 @@ chromadb_store/
 supportgpt.db
 *.db
 evaluation/training_candidates/
-evaluation/reports/report_*.json
-evaluation/reports/real_llm/
-evaluation/reports/baseline_v1/
+evaluation/reports/
 
 # Node / React Frontend
 node_modules/

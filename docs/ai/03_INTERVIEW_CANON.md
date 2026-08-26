@@ -251,9 +251,11 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 当前有 13 条 Synthetic Golden Dataset，并有一组 100 条 Baseline Dataset，其中 14 条攻击样本和 86 条非攻击样本可形成安全混淆矩阵；非攻击样本中包含 6 条安全语义 hard negative。统一报告包含 citation hit rate、RAG 指标、Agent 行为指标、安全检测与处置指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量阈值或真实线上评测数据。无 API Key 时的本地 RAG / Agent 评测是确定性启发式降级，安全指标本身为确定性断言。
 
-Baseline V1 是独立的真实回放报告：固定读取上述 100 条数据，逐条构造完整 Ticket State，Case Pass 只检查 Intent、Department、Required/Forbidden Tool、HITL 和 Approval。reference answer、expected priority、expected nodes、安全标签等字段原样保留但不参与本版判定。性能数据与当前 OTel / LangSmith Trace 同源，包含端到端及五个关键节点的 Average / P50 / P95、Input / Output / Total Token、模型、Analyzer Rule Hit Rate、LLM 调用次数和每条 Case 的 Agent Trace ID。入口已实现但尚未执行真实付费的 100 条全量评测，因此不能宣称已有真实 Baseline 分数。
+Baseline V1 是独立的真实回放报告：固定读取上述 100 条数据，逐条构造完整 Ticket State，Case Pass 只检查 Intent、Department、Required/Forbidden Tool、HITL 和 Approval。reference answer、expected priority、expected nodes、安全标签等字段原样保留但不参与本版判定。性能数据与当前 OTel / LangSmith Trace 同源，包含端到端及五个关键节点的 Average / P50 / P95、Input / Output / Total Token、模型、Analyzer Rule Hit Rate、LLM 调用次数和每条 Case 的 Agent Trace ID。
 
-项目已提供真实 LLM Regression 专用入口：`smoke` 固定选取 12 条并预计 27 次 Workflow LLM 调用，`full` 运行 100 条并预计 258 次；入口拒绝 Mock，需要显式 `--confirm-live`，并在报告中记录 Provider、Model、Endpoint Host、Token、成本和延迟。当前只能说“真实模型回归能力已实现”，因为尚未执行付费调用，不得宣称已有真实模型评分或质量结论。
+报告版本策略是“时间戳快照 + latest 相对软链接”：每次运行保留独立 JSON / Markdown，latest 只指向最新结果。实验配置固定包含 Dataset 名称、版本与 SHA256、启用/忽略指标、Workflow/Prompt 版本、Resolver/Analyzer/QA 模型、Token/Context 限制、Risk 阈值和 OTel/LangSmith 项目配置。旧单条评测不再堆积在报告根目录，而是隔离保存并只保留最近 20 份；运行报告目录不提交 Git。
+
+项目已提供真实 LLM Regression 专用入口：`smoke` 固定选取 12 条并预计 27 次 Workflow LLM 调用，`full` 运行 100 条并预计 258 次；入口拒绝 Mock，需要显式 `--confirm-live`，并在报告中记录 Provider、Model、Endpoint Host、Token、成本和延迟。2026-08-26 已使用 `deepseek-v4-flash` 作为 Resolver、`qwen-turbo` 作为 Analyzer/QA 完成一次 100 条 Baseline V1：实际 217 次 LLM 调用，Case Pass Rate `0.54`，平均端到端耗时约 `2.50s`，P95 约 `4.15s`，平均总 Token `715.59`。该结果是当前 Dataset、Prompt、模型和阈值组合下的首轮实验基线，不代表生产质量结论；后续必须使用快照中的 Dataset SHA256 和完整实验配置做同口径比较。
 
 ## 20. Feedback Pipeline
 
