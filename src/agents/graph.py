@@ -12,6 +12,7 @@ from src.agents.resolver import resolution_agent
 from src.agents.retriever import knowledge_retriever_agent
 from src.agents.tooling import tooling_agent
 from src.config import settings
+from src.models.intents import DEFAULT_INTENT, IntentType
 from src.observability.cost_tracking import calculate_llm_cost
 from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
@@ -49,7 +50,7 @@ class AgentState(TypedDict):
     kb_version: str
     sentiment: str
     priority: str
-    intent: str
+    intent: IntentType
     department: str
     analyzer_confidence: float
     analyzer_strategy: str
@@ -468,7 +469,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "kb_version": initial_state.get("kb_version", "v1"),
         "sentiment": "neutral",
         "priority": "medium",
-        "intent": "general",
+        "intent": DEFAULT_INTENT,
         "department": "general",
         "analyzer_confidence": 1.0,
         "analyzer_strategy": "not_run",

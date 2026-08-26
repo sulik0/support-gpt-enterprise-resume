@@ -7,6 +7,7 @@ from typing import Any, Dict
 from src.guardrails.prompt_injection import analyze_prompt_injection
 from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
+from src.models.intents import IntentType, normalize_intent
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 from src.observability.sanitization import sanitize_value
 from src.risk.engine import risk_engine
@@ -27,7 +28,7 @@ class ToolingAgent:
         ticket_id = state.get("ticket_id")
         operator_role = state.get("operator_role", "agent")
         department = state.get("department", "general")
-        intent = state.get("intent", "general")
+        intent = normalize_intent(state.get("intent"))
 
         if "Security threat" in "".join(state.get("errors", [])):
             return state
@@ -40,17 +41,11 @@ class ToolingAgent:
         )
 
         try:
-            should_fetch_orders = department in {"billing", "shipping"} or any(
-                token in intent.lower()
-                for token in [
-                    "billing",
-                    "refund",
-                    "order",
-                    "shipping",
-                    "payment",
-                    "invoice",
-                ]
-            )
+            should_fetch_orders = department in {"billing", "shipping"} or intent in {
+                IntentType.BILLING_DISPUTE,
+                IntentType.ORDER_CANCELLATION,
+                IntentType.ORDER_STATUS,
+            }
             pending_calls = [
                 tool_registry.call_tool(
                     "crm.get_customer_profile",

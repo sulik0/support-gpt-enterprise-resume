@@ -4,22 +4,11 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from src.config import settings
+from src.models.intents import IntentType, normalize_intent
 
-_HIGH_RISK_INTENT_TOKENS = (
-    "refund",
-    "billing_dispute",
-    "chargeback",
-    "order_cancel",
-    "cancellation",
-    "compensation",
-    "complaint",
-    "account_deletion",
-    "退款",
-    "拒付",
-    "取消订单",
-    "补偿",
-    "投诉",
-    "删除账户",
+
+_HIGH_RISK_INTENTS = frozenset(
+    {IntentType.BILLING_DISPUTE, IntentType.ORDER_CANCELLATION}
 )
 
 
@@ -91,7 +80,7 @@ class RiskEngine:
 
         priority = str(state.get("priority", "medium")).lower()
         sentiment = str(state.get("sentiment", "neutral")).lower()
-        intent = str(state.get("intent", "general")).lower()
+        intent = normalize_intent(state.get("intent"))
         analyzer_confidence = self._bounded_score(
             state.get("analyzer_confidence", 1.0), default=1.0
         )
@@ -107,7 +96,7 @@ class RiskEngine:
             score = max(score, 0.75)
             reasons.add("negative_high_priority")
 
-        if any(token in intent for token in _HIGH_RISK_INTENT_TOKENS):
+        if intent in _HIGH_RISK_INTENTS:
             score = max(score, 0.78)
             reasons.add("high_risk_business_intent")
 

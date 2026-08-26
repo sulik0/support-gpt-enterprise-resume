@@ -9,6 +9,7 @@ from src.guardrails.prompt_injection import analyze_prompt_injection
 from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
 from src.llm.provider import llm_provider
+from src.models.intents import DEFAULT_INTENT, IntentType, normalize_intent
 from src.observability.metrics import (
     AGENT_EXECUTION_DURATION_SECONDS,
     TICKET_SENTIMENT_TOTAL,
@@ -20,7 +21,7 @@ logger = logging.getLogger("supportgpt.agents.analyzer")
 
 _INTENT_RULES = (
     {
-        "intent": "billing_dispute",
+        "intent": IntentType.BILLING_DISPUTE,
         "priority": "high",
         "department": "billing",
         "sentiment": "negative",
@@ -41,7 +42,7 @@ _INTENT_RULES = (
         ),
     },
     {
-        "intent": "outage_report",
+        "intent": IntentType.OUTAGE_REPORT,
         "priority": "urgent",
         "department": "technical",
         "sentiment": "negative",
@@ -60,7 +61,7 @@ _INTENT_RULES = (
         ),
     },
     {
-        "intent": "order_cancellation",
+        "intent": IntentType.ORDER_CANCELLATION,
         "priority": "high",
         "department": "shipping",
         "sentiment": "negative",
@@ -72,7 +73,7 @@ _INTENT_RULES = (
         ),
     },
     {
-        "intent": "order_status",
+        "intent": IntentType.ORDER_STATUS,
         "priority": "medium",
         "department": "shipping",
         "sentiment": "neutral",
@@ -91,7 +92,7 @@ _INTENT_RULES = (
         ),
     },
     {
-        "intent": "account_support",
+        "intent": IntentType.ACCOUNT_SUPPORT,
         "priority": "medium",
         "department": "general",
         "sentiment": "neutral",
@@ -109,7 +110,7 @@ _INTENT_RULES = (
         ),
     },
     {
-        "intent": "warranty_claim",
+        "intent": IntentType.WARRANTY_CLAIM,
         "priority": "medium",
         "department": "general",
         "sentiment": "neutral",
@@ -123,7 +124,7 @@ _INTENT_RULES = (
         ),
     },
     {
-        "intent": "feedback",
+        "intent": IntentType.FEEDBACK,
         "priority": "low",
         "department": "general",
         "sentiment": "positive",
@@ -214,6 +215,18 @@ class TicketAnalyzerAgent:
                     f"Subject: {clean_subject}\nDescription: {clean_description}"
                 )
 
+            # 所有分类结果在进入 State 前统一收敛到 IntentType。
+            raw_intent = analysis.get("intent")
+            normalized_intent = normalize_intent(raw_intent)
+            intent_is_known = isinstance(raw_intent, IntentType) or (
+                str(raw_intent).strip().lower() in IntentType.values()
+            )
+            analyzer_confidence = self._confidence(
+                analysis.get("confidence_score", analysis.get("confidence", 0.0))
+            )
+            if not intent_is_known:
+                analyzer_confidence = min(analyzer_confidence, 0.5)
+
             # Increment token and latency stats
             state["tokens_input"] = state.get("tokens_input", 0) + in_tok
             state["tokens_output"] = state.get("tokens_output", 0) + out_tok
@@ -235,13 +248,9 @@ class TicketAnalyzerAgent:
                 "subject": clean_subject,
                 "sentiment": analysis.get("sentiment", "neutral"),
                 "priority": analysis.get("priority", "medium"),
-                "intent": analysis.get("intent", "general_query"),
+                "intent": normalized_intent,
                 "department": analysis.get("department", "general"),
-                "analyzer_confidence": self._confidence(
-                    analysis.get(
-                        "confidence_score", analysis.get("confidence", 0.0)
-                    )
-                ),
+                "analyzer_confidence": analyzer_confidence,
                 "analyzer_strategy": strategy,
                 "errors": state.get("errors", []),
             }
@@ -255,6 +264,7 @@ class TicketAnalyzerAgent:
                 "sentiment": "neutral",
                 "priority": "medium",
                 "department": "general",
+                "intent": DEFAULT_INTENT,
                 "analyzer_confidence": 0.0,
             }
             assessment = risk_engine.assess(next_state, stage="input")

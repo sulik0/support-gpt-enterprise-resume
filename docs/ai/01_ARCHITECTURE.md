@@ -148,6 +148,8 @@ stateDiagram-v2
 | 决策结果 | 升级结论、升级原因、是否审批 | Escalation | Approval、API | 支持 Human-in-the-Loop 与业务闭环 |
 | 可观测数据 | token、成本、延迟、错误列表 | 各节点 | Metrics、Trace、API | 支持成本控制、排障和安全短路 |
 
+`AgentState.intent` 使用统一 `IntentType`，规则表、OpenAI-compatible/Azure Prompt、Mock Provider、Tooling、Risk Engine 和 Agent Evaluation 共用同一套 8 个枚举值。Provider 不遵守约束时，未知值会归一化为 `information_request`，同时将分类置信度上限降至 `0.5`，使 Risk Engine 触发受控人工处理。
+
 **职责**：在节点之间传递完整、结构化且可审计的上下文。
 
 **输入**：API 构建的当前工单信息与默认值。

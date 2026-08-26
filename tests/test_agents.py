@@ -102,6 +102,8 @@ async def test_analyzer_ambiguous_intent_falls_back_to_llm(monkeypatch):
 
     assert called is True
     assert result["analyzer_strategy"] == "llm"
+    assert result["intent"] == "information_request"
+    assert result["analyzer_confidence"] == 0.5
     assert result["tokens_input"] == 80
 
 

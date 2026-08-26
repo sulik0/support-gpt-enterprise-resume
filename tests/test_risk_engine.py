@@ -1,6 +1,7 @@
 import pytest
 
 from src.config import Settings
+from src.models.intents import IntentType
 from src.risk.engine import RiskEngine
 
 
@@ -9,7 +10,7 @@ def test_risk_engine_keeps_normal_request_low_risk():
         {
             "priority": "medium",
             "sentiment": "neutral",
-            "intent": "general_query",
+            "intent": IntentType.INFORMATION_REQUEST,
             "analyzer_confidence": 0.95,
             "qa_score": 0.95,
         },
@@ -27,7 +28,7 @@ def test_risk_engine_escalates_low_confidence_and_high_risk_business_intent():
         stage="input",
     )
     refund = RiskEngine().assess(
-        {"analyzer_confidence": 0.95, "intent": "refund_request"},
+        {"analyzer_confidence": 0.95, "intent": IntentType.BILLING_DISPUTE},
         stage="input",
     )
 

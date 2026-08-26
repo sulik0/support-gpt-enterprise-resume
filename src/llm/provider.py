@@ -2,6 +2,12 @@ import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple
 from src.config import settings
+from src.models.intents import (
+    DEFAULT_INTENT,
+    IntentType,
+    intent_prompt_values,
+    normalize_intent,
+)
 from src.observability.tracing import record_current_llm_io, trace_operation
 
 
@@ -17,6 +23,23 @@ CHAT_LANGUAGE_POLICY = (
     "asks for a different response language, use the requested language instead. "
     "Do not preserve a previous response language unless the latest user message asks you to."
 )
+
+
+def _normalize_ticket_analysis(analysis: Dict[str, Any]) -> Dict[str, Any]:
+    """约束 Provider 分类输出，未知意图降级并降低置信度。"""
+    normalized = dict(analysis)
+    raw_intent = normalized.get("intent")
+    known = isinstance(raw_intent, IntentType) or (
+        str(raw_intent).strip().lower() in IntentType.values()
+    )
+    normalized["intent"] = normalize_intent(raw_intent)
+    if not known:
+        try:
+            confidence = float(normalized.get("confidence_score", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        normalized["confidence_score"] = min(max(confidence, 0.0), 0.5)
+    return normalized
 
 
 def _mock_uses_chinese(text: str) -> bool:
@@ -98,7 +121,7 @@ class MockLLMProvider(BaseLLMProvider):
         sentiment = "neutral"
         priority = "medium"
         department = "general"
-        intent = "information_request"
+        intent = DEFAULT_INTENT
 
         if any(
             x in text_lower
@@ -107,7 +130,7 @@ class MockLLMProvider(BaseLLMProvider):
             sentiment = "negative"
             priority = "high"
             department = "billing"
-            intent = "billing_dispute"
+            intent = IntentType.BILLING_DISPUTE
         elif any(
             x in text_lower
             for x in ["down", "crash", "error", "bug", "broken", "offline", "slow"]
@@ -115,11 +138,11 @@ class MockLLMProvider(BaseLLMProvider):
             sentiment = "negative"
             priority = "urgent"
             department = "technical"
-            intent = "outage_report"
+            intent = IntentType.OUTAGE_REPORT
         elif "thank" in text_lower or "great" in text_lower or "love" in text_lower:
             sentiment = "positive"
             priority = "low"
-            intent = "feedback"
+            intent = IntentType.FEEDBACK
 
         analysis = {
             "sentiment": sentiment,
@@ -128,7 +151,7 @@ class MockLLMProvider(BaseLLMProvider):
             "intent": intent,
             "confidence_score": 0.95,
         }
-        return analysis, 150, 45
+        return _normalize_ticket_analysis(analysis), 150, 45
 
     @trace_operation(name="supportgpt.llm.generate_resolution", component="llm")
     async def generate_resolution(
@@ -302,6 +325,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         prompt = (
             "Classify this support ticket. Return only JSON with exactly these fields: "
             "intent, priority, department, sentiment, confidence_score. "
+            f"intent must be exactly one of: {intent_prompt_values()}; "
             "priority: low|medium|high|urgent; department: "
             "billing|technical|shipping|general; sentiment: positive|neutral|negative; "
             f"confidence_score: 0..1. Ticket: {text}"
@@ -320,7 +344,7 @@ class OpenAILLMProvider(BaseLLMProvider):
             model=self.analyzer_model,
             client=self.analyzer_client,
         )
-        return json.loads(content), in_tok, out_tok
+        return _normalize_ticket_analysis(json.loads(content)), in_tok, out_tok
 
     @trace_operation(name="supportgpt.llm.generate_resolution", component="llm")
     async def generate_resolution(
@@ -436,6 +460,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         prompt = (
             "Classify this support ticket. Return only JSON with exactly these fields: "
             "intent, priority, department, sentiment, confidence_score. "
+            f"intent must be exactly one of: {intent_prompt_values()}; "
             "priority: low|medium|high|urgent; department: "
             "billing|technical|shipping|general; sentiment: positive|neutral|negative; "
             f"confidence_score: 0..1. Ticket: {text}"
@@ -453,7 +478,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
             model=settings.LLM_ANALYZER_MODEL_NAME or self.deployment,
         )
-        return json.loads(content), in_tok, out_tok
+        return _normalize_ticket_analysis(json.loads(content)), in_tok, out_tok
 
     @trace_operation(name="supportgpt.llm.generate_resolution", component="llm")
     async def generate_resolution(

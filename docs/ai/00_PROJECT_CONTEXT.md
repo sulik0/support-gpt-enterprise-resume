@@ -103,7 +103,7 @@ Observability
 LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为：
 
 - 请求标识：`ticket_id`、`customer_id`、`subject`、`description`、`kb_version`。
-- 分析结果：`sentiment`、`priority`、`intent`、`department`、`analyzer_confidence`。
+- 分析结果：`sentiment`、`priority`、`intent`、`department`、`analyzer_confidence`。`intent` 必须来自统一 `IntentType`：`billing_dispute`、`outage_report`、`order_cancellation`、`order_status`、`account_support`、`warranty_claim`、`feedback`、`information_request`；最后一项是唯一兜底值。
 - 权限与工具：`operator_role`、`tool_context`、`tool_calls`。
 - RAG 与回复：`context_citations`、`suggested_response`。
 - 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`semantic_guard_label`、`semantic_guard_categories`、`semantic_guard_checks`、`semantic_guard_degraded`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。

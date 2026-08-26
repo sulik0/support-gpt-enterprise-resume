@@ -8,6 +8,7 @@ from statistics import mean
 from typing import Any, Dict, List, Mapping, Sequence
 
 from src.evaluation.response_metrics import response_metrics_evaluator
+from src.models.intents import IntentType, normalize_intent
 
 
 AGENT_METRIC_KEYS = (
@@ -25,7 +26,7 @@ class AgentExpectations:
     """声明一条 Dataset 用例期望满足的 Agent 行为。"""
 
     expected_department: str | None = None
-    expected_intent: str | None = None
+    expected_intent: IntentType | None = None
     expected_priority: str | None = None
     required_tools: List[str] = field(default_factory=list)
     forbidden_tools: List[str] = field(default_factory=list)
@@ -37,7 +38,12 @@ class AgentExpectations:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> "AgentExpectations":
-        expectations = cls(**dict(value or {}))
+        normalized = dict(value or {})
+        if normalized.get("expected_intent") is not None:
+            normalized["expected_intent"] = normalize_intent(
+                normalized["expected_intent"]
+            )
+        expectations = cls(**normalized)
         if not 0.0 <= expectations.pass_threshold <= 1.0:
             raise ValueError("agent pass_threshold must be between 0 and 1.")
         if expectations.max_workflow_errors < 0:

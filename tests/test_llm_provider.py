@@ -4,6 +4,7 @@ import pytest
 
 from src.config import settings
 from src.llm.provider import MockLLMProvider, OpenAILLMProvider
+from src.models.intents import IntentType
 from src.rag.embedding import MockEmbeddingProvider, get_embedding_provider
 
 
@@ -193,7 +194,7 @@ async def test_analyzer_and_qa_use_separate_fast_provider(monkeypatch):
     with patch("openai.AsyncOpenAI", side_effect=[main_client, fast_client]) as factory:
         provider = OpenAILLMProvider()
 
-    await provider.analyze_ticket("Unclear support request")
+    analysis, _, _ = await provider.analyze_ticket("Unclear support request")
     await provider.generate_resolution("subject", "description", "context")
     await provider.evaluate_qa("question", ["evidence"], "answer")
 
@@ -207,3 +208,9 @@ async def test_analyzer_and_qa_use_separate_fast_provider(monkeypatch):
     ]
     assert fast_models == ["qwen-turbo", "qwen-turbo"]
     assert main_client.chat.completions.create.await_args.kwargs["model"] == "main-model"
+    assert analysis["intent"] is IntentType.INFORMATION_REQUEST
+    assert analysis["confidence_score"] == 0.5
+    analyzer_prompt = fast_client.chat.completions.create.await_args_list[0].kwargs[
+        "messages"
+    ][1]["content"]
+    assert "billing_dispute|outage_report|order_cancellation" in analyzer_prompt

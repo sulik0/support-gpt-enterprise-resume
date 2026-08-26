@@ -164,7 +164,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 | Prompt 阶段 | 当前约束 |
 |---|---|
-| Analyzer | 固定高置信度单意图优先规则；模糊或多意图才以脱敏工单调用 LLM，结构化输出必要分类字段 |
+| Analyzer | 固定高置信度单意图优先规则；模糊或多意图才以脱敏工单调用 LLM，结构化输出必要分类字段；规则、Provider、State、Tool、Risk Engine 与 Evaluation 统一使用 8 项 `IntentType`，唯一兜底为 `information_request`，未知模型标签会降级并降低置信度 |
 | Resolver | 只依据 Top-2 citation 和必要 Tool 字段生成最终客服回复，限制输入字符数与输出 token |
 | QA | 确定性失败由规则短路；其余仅输出 score、hallucination_detected、citation_verified，可配置轻量模型 |
 | 输出过滤 | 删除可能泄露内部角色、指令或工作流的内容 |
