@@ -6,10 +6,47 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.db_models import AgentRun, Ticket
 
 
+def _public_workflow_output(state, *, approval_required: bool):
+    """构造用户咨询接口所需的最小 Agent 输出。"""
+    return {
+        **state,
+        "suggested_response": "这是可直接展示给用户的回复。",
+        "sentiment": "neutral",
+        "priority": "medium",
+        "department": "general",
+        "sla_hours": 24.0,
+        "approval_required": approval_required,
+        "escalation_recommended": approval_required,
+        "qa_score": 0.92,
+        "hallucination_detected": False,
+        "workflow_path": ["ticket_analyzer", "resolver", "qa"],
+        "tool_calls": [],
+        "context_citations": [],
+        "tokens_input": 80,
+        "tokens_output": 30,
+        "latency_seconds": 0.15,
+    }
+
+
+@pytest.mark.asyncio
+async def test_internal_ticket_endpoints_require_staff_login(client: AsyncClient):
+    create_response = await client.post(
+        "/tickets",
+        json={"customer_id": "cust_101", "subject": "内部工单", "description": "测试"},
+    )
+    list_response = await client.get("/tickets")
+    detail_response = await client.get("/tickets/1/agent-result")
+
+    assert create_response.status_code == 401
+    assert list_response.status_code == 401
+    assert detail_response.status_code == 401
+
+
 @pytest.mark.asyncio
 async def test_create_ticket_runs_agent_once_and_detail_only_reads_saved_result(
     client: AsyncClient,
     db_session: AsyncSession,
+    agent_headers: dict[str, str],
     monkeypatch,
 ):
     workflow_calls = []
@@ -51,6 +88,7 @@ async def test_create_ticket_runs_agent_once_and_detail_only_reads_saved_result(
             "description": "这笔费用需要退款。",
             "kb_version": "v2",
         },
+        headers=agent_headers,
     )
 
     assert create_response.status_code == 201
@@ -60,8 +98,12 @@ async def test_create_ticket_runs_agent_once_and_detail_only_reads_saved_result(
     assert workflow_calls[0]["ticket_id"] == ticket_id
     assert workflow_calls[0]["kb_version"] == "v2"
 
-    first_detail = await client.get(f"/tickets/{ticket_id}/agent-result")
-    second_detail = await client.get(f"/tickets/{ticket_id}/agent-result")
+    first_detail = await client.get(
+        f"/tickets/{ticket_id}/agent-result", headers=agent_headers
+    )
+    second_detail = await client.get(
+        f"/tickets/{ticket_id}/agent-result", headers=agent_headers
+    )
 
     assert first_detail.status_code == 200
     assert second_detail.status_code == 200
@@ -82,6 +124,7 @@ async def test_create_ticket_runs_agent_once_and_detail_only_reads_saved_result(
 async def test_ticket_without_agent_run_returns_not_found(
     client: AsyncClient,
     db_session: AsyncSession,
+    agent_headers: dict[str, str],
 ):
     ticket = Ticket(
         customer_id="legacy_customer",
@@ -93,7 +136,63 @@ async def test_ticket_without_agent_run_returns_not_found(
     await db_session.commit()
     await db_session.refresh(ticket)
 
-    response = await client.get(f"/tickets/{ticket.id}/agent-result")
+    response = await client.get(
+        f"/tickets/{ticket.id}/agent-result", headers=agent_headers
+    )
 
     assert response.status_code == 404
     assert "No persisted Agent result" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_public_support_request_returns_only_safe_answer(
+    client: AsyncClient, monkeypatch
+):
+    async def fake_workflow(state):
+        return _public_workflow_output(state, approval_required=False)
+
+    monkeypatch.setattr("src.main.run_agent_workflow", fake_workflow)
+    response = await client.post(
+        "/support/requests",
+        json={"customer_id": "cust_101", "message": "如何查看订单状态？"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "answered"
+    assert payload["response"] == "这是可直接展示给用户的回复。"
+    assert set(payload) == {"ticket_id", "status", "response", "message", "created_at"}
+
+
+@pytest.mark.asyncio
+async def test_public_support_request_hides_draft_and_enters_staff_queue(
+    client: AsyncClient, monkeypatch
+):
+    async def fake_workflow(state):
+        return _public_workflow_output(state, approval_required=True)
+
+    monkeypatch.setattr("src.main.run_agent_workflow", fake_workflow)
+    response = await client.post(
+        "/support/requests",
+        json={"customer_id": "cust_101", "message": "请处理高风险退款。"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "pending_human"
+    assert payload["response"] is None
+
+    register = await client.post(
+        "/auth/register",
+        json={"username": "queue_agent", "password": "queue-pass", "role": "agent"},
+    )
+    assert register.status_code == 201
+    login = await client.post(
+        "/auth/token",
+        json={"username": "queue_agent", "password": "queue-pass"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    queue = await client.get("/staff/review-queue", headers=headers)
+
+    assert queue.status_code == 200
+    assert [ticket["id"] for ticket in queue.json()] == [payload["ticket_id"]]

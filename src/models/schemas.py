@@ -130,6 +130,24 @@ class TicketCreate(BaseModel):
     kb_version: str = Field(default="v1")
 
 
+class PublicSupportRequest(BaseModel):
+    """定义用户咨询页面提交的最小请求。"""
+
+    customer_id: str = Field(..., min_length=1, max_length=100)
+    message: str = Field(..., min_length=2, max_length=5000)
+    kb_version: str = Field(default="v1", max_length=50)
+
+
+class PublicSupportResponse(BaseModel):
+    """只向终端用户返回安全的处理状态与最终回复。"""
+
+    ticket_id: int
+    status: str
+    response: Optional[str] = None
+    message: str
+    created_at: datetime
+
+
 class TicketResponse(BaseModel):
     """定义包含状态、分析结果和时间信息的工单响应。"""
 

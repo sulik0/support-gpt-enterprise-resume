@@ -195,14 +195,14 @@ resolved / closed --reopen--> in_progress
 
 ## 数据流
 
-### 工单工作台主链路
+### 用户咨询与客服后台主链路
 
-1. 客服通过 `POST /tickets` 提交客户、主题、描述和新工单使用的 `kb_version`。
-2. API 先创建唯一业务工单，再以该 `ticket_id` 执行 LangGraph Workflow。
-3. Workflow 完成后回写情绪、优先级、部门和 SLA，并按风险创建必要的 `ResponseApproval`。
-4. 系统保存关联该工单的 `AgentRun`，包含回复、citation、Tool Call、QA、版本、Token、延迟和 Trace ID。
-5. 前端打开工单详情时调用 `GET /tickets/{ticket_id}/agent-result`，只读取最新持久化结果，不重新执行 Workflow，也不会新增工单、审批或 AgentRun。
-6. 没有历史 AgentRun 的旧工单返回明确的 `404`，由客服决定后续处理，不在读取路径隐式重跑。
+1. 终端用户通过用户咨询页提交问题，前端调用 `POST /support/requests`。
+2. API 创建唯一业务工单并执行 LangGraph Workflow，随后持久化 `AgentRun`，包含回复、citation、Tool Call、QA、版本、Token、延迟和 Trace ID。
+3. 普通且通过质量门的请求只向用户返回安全的最终回复，不暴露 Tool、QA、风险或 Trace 内部字段。
+4. 高风险、低置信度、低 QA、幻觉或异常请求创建 `ResponseApproval`，用户页只显示“已转交人工客服”。
+5. 客服员工后台通过受 RBAC 保护的 `GET /staff/review-queue` 仅加载 `pending_approval` 工单，不展示普通自动处理工单。
+6. 员工打开详情时调用 `GET /tickets/{ticket_id}/agent-result`，只读取最新持久化结果，不重新执行 Workflow；审批完成后工单自动移出人工队列。
 
 ### `/chat` 主链路
 
@@ -334,7 +334,7 @@ resolved / closed --reopen--> in_progress
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口和统一报告，但尚未执行并确立可长期引用的真实模型分数，人工标注、质量阈值和 CI Quality Gate 仍需继续建设。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
-- **前端**：React Dashboard 已增加 Agent Run / LangSmith 可观测入口，但尚未接入 Prometheus 真实趋势指标和内嵌 Span 时间轴。
+- **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。
 - **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
 
 ### 已知环境限制
@@ -379,10 +379,10 @@ resolved / closed --reopen--> in_progress
 - 持久化 Tool Calling 审计记录。
 - 根据部署需要为 Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样与告警策略。
 
-### P2：客服工作台
+### P2：用户通知与异步处理
 
-- 展示工单列表、AI 草稿、Tool Context、Tool Calls、citation、QA 分数和风险原因。
-- 提供审批、修改、拒绝、关闭和重开操作。
+- 将同步 `POST /support/requests` 演进为提交后立即返回 `ticket_id` 的后台任务。
+- 增加用户身份、工单归属校验以及人工审批完成后的站内通知或推送。
 
 ### P2：Prompt 版本管理与灰度
 

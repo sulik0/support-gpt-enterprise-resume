@@ -50,6 +50,8 @@ from src.models.schemas import (
     FeedbackEventResponse,
     LoginRequest,
     OrderInfo,
+    PublicSupportRequest,
+    PublicSupportResponse,
     ResponseApprovalRequest,
     ResponseApprovalResponse,
     SuggestResponseRequest,
@@ -694,7 +696,9 @@ async def recommend_escalation(
 
 
 @app.post("/customer-context", response_model=CustomerContextResponse)
-async def get_customer_context(req: CustomerContextRequest):
+async def get_customer_context(
+    req: CustomerContextRequest, current_user: User = Depends(require_agent)
+):
     """Retrieve full customer profile summary across CRM and Ticketing tools."""
     profile = crm_tool.get_customer_profile(req.customer_id)
     history = ticketing_tool.get_past_tickets(req.customer_id)
@@ -855,9 +859,65 @@ async def process_approval(
 
 # --- GENERAL TICKETING APIS ---
 @app.post(
+    "/support/requests",
+    response_model=PublicSupportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_public_support_request(
+    req: PublicSupportRequest, db: AsyncSession = Depends(get_db)
+):
+    """接收用户咨询，只返回可公开的回复或转人工状态。"""
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Support message cannot be empty.",
+        )
+    ticket = Ticket(
+        customer_id=req.customer_id,
+        subject=message.splitlines()[0][:80],
+        description=message,
+        status="open",
+        priority="medium",
+    )
+    db.add(ticket)
+    await db.commit()
+    await db.refresh(ticket)
+    agent_output, approval_id, _ = await _process_ticket_with_agent(
+        db=db,
+        ticket=ticket,
+        kb_version=req.kb_version,
+        endpoint="/support/requests",
+        session_id=f"public_ticket_{ticket.id}",
+        require_persisted_result=True,
+    )
+    await db.refresh(ticket)
+
+    if approval_id:
+        return PublicSupportResponse(
+            ticket_id=ticket.id,
+            status="pending_human",
+            response=None,
+            message="您的问题需要人工客服进一步确认，我们已经为您转交处理。",
+            created_at=ticket.created_at,
+        )
+    return PublicSupportResponse(
+        ticket_id=ticket.id,
+        status="answered",
+        response=agent_output.get("suggested_response", ""),
+        message="智能客服已完成处理。",
+        created_at=ticket.created_at,
+    )
+
+
+@app.post(
     "/tickets", response_model=TicketResponse, status_code=status.HTTP_201_CREATED
 )
-async def create_ticket(req: TicketCreate, db: AsyncSession = Depends(get_db)):
+async def create_ticket(
+    req: TicketCreate,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
     """创建工单后立即执行 Agent，并在响应前保存处理结果。"""
     ticket = Ticket(
         customer_id=req.customer_id,
@@ -885,7 +945,11 @@ async def create_ticket(req: TicketCreate, db: AsyncSession = Depends(get_db)):
     "/tickets/{ticket_id}/agent-result",
     response_model=TicketAgentResultResponse,
 )
-async def get_ticket_agent_result(ticket_id: int, db: AsyncSession = Depends(get_db)):
+async def get_ticket_agent_result(
+    ticket_id: int,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
     """读取工单最新的持久化 Agent 结果，不重新执行 Workflow。"""
     run_result = await db.execute(
         select(AgentRun)
@@ -943,7 +1007,11 @@ async def get_ticket_agent_result(ticket_id: int, db: AsyncSession = Depends(get
 
 
 @app.post("/tickets/{ticket_id}/close", response_model=TicketResponse)
-async def close_ticket(ticket_id: int, db: AsyncSession = Depends(get_db)):
+async def close_ticket(
+    ticket_id: int,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == ticket_id))
     ticket = ticket_res.scalars().first()
     if not ticket:
@@ -956,6 +1024,21 @@ async def close_ticket(ticket_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/tickets", response_model=list[TicketResponse])
-async def list_tickets(db: AsyncSession = Depends(get_db)):
+async def list_tickets(
+    current_user: User = Depends(require_agent), db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(select(Ticket))
+    return result.scalars().all()
+
+
+@app.get("/staff/review-queue", response_model=list[TicketResponse])
+async def list_staff_review_queue(
+    current_user: User = Depends(require_agent), db: AsyncSession = Depends(get_db)
+):
+    """客服工作台只返回等待人工审批的异常工单。"""
+    result = await db.execute(
+        select(Ticket)
+        .where(Ticket.status == "pending_approval")
+        .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
+    )
     return result.scalars().all()

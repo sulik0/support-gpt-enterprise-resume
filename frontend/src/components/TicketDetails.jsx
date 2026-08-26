@@ -31,7 +31,7 @@ export default function TicketDetails({ ticket, onActionComplete }) {
   const [evalLoading, setEvalLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
 
-  // 切换工单时重新补全上下文，并运行 Agent 生成回复草稿。
+  // 切换工单时只读取已经持久化的 Agent 结果。
   useEffect(() => {
     if (!ticket) return;
     setCustomer(null);
@@ -91,8 +91,8 @@ export default function TicketDetails({ ticket, onActionComplete }) {
       <section className="ticket-empty-state">
         <span className="empty-state-icon"><ClipboardCheck size={34} /></span>
         <span className="section-label">等待处理</span>
-        <h2>从队列中选择一张工单</h2>
-        <p>新工单提交后，系统会完成客户画像补全、知识检索和回复生成；在此选择工单只读取保存结果。</p>
+        <h2>从人工队列中选择一张工单</h2>
+        <p>普通问题会自动回复；这里只展示 Agent 判定为高风险、低置信度或需要人工审批的已保存结果。</p>
         <div className="empty-workflow">
           <span>1. 理解诉求</span><i />
           <span>2. 补全上下文</span><i />
@@ -221,7 +221,7 @@ export default function TicketDetails({ ticket, onActionComplete }) {
           <footer className="assistant-actions">
             <div>
               {chatOutput.approval_required ? (
-                <><button onClick={() => handleApproval('approved')} className="btn btn-primary"><CheckCircle2 size={16} /> 批准并关闭工单</button><button onClick={() => handleApproval('modified')} className="btn btn-secondary">保存人工修改</button></>
+                <><button onClick={() => handleApproval('approved')} className="btn btn-primary"><CheckCircle2 size={16} /> 批准 AI 回复</button><button onClick={() => handleApproval('modified')} className="btn btn-secondary">发送人工修改</button></>
               ) : <span className="no-review-needed"><CheckCircle2 size={16} /> 此回复无需人工审批</span>}
             </div>
             <button onClick={triggerEvaluation} className="btn btn-quiet" disabled={evalLoading}>

@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-08-19。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-08-26。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -22,6 +22,7 @@
 - [x] 在 Dataset + Workflow Replay 中增加安全混淆矩阵、Precision / Recall / F1 / 误报率和安全处置正确率。
 - [x] 将业务回归 Baseline 扩展到 100 条，增加多语言、安全攻击与安全 hard negative 覆盖。
 - [x] 增加真实 LLM Regression 专用入口、smoke/full 套件、Dry Run、付费确认、调用预算和 Token/成本归因。
+- [x] 拆分用户咨询页与客服员工后台；普通问题自动回复，异常请求进入受 RBAC 保护的人工审批队列。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -45,7 +46,7 @@
 
 ## 已知问题与风险
 
-- [x] 在 Python 3.12 环境完成 121 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 在 Python 3.12 环境完成 135 条全量测试；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
@@ -53,3 +54,4 @@
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。
 - [ ] Qwen3Guard 默认未启用且尚无本项目真实运行指标，未知语义变体与误报率仍需通过持续红队样本验证。
 - [ ] Risk Engine 阈值尚未基于真实客服运营数据校准，当前采用保守的 high / critical 转人工策略。
+- [ ] 用户咨询页当前使用演示客户选择器；生产接入前必须绑定真实用户身份与工单归属，并增加限流和异步处理完成通知。

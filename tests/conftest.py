@@ -9,6 +9,12 @@ from httpx import AsyncClient, ASGITransport
 os.environ["APP_ENV"] = "testing"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["LLM_PROVIDER"] = "mock"
+# 测试环境不得继承开发机的小模型端点与凭据。
+os.environ["LLM_FAST_MODEL_NAME"] = ""
+os.environ["LLM_FAST_BASE_URL"] = ""
+os.environ["LLM_FAST_API_KEY"] = ""
+os.environ["LLM_ANALYZER_MODEL_NAME"] = ""
+os.environ["LLM_QA_MODEL_NAME"] = ""
 
 from src.database import Base, get_db
 from src.main import app
@@ -74,3 +80,19 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield ac
         
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def agent_headers(client: AsyncClient) -> dict[str, str]:
+    """为内部工单接口提供隔离的客服身份。"""
+    register = await client.post(
+        "/auth/register",
+        json={"username": "test_agent", "password": "test-password", "role": "agent"},
+    )
+    assert register.status_code == 201
+    login = await client.post(
+        "/auth/token",
+        json={"username": "test_agent", "password": "test-password"},
+    )
+    assert login.status_code == 200
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}

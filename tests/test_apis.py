@@ -13,9 +13,15 @@ async def test_general_endpoints(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_copilot_service_routes(client: AsyncClient):
+async def test_copilot_service_routes(
+    client: AsyncClient, agent_headers: dict[str, str]
+):
     # 1. Customer profile context lookup
-    ctx_res = await client.post("/customer-context", json={"customer_id": "cust_101"})
+    ctx_res = await client.post(
+        "/customer-context",
+        json={"customer_id": "cust_101"},
+        headers=agent_headers,
+    )
     assert ctx_res.status_code == 200
     assert ctx_res.json()["name"] == "Jane Doe"
     assert ctx_res.json()["tier"] == "VIP"

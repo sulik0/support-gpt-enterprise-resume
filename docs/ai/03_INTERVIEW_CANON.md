@@ -257,13 +257,13 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
 第一阶段已实现线上反馈采集和训练候选沉淀：
 
-- 工单工作台通过 `POST /tickets` 创建唯一工单并立即执行 Workflow；`/chat`、`/tickets` 与 `/suggest-response` 成功后创建 `AgentRun`，记录 `request_id`、OpenTelemetry `trace_id`、Prompt / Workflow / Model / KB 版本、脱敏后的输入输出、Workflow Path、Tool Call 摘要、citation、QA、幻觉、Token 和延迟。
-- 打开工作台详情只调用 `GET /tickets/{ticket_id}/agent-result` 读取最新持久化结果，不会重新执行 Agent，也不会新增 Ticket、AgentRun 或审批记录。
+- 用户咨询页通过 `POST /support/requests` 创建唯一工单并立即执行 Workflow；普通请求只返回安全回复，需要审批时只返回转人工状态，不向用户暴露 Tool、QA、风险或 Trace 字段。
+- 客服员工后台通过受 RBAC 保护的 `GET /staff/review-queue` 仅加载待审批工单；打开详情调用 `GET /tickets/{ticket_id}/agent-result` 读取最新持久化结果，不会重新执行 Agent，也不会新增 Ticket、AgentRun 或审批记录。
 - 用户通过 `agent_run_id + feedback_token` 提交评分；数据库只保存 Token 的 SHA-256 摘要，每个 Run 只接受一条不可变用户反馈。
 - 人工审批的通过、修改和拒绝结果自动写入 `FeedbackEvent`；人工修改可形成 SFT 与 DPO 候选。
 - 可信评测结果可关联 Agent Run；离线导入同时要求 Agent Evaluation 通过、citation 命中和 RAG 平均分达到 `0.75`。
 - 导出脚本生成脱敏、去重、原子写入且权限为 `0600` 的 `sft_candidates.jsonl`、`dpo_candidates.jsonl` 和 `manifest.json`。
-- `/chat` 与 `/suggest-response` 的 Feedback 采集使用独立事务并 fail-open；工作台的 `POST /tickets` 将 AgentRun 作为详情结果来源，必须在 AgentRun 和审批关联写入成功后才返回成功，避免产生没有可读处理结果的成功响应。
+- `/chat` 与 `/suggest-response` 的 Feedback 采集使用独立事务并 fail-open；`/support/requests` 与工作台的 `POST /tickets` 将 AgentRun 作为详情结果来源，必须在 AgentRun 和审批关联写入成功后才返回成功，避免产生没有可读处理结果的成功响应。
 
 本阶段只生成训练候选，不执行 SFT / DPO 训练，不包含 Dataset Registry、人工标注平台、训练任务编排、模型自动发布或 vLLM Serving。
 
@@ -285,7 +285,7 @@ LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有�
 
 OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工具调用、RAG 查询与回退、审批创建和审批处理。
 
-React 前端已增加仅 `manager/admin` 可见的 Agent 可观测性页面，通过分页 API 查看 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并可跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
+React 前端已拆分为用户咨询页与客服员工后台。用户页只展示自动回复或转人工状态；员工后台仅加载待审批异常工单。`manager/admin` 还可查看 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
 
 ### 当前没有的性能数据
 

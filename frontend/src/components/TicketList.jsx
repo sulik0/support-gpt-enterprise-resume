@@ -1,36 +1,28 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, ChevronRight, Inbox, MessageSquare, Plus, Search } from 'lucide-react';
+import { AlertCircle, ChevronRight, Inbox, MessageSquare, Search } from 'lucide-react';
 import { translatePriority, translateSentiment, translateStatus, translateSubject } from '../i18n';
 
-const ACTIVE_STATUSES = new Set(['open', 'in_progress', 'pending', 'pending_approval']);
-
-export default function TicketList({ tickets = [], selectedId, onSelect, onNewTicket }) {
+export default function TicketList({ tickets = [], selectedId, onSelect }) {
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('active');
+  const [priorityFilter, setPriorityFilter] = useState('all');
 
   // 搜索与状态筛选只作用于当前已加载的工单队列。
   const filteredTickets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return tickets.filter((ticket) => {
-      const status = ticket.status || 'open';
-      const matchesStatus = statusFilter === 'all'
-        || (statusFilter === 'active' && ACTIVE_STATUSES.has(status))
-        || status === statusFilter;
+      const matchesPriority = priorityFilter === 'all' || ticket.priority === priorityFilter;
       const searchable = `${ticket.id} ${ticket.customer_id} ${ticket.subject} ${ticket.description}`.toLowerCase();
-      return matchesStatus && (!normalizedQuery || searchable.includes(normalizedQuery));
+      return matchesPriority && (!normalizedQuery || searchable.includes(normalizedQuery));
     });
-  }, [query, statusFilter, tickets]);
+  }, [priorityFilter, query, tickets]);
 
   return (
     <aside className="ticket-queue">
       <div className="queue-heading">
         <div>
           <span className="section-label">处理队列</span>
-          <h2>客户工单 <em>{tickets.length}</em></h2>
+          <h2>待人工审批 <em>{tickets.length}</em></h2>
         </div>
-        <button onClick={onNewTicket} className="queue-add-button" title="新建工单" aria-label="新建工单">
-          <Plus size={18} />
-        </button>
       </div>
 
       <div className="queue-filters">
@@ -38,12 +30,12 @@ export default function TicketList({ tickets = [], selectedId, onSelect, onNewTi
           <Search size={15} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索客户、主题或编号" />
         </label>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="筛选工单状态">
-          <option value="active">待处理</option>
-          <option value="all">全部状态</option>
-          <option value="pending_approval">待审批</option>
-          <option value="resolved">已解决</option>
-          <option value="closed">已关闭</option>
+        <select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)} aria-label="筛选工单优先级">
+          <option value="all">全部优先级</option>
+          <option value="urgent">紧急</option>
+          <option value="high">高</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
         </select>
       </div>
 
@@ -51,8 +43,8 @@ export default function TicketList({ tickets = [], selectedId, onSelect, onNewTi
         {filteredTickets.length === 0 ? (
           <div className="queue-empty">
             <Inbox size={28} />
-            <strong>{tickets.length === 0 ? '暂无工单' : '没有匹配的工单'}</strong>
-            <span>{tickets.length === 0 ? '新建工单后将出现在这里' : '请调整搜索词或状态筛选'}</span>
+            <strong>{tickets.length === 0 ? '暂无待处理工单' : '没有匹配的工单'}</strong>
+            <span>{tickets.length === 0 ? 'Agent 发现异常或需要审批时会自动加入这里' : '请调整搜索词或优先级筛选'}</span>
           </div>
         ) : filteredTickets.map((ticket) => {
           const isSelected = ticket.id === selectedId;

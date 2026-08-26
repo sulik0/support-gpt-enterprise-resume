@@ -716,7 +716,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 3. P1：抽象 SearchBackend，评估 OpenSearch 生产 Hybrid Search。
 4. P1：持久化 Tool Call 和工单状态事件审计，接入 OTLP / Jaeger / Tempo。
 5. P1：把受控会话历史注入 Agent 推理，并增加长度、隐私和回归测试。
-6. P2：完善客服工作台，展示草稿、citation、Tool Context、QA 和审批。
+6. P2：将用户咨询改为后台异步任务，并增加用户身份、工单归属校验和人工处理完成通知。
 7. P2：在 Golden Set 基础上做 Prompt 版本管理与灰度，而不是先做无指标的 A/B。
 
 ## 回答使用原则

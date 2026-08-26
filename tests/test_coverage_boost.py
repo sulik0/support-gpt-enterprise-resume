@@ -246,19 +246,23 @@ async def test_approval_workflows_database_commits(db_session: AsyncSession):
 
 # --- FASTAPI REMAINING ROUTES ---
 @pytest.mark.asyncio
-async def test_remaining_fastapi_routes(client: AsyncClient):
+async def test_remaining_fastapi_routes(
+    client: AsyncClient, agent_headers: dict[str, str]
+):
     # 1. Create a ticket to register ID 1
     ticket_payload = {
         "customer_id": "cust_101",
         "subject": "Slow performance",
         "description": "System is laggy",
     }
-    create_res = await client.post("/tickets", json=ticket_payload)
+    create_res = await client.post(
+        "/tickets", json=ticket_payload, headers=agent_headers
+    )
     assert create_res.status_code == 201
     ticket_id = create_res.json()["id"]
 
     # 2. Get list of tickets
-    list_res = await client.get("/tickets")
+    list_res = await client.get("/tickets", headers=agent_headers)
     assert list_res.status_code == 200
     assert len(list_res.json()) > 0
 

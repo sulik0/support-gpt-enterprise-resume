@@ -61,6 +61,24 @@ export async function fetchTickets() {
   return response.json();
 }
 
+export async function fetchReviewQueue() {
+  const response = await authenticatedFetch(`${BASE_URL}/staff/review-queue`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) throw new Error('加载待人工处理队列失败');
+  return response.json();
+}
+
+export async function submitSupportRequest(customerId, message, kbVersion = 'v1') {
+  const response = await fetch(`${BASE_URL}/support/requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id: customerId, message, kb_version: kbVersion }),
+  });
+  if (!response.ok) throw new Error('问题提交失败，请稍后重试');
+  return response.json();
+}
+
 export async function createTicket(customerId, subject, description, kbVersion = 'v1') {
   const response = await authenticatedFetch(`${BASE_URL}/tickets`, {
     method: 'POST',
