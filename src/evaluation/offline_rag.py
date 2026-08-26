@@ -23,6 +23,7 @@ from src.evaluation.security_evaluation import (
 )
 from src.observability.sanitization import redact_text, sanitize_value
 from src.observability.tracing import (
+    capture_trace_performance,
     get_current_trace_id,
     get_tracer,
     observed_span,
@@ -73,12 +74,16 @@ class EvaluationRecord:
     workflow_path: List[str]
     workflow_output: Dict[str, Any]
     workflow_errors: List[str]
+    ticket_state: Dict[str, Any]
+    trace_performance: Dict[str, Any]
 
 
 WorkflowRunner = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
 
-def load_evaluation_dataset(path: Path) -> List[EvaluationCase]:
+def load_evaluation_dataset(
+    path: Path, *, validate_agent: bool = True, validate_security: bool = True
+) -> List[EvaluationCase]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     raw_cases = payload.get("cases", payload) if isinstance(payload, dict) else payload
     if not isinstance(raw_cases, list) or not raw_cases:
@@ -93,15 +98,21 @@ def load_evaluation_dataset(path: Path) -> List[EvaluationCase]:
             raise ValueError(
                 f"Evaluation case '{case.id}' must define agent_expectations."
             )
-        AgentExpectations.from_mapping(case.agent_expectations)
-        SecurityExpectations.from_case(case)
+        if validate_agent:
+            AgentExpectations.from_mapping(case.agent_expectations)
+        if validate_security:
+            SecurityExpectations.from_case(case)
     return cases
 
 
 async def collect_workflow_records(
     cases: Sequence[EvaluationCase],
     workflow_runner: Optional[WorkflowRunner] = None,
+    *,
+    include_security_metadata: bool = True,
 ) -> List[EvaluationRecord]:
+    from src.agents.graph import build_ticket_state
+
     if workflow_runner is None:
         from src.agents.graph import run_agent_workflow
 
@@ -110,49 +121,61 @@ async def collect_workflow_records(
     records: List[EvaluationRecord] = []
     for index, case in enumerate(cases):
         trace_id = None
-        security_expectations = SecurityExpectations.from_case(case)
+        security_expectations = (
+            SecurityExpectations.from_case(case)
+            if include_security_metadata
+            else None
+        )
+        ticket_state = build_ticket_state(
+            {
+                "request_id": f"offline-eval-{case.id}",
+                "ticket_id": 10000 + index,
+                "customer_id": case.customer_id or f"offline_eval_{case.id}",
+                "subject": f"Evaluation case: {case.category}",
+                "description": case.query,
+                "kb_version": case.kb_version,
+                "operator_role": "agent",
+            }
+        )
+        trace_performance: Dict[str, Any] = {"spans": [], "llm_calls": []}
         try:
-            with observed_span(
-                tracer,
-                "evaluation.workflow_replay",
-                {
+            with capture_trace_performance() as trace_performance:
+                replay_attributes = {
                     "evaluation.case_id": case.id,
                     "evaluation.category": case.category,
                     "evaluation.kb_version": case.kb_version,
-                    "request.id": f"offline-eval-{case.id}",
-                    "evaluation.security.expected_attack": (
-                        security_expectations.expected_attack
-                    ),
-                    "evaluation.security.attack_type": (
-                        security_expectations.attack_type
-                    ),
-                },
-            ) as span:
-                trace_id = get_current_trace_id()
-                output = await workflow_runner(
-                    {
-                        "request_id": f"offline-eval-{case.id}",
-                        "ticket_id": 10000 + index,
-                        "customer_id": case.customer_id or f"offline_eval_{case.id}",
-                        "subject": f"Evaluation case: {case.category}",
-                        "description": case.query,
-                        "kb_version": case.kb_version,
-                        "operator_role": "agent",
-                    }
-                )
-                set_span_attributes(
-                    span,
-                    {
-                        "evaluation.workflow_error_count": len(
-                            output.get("errors", [])
-                        ),
-                        "evaluation.workflow_path": output.get("workflow_path", []),
-                        "evaluation.security.detected": output.get(
-                            "security_threat_detected", False
-                        ),
-                        "evaluation.security.risk_level": output.get("risk_level"),
-                    },
-                )
+                    "request.id": ticket_state["request_id"],
+                }
+                if security_expectations is not None:
+                    replay_attributes.update(
+                        {
+                            "evaluation.security.expected_attack": (
+                                security_expectations.expected_attack
+                            ),
+                            "evaluation.security.attack_type": (
+                                security_expectations.attack_type
+                            ),
+                        }
+                    )
+                with observed_span(
+                    tracer,
+                    "evaluation.workflow_replay",
+                    replay_attributes,
+                ) as span:
+                    trace_id = get_current_trace_id()
+                    output = await workflow_runner(ticket_state)
+                    trace_id = output.get("trace_id") or trace_id
+                    set_span_attributes(
+                        span,
+                        {
+                            "evaluation.workflow_error_count": len(
+                                output.get("errors", [])
+                            ),
+                            "evaluation.workflow_path": output.get(
+                                "workflow_path", []
+                            ),
+                        },
+                    )
         except Exception as exc:
             output = {
                 "suggested_response": "",
@@ -181,6 +204,8 @@ async def collect_workflow_records(
                 workflow_path=list(output.get("workflow_path", [])),
                 workflow_output=dict(output),
                 workflow_errors=list(output.get("errors", [])),
+                ticket_state=dict(ticket_state),
+                trace_performance=dict(trace_performance),
             )
         )
     return records

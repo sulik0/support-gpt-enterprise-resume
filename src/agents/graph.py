@@ -450,15 +450,9 @@ def create_agent_graph() -> StateGraph:
 compiled_graph = create_agent_graph()
 
 
-async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Executes the Agent workflow with parallel context enrichment using LangGraph.
-    Estimates latency, total tokens, and USD costs.
-    """
-    start_time = time.time()
-
-    # Initialize state fields if missing
-    state_input: AgentState = {
+def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
+    """根据业务输入构造可直接交给 LangGraph 的完整 Ticket State。"""
+    return {
         "request_id": initial_state.get("request_id")
         or get_request_id()
         or "background",
@@ -507,6 +501,15 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "workflow_path": [],
         "errors": [],
     }
+
+
+async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Executes the Agent workflow with parallel context enrichment using LangGraph.
+    Estimates latency, total tokens, and USD costs.
+    """
+    start_time = time.time()
+    state_input = build_ticket_state(initial_state)
 
     logger.info(f"Invoking LangGraph flow for ticket ID {state_input['ticket_id']}")
     try:

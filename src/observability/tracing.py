@@ -27,6 +27,9 @@ _langsmith_agent_context: ContextVar[bool] = ContextVar(
 _agent_trace_id_context: ContextVar[Optional[str]] = ContextVar(
     "supportgpt_agent_trace_id", default=None
 )
+_trace_performance_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "supportgpt_trace_performance", default=None
+)
 
 
 def get_tracer(name: str = "supportgpt"):
@@ -98,6 +101,64 @@ def get_current_trace_id() -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+@contextmanager
+def capture_trace_performance() -> Iterator[Dict[str, Any]]:
+    """采集本次 OTel Span 与 LLM 调用摘要，供离线评测生成性能报告。"""
+    capture: Dict[str, Any] = {"spans": [], "llm_calls": []}
+    token = _trace_performance_context.set(capture)
+    try:
+        yield capture
+    finally:
+        _trace_performance_context.reset(token)
+
+
+def _capture_span(
+    name: str,
+    *,
+    duration_seconds: float,
+    status: str,
+    attributes: Optional[Dict[str, Any]],
+) -> None:
+    """将 Span 性能摘要写入当前评测上下文。"""
+    capture = _trace_performance_context.get()
+    if capture is None:
+        return
+    capture["spans"].append(
+        {
+            "name": name,
+            "duration_seconds": round(max(duration_seconds, 0.0), 6),
+            "status": status,
+            "attributes": sanitize_attributes(attributes or {}),
+        }
+    )
+
+
+def _capture_llm_call(
+    operation: str,
+    *,
+    duration_seconds: float,
+    status: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> None:
+    """记录与 OTel LLM Span 一致的模型、Token 和耗时。"""
+    capture = _trace_performance_context.get()
+    if capture is None:
+        return
+    capture["llm_calls"].append(
+        {
+            "operation": operation,
+            "model": _llm_metric_model(operation),
+            "duration_seconds": round(max(duration_seconds, 0.0), 6),
+            "status": status,
+            "input_tokens": max(int(input_tokens or 0), 0),
+            "output_tokens": max(int(output_tokens or 0), 0),
+            "total_tokens": max(int(input_tokens or 0), 0)
+            + max(int(output_tokens or 0), 0),
+        }
+    )
 
 
 def bind_agent_trace_id() -> Token:
@@ -314,16 +375,30 @@ def observed_span(
         try:
             yield span
         except BaseException as exc:
+            duration = time.perf_counter() - started
             set_span_attributes(span, {"operation.status": "error"})
             mark_span_error(span, exc)
+            _capture_span(
+                name,
+                duration_seconds=duration,
+                status="error",
+                attributes=attributes,
+            )
             raise
         else:
+            duration = time.perf_counter() - started
             set_span_attributes(
                 span,
                 {
                     "operation.status": "success",
-                    "operation.duration_seconds": time.perf_counter() - started,
+                    "operation.duration_seconds": duration,
                 },
+            )
+            _capture_span(
+                name,
+                duration_seconds=duration,
+                status="success",
+                attributes=attributes,
             )
 
 
@@ -382,10 +457,22 @@ def trace_operation(*, name: str, component: str) -> Callable:
                                 input_tokens=input_tokens,
                                 output_tokens=output_tokens,
                             )
+                            _capture_llm_call(
+                                name,
+                                duration_seconds=time.perf_counter() - started,
+                                status="success",
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                            )
                         return result
                 except BaseException:
                     if component == "llm":
                         _record_llm_metrics(
+                            name,
+                            duration_seconds=time.perf_counter() - started,
+                            status="error",
+                        )
+                        _capture_llm_call(
                             name,
                             duration_seconds=time.perf_counter() - started,
                             status="error",

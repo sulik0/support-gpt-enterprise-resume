@@ -1,0 +1,611 @@
+"""第一版 Baseline Workflow Replay 与确定性 Agent 行为评测。"""
+
+import json
+from collections import Counter
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from statistics import mean
+from typing import Any, Dict, Mapping, Optional, Sequence
+
+from src.evaluation.offline_rag import (
+    EvaluationRecord,
+    WorkflowRunner,
+    collect_workflow_records,
+    load_evaluation_dataset,
+)
+from src.models.intents import IntentType, normalize_intent
+from src.observability.sanitization import sanitize_value
+
+
+ENABLED_BEHAVIOR_METRICS = (
+    "intent_accuracy",
+    "department_accuracy",
+    "required_tool_hit_rate",
+    "forbidden_tool_violation_rate",
+    "hitl_accuracy",
+    "approval_accuracy",
+)
+IGNORED_DATASET_FIELDS = (
+    "reference_answer",
+    "expected_priority",
+    "expected_nodes",
+    "max_workflow_errors",
+    "expected_sources",
+    "risk_level",
+    "security_expectations",
+    "security_tags",
+)
+NODE_SPAN_NAMES = {
+    "analyzer": "agent.analyzer",
+    "tool": "agent.tooling",
+    "rag": "agent.retriever",
+    "resolver": "agent.resolver",
+    "qa": "agent.qa",
+}
+
+
+@dataclass(frozen=True)
+class BaselineExpectations:
+    """只解析第一版 Case Pass 实际启用的 Dataset 字段。"""
+
+    expected_department: Optional[str] = None
+    expected_intent: Optional[IntentType] = None
+    required_tools: tuple[str, ...] = field(default_factory=tuple)
+    forbidden_tools: tuple[str, ...] = field(default_factory=tuple)
+    should_escalate: Optional[bool] = None
+    should_require_approval: Optional[bool] = None
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "BaselineExpectations":
+        """忽略 priority、nodes、安全和语义字段并保留原 Dataset。"""
+        raw_intent = value.get("expected_intent")
+        return cls(
+            expected_department=value.get("expected_department"),
+            expected_intent=(
+                normalize_intent(raw_intent) if raw_intent is not None else None
+            ),
+            required_tools=tuple(str(item) for item in value.get("required_tools", [])),
+            forbidden_tools=tuple(
+                str(item) for item in value.get("forbidden_tools", [])
+            ),
+            should_escalate=value.get("should_escalate"),
+            should_require_approval=value.get("should_require_approval"),
+        )
+
+
+@dataclass(frozen=True)
+class BaselineBehaviorResult:
+    """保存第一版启用指标的逐 Case 确定性比较结果。"""
+
+    passed: bool
+    checks: Dict[str, Optional[float]]
+    failures: tuple[str, ...]
+    expected: Dict[str, Any]
+    actual: Dict[str, Any]
+    counters: Dict[str, int]
+
+
+def evaluate_baseline_behavior(
+    output: Mapping[str, Any], expectations: BaselineExpectations
+) -> BaselineBehaviorResult:
+    """只使用第一版启用字段判断 Case 是否通过。"""
+    actual_intent = normalize_intent(output.get("intent"))
+    actual_department = str(output.get("department", ""))
+    actual_tools = {
+        str(call.get("tool_name", ""))
+        for call in output.get("tool_calls", [])
+        if isinstance(call, Mapping) and call.get("tool_name")
+    }
+    required_tools = set(expectations.required_tools)
+    forbidden_tools = set(expectations.forbidden_tools)
+    required_hits = required_tools & actual_tools
+    forbidden_violations = forbidden_tools & actual_tools
+
+    intent_match = (
+        None
+        if expectations.expected_intent is None
+        else float(actual_intent == expectations.expected_intent)
+    )
+    department_match = (
+        None
+        if expectations.expected_department is None
+        else float(actual_department == expectations.expected_department)
+    )
+    required_hit_rate = (
+        None
+        if not required_tools
+        else len(required_hits) / len(required_tools)
+    )
+    forbidden_violation_rate = (
+        None
+        if not forbidden_tools
+        else len(forbidden_violations) / len(forbidden_tools)
+    )
+    actual_hitl = bool(output.get("escalation_recommended", False))
+    actual_approval = bool(output.get("approval_required", False))
+    hitl_match = (
+        None
+        if expectations.should_escalate is None
+        else float(actual_hitl is expectations.should_escalate)
+    )
+    approval_match = (
+        None
+        if expectations.should_require_approval is None
+        else float(actual_approval is expectations.should_require_approval)
+    )
+
+    failures = []
+    if intent_match == 0.0:
+        failures.append(
+            f"intent expected={expectations.expected_intent} actual={actual_intent}"
+        )
+    if department_match == 0.0:
+        failures.append(
+            "department expected="
+            f"{expectations.expected_department} actual={actual_department}"
+        )
+    missing_tools = sorted(required_tools - actual_tools)
+    if missing_tools:
+        failures.append("missing required tools: " + ", ".join(missing_tools))
+    if forbidden_violations:
+        failures.append(
+            "forbidden tools called: " + ", ".join(sorted(forbidden_violations))
+        )
+    if hitl_match == 0.0:
+        failures.append(
+            f"HITL expected={expectations.should_escalate} actual={actual_hitl}"
+        )
+    if approval_match == 0.0:
+        failures.append(
+            "approval expected="
+            f"{expectations.should_require_approval} actual={actual_approval}"
+        )
+
+    return BaselineBehaviorResult(
+        passed=not failures,
+        checks={
+            "intent_accuracy": intent_match,
+            "department_accuracy": department_match,
+            "required_tool_hit_rate": required_hit_rate,
+            "forbidden_tool_violation_rate": forbidden_violation_rate,
+            "hitl_accuracy": hitl_match,
+            "approval_accuracy": approval_match,
+        },
+        failures=tuple(failures),
+        expected={
+            "intent": (
+                str(expectations.expected_intent)
+                if expectations.expected_intent is not None
+                else None
+            ),
+            "department": expectations.expected_department,
+            "required_tools": sorted(required_tools),
+            "forbidden_tools": sorted(forbidden_tools),
+            "hitl": expectations.should_escalate,
+            "approval": expectations.should_require_approval,
+        },
+        actual={
+            "intent": str(actual_intent),
+            "department": actual_department,
+            "tools": sorted(actual_tools),
+            "hitl": actual_hitl,
+            "approval": actual_approval,
+        },
+        counters={
+            "intent_matches": int(intent_match == 1.0),
+            "intent_checks": int(intent_match is not None),
+            "department_matches": int(department_match == 1.0),
+            "department_checks": int(department_match is not None),
+            "required_tool_hits": len(required_hits),
+            "required_tool_checks": len(required_tools),
+            "forbidden_tool_violations": len(forbidden_violations),
+            "forbidden_tool_checks": len(forbidden_tools),
+            "hitl_matches": int(hitl_match == 1.0),
+            "hitl_checks": int(hitl_match is not None),
+            "approval_matches": int(approval_match == 1.0),
+            "approval_checks": int(approval_match is not None),
+        },
+    )
+
+
+def build_case_performance(record: EvaluationRecord) -> Dict[str, Any]:
+    """从本次 OTel Trace 同源采集结果构造逐 Case 性能数据。"""
+    spans = list(record.trace_performance.get("spans", []))
+    llm_calls = list(record.trace_performance.get("llm_calls", []))
+    node_latency = {}
+    for node, span_name in NODE_SPAN_NAMES.items():
+        durations = [
+            _safe_float(span.get("duration_seconds"))
+            for span in spans
+            if span.get("name") == span_name
+        ]
+        node_latency[node] = round(sum(durations), 6) if durations else None
+
+    input_tokens = _safe_int(record.workflow_output.get("tokens_input", 0))
+    output_tokens = _safe_int(record.workflow_output.get("tokens_output", 0))
+    workflow_latency = _safe_float(
+        record.workflow_output.get("latency_seconds", 0.0)
+    )
+    if workflow_latency <= 0.0:
+        workflow_spans = [
+            _safe_float(span.get("duration_seconds"))
+            for span in spans
+            if span.get("name") == "supportgpt.langgraph.workflow"
+        ]
+        workflow_latency = max(workflow_spans, default=0.0)
+
+    return {
+        "end_to_end_latency_seconds": round(workflow_latency, 6),
+        "node_latency_seconds": node_latency,
+        "tokens": {
+            "input": input_tokens,
+            "output": output_tokens,
+            "total": input_tokens + output_tokens,
+        },
+        "models": sorted(
+            {str(call.get("model")) for call in llm_calls if call.get("model")}
+        ),
+        "analyzer_strategy": str(
+            record.workflow_output.get("analyzer_strategy", "not_run")
+        ),
+        "llm_call_count": len(llm_calls),
+        "llm_calls": sanitize_value(llm_calls),
+        "trace_span_count": len(spans),
+    }
+
+
+def aggregate_behavior(
+    results: Sequence[BaselineBehaviorResult],
+) -> Dict[str, Any]:
+    """按真实检查分母汇总第一版 Agent 行为指标。"""
+    totals = Counter()
+    for result in results:
+        totals.update(result.counters)
+    return {
+        "intent_accuracy": _ratio(totals["intent_matches"], totals["intent_checks"]),
+        "department_accuracy": _ratio(
+            totals["department_matches"], totals["department_checks"]
+        ),
+        "required_tool_hit_rate": _ratio(
+            totals["required_tool_hits"], totals["required_tool_checks"]
+        ),
+        "forbidden_tool_violation_rate": _ratio(
+            totals["forbidden_tool_violations"],
+            totals["forbidden_tool_checks"],
+        ),
+        "hitl_accuracy": _ratio(totals["hitl_matches"], totals["hitl_checks"]),
+        "approval_accuracy": _ratio(
+            totals["approval_matches"], totals["approval_checks"]
+        ),
+        "case_pass_rate": _ratio(
+            sum(result.passed for result in results), len(results)
+        ),
+        "passed_cases": sum(result.passed for result in results),
+        "failed_cases": sum(not result.passed for result in results),
+        "denominators": {
+            "intent_cases": totals["intent_checks"],
+            "department_cases": totals["department_checks"],
+            "required_tools": totals["required_tool_checks"],
+            "forbidden_tools": totals["forbidden_tool_checks"],
+            "hitl_cases": totals["hitl_checks"],
+            "approval_cases": totals["approval_checks"],
+        },
+    }
+
+
+def aggregate_performance(cases: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """汇总延迟分位数、Token、模型和 Analyzer 路径。"""
+    end_to_end = [
+        _safe_float(case["end_to_end_latency_seconds"]) for case in cases
+    ]
+    node_summary = {}
+    for node in NODE_SPAN_NAMES:
+        values = [
+            _safe_float(case["node_latency_seconds"][node])
+            for case in cases
+            if case["node_latency_seconds"][node] is not None
+        ]
+        node_summary[node] = _latency_summary(values)
+
+    token_input = [_safe_int(case["tokens"]["input"]) for case in cases]
+    token_output = [_safe_int(case["tokens"]["output"]) for case in cases]
+    token_total = [_safe_int(case["tokens"]["total"]) for case in cases]
+    strategy_counts = Counter(case["analyzer_strategy"] for case in cases)
+    analyzer_decisions = strategy_counts["rule"] + strategy_counts["llm"]
+    model_counts = Counter(
+        str(call.get("model"))
+        for case in cases
+        for call in case["llm_calls"]
+        if call.get("model")
+    )
+    operation_counts = Counter(
+        str(call.get("operation"))
+        for case in cases
+        for call in case["llm_calls"]
+        if call.get("operation")
+    )
+    llm_call_count = sum(_safe_int(case["llm_call_count"]) for case in cases)
+    return {
+        "end_to_end_latency_seconds": _latency_summary(end_to_end),
+        "node_latency_seconds": node_summary,
+        "tokens": {
+            "input_total": sum(token_input),
+            "output_total": sum(token_output),
+            "total": sum(token_total),
+            "average_input": _average(token_input),
+            "average_output": _average(token_output),
+            "average_total": _average(token_total),
+        },
+        "analyzer": {
+            "rule_hit_rate": _ratio(strategy_counts["rule"], analyzer_decisions),
+            "strategy_counts": dict(sorted(strategy_counts.items())),
+        },
+        "llm": {
+            "call_count": llm_call_count,
+            "average_calls_per_case": _ratio(llm_call_count, len(cases)),
+            "models": dict(sorted(model_counts.items())),
+            "operations": dict(sorted(operation_counts.items())),
+        },
+    }
+
+
+def build_baseline_report(
+    records: Sequence[EvaluationRecord],
+    *,
+    dataset_path: Path,
+    execution_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """生成只以第一版启用指标判定通过的统一 JSON 报告。"""
+    behavior_results = [
+        evaluate_baseline_behavior(
+            record.workflow_output,
+            BaselineExpectations.from_mapping(record.case.agent_expectations),
+        )
+        for record in records
+    ]
+    performance_cases = [build_case_performance(record) for record in records]
+    case_rows = []
+    for record, behavior, performance in zip(
+        records, behavior_results, performance_cases
+    ):
+        case_rows.append(
+            {
+                "id": record.case.id,
+                "dataset_case": asdict(record.case),
+                "ticket_state": sanitize_value(record.ticket_state),
+                "trace_id": record.trace_id,
+                "actual_execution": sanitize_value(
+                    {
+                        "intent": record.workflow_output.get("intent"),
+                        "department": record.workflow_output.get("department"),
+                        "priority": record.workflow_output.get("priority"),
+                        "tool_calls": record.workflow_output.get("tool_calls", []),
+                        "workflow_path": record.workflow_path,
+                        "escalation_recommended": record.workflow_output.get(
+                            "escalation_recommended", False
+                        ),
+                        "approval_required": record.workflow_output.get(
+                            "approval_required", False
+                        ),
+                        "analyzer_strategy": record.workflow_output.get(
+                            "analyzer_strategy", "not_run"
+                        ),
+                        "qa_strategy": record.workflow_output.get(
+                            "qa_strategy", "not_run"
+                        ),
+                        "risk_level": record.workflow_output.get("risk_level"),
+                        "risk_score": record.workflow_output.get("risk_score"),
+                        "qa_score": record.workflow_output.get("qa_score"),
+                        "suggested_response": record.response,
+                        "context_citations": record.workflow_output.get(
+                            "context_citations", []
+                        ),
+                        "errors": record.workflow_errors,
+                    }
+                ),
+                "behavior_evaluation": {
+                    "passed": behavior.passed,
+                    "checks": behavior.checks,
+                    "expected": behavior.expected,
+                    "actual": behavior.actual,
+                    "failures": list(behavior.failures),
+                },
+                "performance": performance,
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "evaluation_type": "baseline_workflow_replay_v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "dataset": str(dataset_path),
+        "case_count": len(records),
+        "enabled_behavior_metrics": list(ENABLED_BEHAVIOR_METRICS),
+        "ignored_dataset_fields": list(IGNORED_DATASET_FIELDS),
+        "execution": sanitize_value(execution_metadata or {}),
+        "behavior_summary": aggregate_behavior(behavior_results),
+        "performance_summary": aggregate_performance(performance_cases),
+        "cases": case_rows,
+    }
+
+
+def write_baseline_report(report: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
+    """以稳定 latest 文件名输出 JSON 与 Markdown 报告。"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "baseline_v1_latest.json"
+    markdown_path = output_dir / "baseline_v1_latest.md"
+    json_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    markdown_path.write_text(_render_markdown(report), encoding="utf-8")
+    return {"json": json_path, "markdown": markdown_path}
+
+
+async def run_baseline_evaluation_v1(
+    dataset_path: Path,
+    output_dir: Path,
+    *,
+    limit: Optional[int] = None,
+    execution_metadata: Optional[Dict[str, Any]] = None,
+    workflow_runner: Optional[WorkflowRunner] = None,
+) -> Dict[str, Path]:
+    """逐条构造完整 State、回放 Workflow 并生成第一版报告。"""
+    cases = load_evaluation_dataset(
+        dataset_path, validate_agent=False, validate_security=False
+    )
+    if len(cases) != 100:
+        raise ValueError("Baseline Evaluation V1 requires exactly 100 dataset cases.")
+    if limit is not None:
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100.")
+        cases = cases[:limit]
+    for case in cases:
+        BaselineExpectations.from_mapping(case.agent_expectations)
+    records = await collect_workflow_records(
+        cases,
+        workflow_runner,
+        include_security_metadata=False,
+    )
+    report = build_baseline_report(
+        records,
+        dataset_path=dataset_path,
+        execution_metadata=execution_metadata,
+    )
+    return write_baseline_report(report, output_dir)
+
+
+def _render_markdown(report: Dict[str, Any]) -> str:
+    behavior = report["behavior_summary"]
+    performance = report["performance_summary"]
+    latency = performance["end_to_end_latency_seconds"]
+    lines = [
+        "# Baseline Workflow Replay V1 评测报告",
+        "",
+        f"- Dataset：`{report['dataset']}`",
+        f"- Case 数：{report['case_count']}",
+        "- Case Pass 仅由当前启用的六项确定性行为指标决定。",
+        "",
+        "## Agent 行为汇总",
+        "",
+        "| Intent Accuracy | Department Accuracy | Required Tool Hit Rate | Forbidden Tool Violation Rate | HITL Accuracy | Approval Accuracy | Case Pass Rate |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| {_metric(behavior['intent_accuracy'])} "
+            f"| {_metric(behavior['department_accuracy'])} "
+            f"| {_metric(behavior['required_tool_hit_rate'])} "
+            f"| {_metric(behavior['forbidden_tool_violation_rate'])} "
+            f"| {_metric(behavior['hitl_accuracy'])} "
+            f"| {_metric(behavior['approval_accuracy'])} "
+            f"| {_metric(behavior['case_pass_rate'])} |"
+        ),
+        "",
+        "## 性能汇总",
+        "",
+        "| Average | P50 | P95 | Average Tokens | Analyzer Rule Hit Rate | LLM Calls |",
+        "|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| {latency['average']:.4f}s | {latency['p50']:.4f}s "
+            f"| {latency['p95']:.4f}s "
+            f"| {performance['tokens']['average_total']:.2f} "
+            f"| {_metric(performance['analyzer']['rule_hit_rate'])} "
+            f"| {performance['llm']['call_count']} |"
+        ),
+        "",
+        "### 节点耗时",
+        "",
+        "| Node | Executions | Average | P50 | P95 |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for node, summary in performance["node_latency_seconds"].items():
+        lines.append(
+            f"| {node} | {summary['count']} | {summary['average']:.4f}s "
+            f"| {summary['p50']:.4f}s | {summary['p95']:.4f}s |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Case 明细",
+            "",
+            "| ID | Pass | Intent | Department | Required Tool | Forbidden Tool | HITL | Approval | Latency | Tokens | Analyzer | LLM Calls | Trace ID |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|",
+        ]
+    )
+    for row in report["cases"]:
+        checks = row["behavior_evaluation"]["checks"]
+        perf = row["performance"]
+        lines.append(
+            f"| {row['id']} "
+            f"| {'PASS' if row['behavior_evaluation']['passed'] else 'FAIL'} "
+            f"| {_metric(checks['intent_accuracy'])} "
+            f"| {_metric(checks['department_accuracy'])} "
+            f"| {_metric(checks['required_tool_hit_rate'])} "
+            f"| {_metric(checks['forbidden_tool_violation_rate'])} "
+            f"| {_metric(checks['hitl_accuracy'])} "
+            f"| {_metric(checks['approval_accuracy'])} "
+            f"| {perf['end_to_end_latency_seconds']:.4f}s "
+            f"| {perf['tokens']['total']} "
+            f"| {perf['analyzer_strategy']} "
+            f"| {perf['llm_call_count']} "
+            f"| `{row['trace_id'] or 'unavailable'}` |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 本版暂不参与通过判断的字段",
+            "",
+            ", ".join(f"`{field}`" for field in report["ignored_dataset_fields"]),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _latency_summary(values: Sequence[float]) -> Dict[str, Any]:
+    clean = [max(float(value), 0.0) for value in values]
+    return {
+        "count": len(clean),
+        "average": _average(clean),
+        "p50": _percentile(clean, 0.50),
+        "p95": _percentile(clean, 0.95),
+    }
+
+
+def _percentile(values: Sequence[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return round(
+        ordered[lower] + (ordered[upper] - ordered[lower]) * fraction,
+        6,
+    )
+
+
+def _ratio(numerator: int, denominator: int) -> Optional[float]:
+    return None if denominator == 0 else round(numerator / denominator, 6)
+
+
+def _average(values: Sequence[int | float]) -> float:
+    return round(mean(values), 6) if values else 0.0
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return max(float(value), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _metric(value: Any) -> str:
+    return "N/A" if value is None else f"{float(value):.4f}"

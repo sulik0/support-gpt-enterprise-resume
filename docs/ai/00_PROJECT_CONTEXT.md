@@ -290,6 +290,8 @@ resolved / closed --reopen--> in_progress
 
 - 在线单条评测入口是 `run_deeval_evaluation()` 和 `POST /evaluate-response`。
 - 离线统一入口是 Dataset + Workflow Replay Pipeline，RAG 采用 RAGAS，Agent 行为采用 DeepEval。
+- 第一版真实 Baseline 入口是 `scripts/run_baseline_eval.py`：固定读取 100 条 Baseline，逐 Case 构造完整 Ticket State 并回放当前 LangGraph Workflow。Case Pass 仅使用 intent、department、Required/Forbidden Tool、HITL 和 Approval 六类确定性比较；暂不读取 reference answer、priority、expected nodes 和安全标签参与判定。
+- Baseline V1 在同一次 OTel Trace 中采集端到端与 Analyzer / Tool / RAG / Resolver / QA 节点耗时、Token、模型、Analyzer 策略和 LLM 调用明细，报告汇总 Average、P50、P95、平均 Token 与 Rule Hit Rate，并关联实际 Agent Trace ID。
 - 正式离线报告同时输出 Faithfulness、Answer Relevancy、Context Precision、Context Recall、Agent 行为指标、Security Precision / Recall / F1 / 误报率、安全处置正确率、citation hit rate、Workflow Path 和 Trace ID。
 - 没有可用 API Key 时可显式选择 `local` 确定性指标进行 CI 烟测；正式 RAGAS / DeepEval 模式缺少依赖或密钥会直接失败，不会自动伪装为正式结果。
 - 报告写入 `evaluation/reports/evaluation_latest.json` 和 `evaluation_latest.md`。
@@ -317,6 +319,7 @@ resolved / closed --reopen--> in_progress
 - Docker Compose、Kubernetes manifests、分层 requirements 和 Python 3.11 GitHub Actions smoke CI。
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent / Security 指标并关联 Trace ID。
+- Baseline Workflow Replay V1：固定 100 条 Dataset、完整 Ticket State、六项确定性行为指标、逐 Case 执行结果及 OTel Trace 同源性能报告。
 - 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，具备 Mock 拒绝、显式确认、调用预算和模型/Token/成本归因。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
 - LangSmith 前端入口：主管/管理员可分页查看 Agent Run、Trace ID、Workflow Path 和执行快照，并跳转至配置的 LangSmith Project 下钻。

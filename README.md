@@ -199,6 +199,15 @@ python scripts/run_real_llm_regression.py --suite smoke --confirm-live
 
 Mock Provider、缺少密钥、示例模型名和超出调用上限都会在第一次模型请求前失败。报告记录 Provider、Model、Endpoint Host、Token、估算成本和 Workflow 延迟，不记录 API Key。
 
+第一版固定 100 条 Baseline 评测使用独立入口，默认逐条构造完整 Ticket State 并真实回放当前 LangGraph Workflow：
+
+```bash
+python scripts/run_baseline_eval.py --dry-run
+python scripts/run_baseline_eval.py --confirm-live
+```
+
+Case Pass 只由 Intent Accuracy、Department Accuracy、Required Tool Hit Rate、Forbidden Tool Violation Rate、HITL Accuracy 和 Approval Accuracy 决定。报告同时输出端到端及各节点 Average / P50 / P95、Token、模型、Analyzer Rule Hit Rate、LLM 调用次数和 Trace ID；`reference_answer`、priority、expected nodes 与安全标签保留在 Dataset 和报告快照中，但暂不参与本版判定。
+
 ### Feedback Pipeline
 
 `/chat` 和 `/suggest-response` 返回 `agent_run_id`。用户评分、人工审批修正和质量评测可据此关联 OpenTelemetry Trace、Prompt / Workflow / Model 版本与执行快照。
