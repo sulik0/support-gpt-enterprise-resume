@@ -203,6 +203,16 @@ python scripts/run_baseline_eval.py --confirm-live
 
 正式 Baseline 每次产生一组不可变时间戳 JSON/Markdown 快照，`baseline_v1_latest.json/md` 是指向最新快照的相对软链接。报告目录不进 Git；实验配置、Dataset SHA256、模型、Prompt/Workflow 版本、Token 与 Trace ID 必须写入报告。
 
+报告的 `metric_failure_index` 按六项行为指标组织失败 Case，每条包含 Case ID、Query、指标值、期望值、实际值、失败原因和 Trace ID。Markdown 报告的“按指标定位失败 Case”可直接查看；JSON 可用 `jq` 过滤：
+
+```bash
+jq '.metric_failure_index.intent_accuracy.cases' \
+  evaluation/reports/baseline_v1/baseline_v1_latest.json
+
+jq '.metric_failure_index.required_tool_hit_rate.failed_case_ids' \
+  evaluation/reports/baseline_v1/baseline_v1_latest.json
+```
+
 ## Feedback Pipeline
 
 `/chat`、`/suggest-response` 和工单 Workflow 将结果持久化为 AgentRun；用户评价、人工修正和 Evaluation 以 FeedbackEvent 关联同一 `agent_run_id` 与 `trace_id`。

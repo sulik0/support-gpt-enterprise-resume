@@ -6,6 +6,7 @@ import pytest
 from src.evaluation.baseline_evaluation import (
     BaselineExpectations,
     aggregate_behavior,
+    build_metric_failure_index,
     evaluate_baseline_behavior,
     run_baseline_evaluation_v1,
 )
@@ -103,6 +104,56 @@ def test_v1_behavior_aggregates_using_real_check_denominators():
     assert summary["case_pass_rate"] == 0.5
 
 
+def test_metric_failure_index_groups_failed_cases_by_metric():
+    """指标索引应排除 N/A Case，并保留期望、实际值与 Trace。"""
+    rows = [
+        {
+            "id": "case-tool-missing",
+            "dataset_case": {"query": "Please check my order."},
+            "trace_id": "a" * 32,
+            "behavior_evaluation": {
+                "checks": {
+                    "intent_accuracy": 1.0,
+                    "department_accuracy": None,
+                    "required_tool_hit_rate": 0.5,
+                    "forbidden_tool_violation_rate": 0.0,
+                    "hitl_accuracy": 0.0,
+                    "approval_accuracy": 1.0,
+                },
+                "expected": {
+                    "intent": "order_issue",
+                    "department": None,
+                    "required_tools": ["crm", "orders"],
+                    "forbidden_tools": ["refund_execute"],
+                    "hitl": True,
+                    "approval": True,
+                },
+                "actual": {
+                    "intent": "order_issue",
+                    "department": "general",
+                    "tools": ["crm"],
+                    "hitl": False,
+                    "approval": True,
+                },
+            },
+        }
+    ]
+
+    index = build_metric_failure_index(rows)
+
+    assert index["intent_accuracy"]["failed_case_count"] == 0
+    assert index["department_accuracy"]["evaluated_case_count"] == 0
+    tool_failure = index["required_tool_hit_rate"]["cases"][0]
+    assert tool_failure["case_id"] == "case-tool-missing"
+    assert tool_failure["query"] == "Please check my order."
+    assert tool_failure["expected"] == ["crm", "orders"]
+    assert tool_failure["actual"] == ["crm"]
+    assert tool_failure["reason"] == "missing required tools: orders"
+    assert tool_failure["trace_id"] == "a" * 32
+    assert index["hitl_accuracy"]["failed_case_ids"] == ["case-tool-missing"]
+    assert index["forbidden_tool_violation_rate"]["failed_case_count"] == 0
+
+
 @pytest.mark.asyncio
 async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_path):
     tracer = get_tracer("tests.baseline_v1")
@@ -163,6 +214,7 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
     report = json.loads(paths["json"].read_text(encoding="utf-8"))
     row = report["cases"][0]
     assert report["evaluation_type"] == "baseline_workflow_replay_v1"
+    assert report["schema_version"] == "1.1"
     assert report["run_id"]
     assert report["case_count"] == 1
     assert "rag_evaluation" not in report
@@ -181,6 +233,18 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
         for node in ("analyzer", "tool", "rag", "resolver", "qa")
     )
     assert report["performance_summary"]["analyzer"]["rule_hit_rate"] == 1.0
+    assert set(report["metric_failure_index"]) == {
+        "intent_accuracy",
+        "department_accuracy",
+        "required_tool_hit_rate",
+        "forbidden_tool_violation_rate",
+        "hitl_accuracy",
+        "approval_accuracy",
+    }
+    assert all(
+        summary["failed_case_count"] == 0
+        for summary in report["metric_failure_index"].values()
+    )
     assert "reference_answer" in report["ignored_dataset_fields"]
     assert len(report["experiment_config"]["dataset"]["sha256"]) == 64
     assert report["experiment_config"]["dataset"]["dataset_name"] == (
@@ -197,3 +261,4 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
     assert "Baseline Workflow Replay V1" in markdown
     assert "Analyzer Rule Hit Rate" in markdown
     assert "实验配置" in markdown
+    assert "按指标定位失败 Case" in markdown

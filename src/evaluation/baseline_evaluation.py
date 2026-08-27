@@ -31,6 +31,14 @@ ENABLED_BEHAVIOR_METRICS = (
     "hitl_accuracy",
     "approval_accuracy",
 )
+METRIC_TARGETS = {
+    "intent_accuracy": 1.0,
+    "department_accuracy": 1.0,
+    "required_tool_hit_rate": 1.0,
+    "forbidden_tool_violation_rate": 0.0,
+    "hitl_accuracy": 1.0,
+    "approval_accuracy": 1.0,
+}
 IGNORED_DATASET_FIELDS = (
     "reference_answer",
     "expected_priority",
@@ -355,6 +363,100 @@ def aggregate_performance(cases: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def build_metric_failure_index(
+    case_rows: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """按启用指标聚合失败 Case，支持从汇总分数反查执行详情。"""
+    index: Dict[str, Any] = {}
+    for metric in ENABLED_BEHAVIOR_METRICS:
+        target = METRIC_TARGETS[metric]
+        evaluated_cases = 0
+        failures = []
+        for row in case_rows:
+            evaluation = row["behavior_evaluation"]
+            value = evaluation["checks"].get(metric)
+            if value is None:
+                continue
+            evaluated_cases += 1
+            if float(value) == target:
+                continue
+            expected, actual, reason = _metric_failure_detail(metric, evaluation)
+            failures.append(
+                {
+                    "case_id": row["id"],
+                    "query": row.get("dataset_case", {}).get("query", ""),
+                    "metric_value": value,
+                    "target_value": target,
+                    "expected": expected,
+                    "actual": actual,
+                    "reason": reason,
+                    "trace_id": row.get("trace_id"),
+                }
+            )
+        index[metric] = {
+            "target_value": target,
+            "evaluated_case_count": evaluated_cases,
+            "failed_case_count": len(failures),
+            "failure_rate": _ratio(len(failures), evaluated_cases),
+            "failed_case_ids": [item["case_id"] for item in failures],
+            "cases": failures,
+        }
+    return index
+
+
+def _metric_failure_detail(
+    metric: str, evaluation: Mapping[str, Any]
+) -> tuple[Any, Any, str]:
+    """将指标失败转换为可读的期望、实际值和原因。"""
+    expected = evaluation["expected"]
+    actual = evaluation["actual"]
+    if metric == "intent_accuracy":
+        return (
+            expected["intent"],
+            actual["intent"],
+            f"intent expected={expected['intent']} actual={actual['intent']}",
+        )
+    if metric == "department_accuracy":
+        return (
+            expected["department"],
+            actual["department"],
+            "department expected="
+            f"{expected['department']} actual={actual['department']}",
+        )
+    if metric == "required_tool_hit_rate":
+        required = set(expected["required_tools"])
+        called = set(actual["tools"])
+        missing = sorted(required - called)
+        return (
+            sorted(required),
+            sorted(called),
+            "missing required tools: " + ", ".join(missing),
+        )
+    if metric == "forbidden_tool_violation_rate":
+        forbidden = set(expected["forbidden_tools"])
+        called = set(actual["tools"])
+        violations = sorted(forbidden & called)
+        return (
+            sorted(forbidden),
+            sorted(called),
+            "forbidden tools called: " + ", ".join(violations),
+        )
+    if metric == "hitl_accuracy":
+        return (
+            expected["hitl"],
+            actual["hitl"],
+            f"HITL expected={expected['hitl']} actual={actual['hitl']}",
+        )
+    if metric == "approval_accuracy":
+        return (
+            expected["approval"],
+            actual["approval"],
+            "approval expected="
+            f"{expected['approval']} actual={actual['approval']}",
+        )
+    raise ValueError(f"Unsupported behavior metric: {metric}")
+
+
 def build_baseline_report(
     records: Sequence[EvaluationRecord],
     *,
@@ -420,7 +522,7 @@ def build_baseline_report(
             }
         )
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "evaluation_type": "baseline_workflow_replay_v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dataset": str(dataset_path),
@@ -432,6 +534,7 @@ def build_baseline_report(
             dataset_path, execution_metadata or {}
         ),
         "behavior_summary": aggregate_behavior(behavior_results),
+        "metric_failure_index": build_metric_failure_index(case_rows),
         "performance_summary": aggregate_performance(performance_cases),
         "cases": case_rows,
     }
@@ -557,6 +660,43 @@ def _render_markdown(report: Dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## 按指标定位失败 Case",
+            "",
+            "| Metric | Target | Evaluated Cases | Failed Cases | Failure Rate | Case IDs |",
+            "|---|---:|---:|---:|---:|---|",
+        ]
+    )
+    for metric, summary in report["metric_failure_index"].items():
+        case_ids = ", ".join(summary["failed_case_ids"]) or "-"
+        lines.append(
+            f"| `{metric}` | {_metric(summary['target_value'])} "
+            f"| {summary['evaluated_case_count']} | {summary['failed_case_count']} "
+            f"| {_metric(summary['failure_rate'])} | {case_ids} |"
+        )
+    for metric, summary in report["metric_failure_index"].items():
+        if not summary["cases"]:
+            continue
+        lines.extend(
+            [
+                "",
+                f"### `{metric}` 失败 Case",
+                "",
+                "| Case ID | Query | Value | Expected | Actual | Reason | Trace ID |",
+                "|---|---|---:|---|---|---|---|",
+            ]
+        )
+        for failure in summary["cases"]:
+            lines.append(
+                f"| {failure['case_id']} | {_markdown_value(failure['query'])} "
+                f"| {_metric(failure['metric_value'])} "
+                f"| {_markdown_value(failure['expected'])} "
+                f"| {_markdown_value(failure['actual'])} "
+                f"| {_markdown_value(failure['reason'])} "
+                f"| `{failure['trace_id'] or 'unavailable'}` |"
+            )
+    lines.extend(
+        [
+            "",
             "## Case 明细",
             "",
             "| ID | Pass | Intent | Department | Required Tool | Forbidden Tool | HITL | Approval | Latency | Tokens | Analyzer | LLM Calls | Trace ID |",
@@ -641,6 +781,16 @@ def _safe_float(value: Any) -> float:
 
 def _metric(value: Any) -> str:
     return "N/A" if value is None else f"{float(value):.4f}"
+
+
+def _markdown_value(value: Any) -> str:
+    """压缩并转义 Markdown 表格中的结构化值。"""
+    rendered = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    )
+    return str(rendered).replace("|", "\\|").replace("\n", " ")
 
 
 def _build_experiment_config(
