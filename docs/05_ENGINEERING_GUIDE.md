@@ -201,7 +201,7 @@ python scripts/run_baseline_eval.py --dry-run
 python scripts/run_baseline_eval.py --confirm-live
 ```
 
-正式 Baseline 每次产生一组不可变时间戳 JSON/Markdown 快照，`baseline_v1_latest.json/md` 是指向最新快照的相对软链接。报告目录不进 Git；实验配置、Dataset SHA256、模型、Prompt/Workflow 版本、Token 与 Trace ID 必须写入报告。
+正式 Baseline 每次产生一组不可变时间戳 JSON/Markdown 快照，`baseline_v1_latest.json/md` 是可直接打开的最新普通文件副本，由报告器原子替换。报告目录不进 Git；实验配置、Dataset SHA256、模型、Prompt/Workflow 版本、Token 与 Trace ID 必须写入报告。
 
 报告的 `metric_failure_index` 按六项行为指标组织失败 Case，每条包含 Case ID、Query、指标值、期望值、实际值、失败原因和 Trace ID。Markdown 报告的“按指标定位失败 Case”可直接查看；JSON 可用 `jq` 过滤：
 

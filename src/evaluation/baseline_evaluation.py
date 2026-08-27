@@ -560,8 +560,8 @@ def write_baseline_report(report: Dict[str, Any], output_dir: Path) -> Dict[str,
         encoding="utf-8",
     )
     snapshot_markdown.write_text(_render_markdown(report), encoding="utf-8")
-    _replace_latest_alias(latest_json, snapshot_json)
-    _replace_latest_alias(latest_markdown, snapshot_markdown)
+    _replace_latest_copy(latest_json, snapshot_json)
+    _replace_latest_copy(latest_markdown, snapshot_markdown)
     return {
         "json": latest_json,
         "markdown": latest_markdown,
@@ -891,14 +891,17 @@ def _next_snapshot_stem(
     return candidate
 
 
-def _replace_latest_alias(latest: Path, snapshot: Path) -> None:
-    """优先创建相对软链接，不支持软链接的平台退化为最新副本。"""
-    if latest.exists() or latest.is_symlink():
-        latest.unlink()
+def _replace_latest_copy(latest: Path, snapshot: Path) -> None:
+    """原子替换 latest 普通文件，兼容 Typora 等桌面编辑器。"""
+    temporary = latest.with_name(f".{latest.name}.tmp")
+    if temporary.exists() or temporary.is_symlink():
+        temporary.unlink()
     try:
-        latest.symlink_to(snapshot.name)
-    except OSError:
-        shutil.copy2(snapshot, latest)
+        shutil.copy2(snapshot, temporary)
+        os.replace(temporary, latest)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
 
 
 def _source_revision() -> str:

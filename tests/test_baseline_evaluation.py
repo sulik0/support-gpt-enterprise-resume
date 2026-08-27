@@ -5,6 +5,7 @@ import pytest
 
 from src.evaluation.baseline_evaluation import (
     BaselineExpectations,
+    _replace_latest_copy,
     aggregate_behavior,
     build_metric_failure_index,
     evaluate_baseline_behavior,
@@ -154,6 +155,19 @@ def test_metric_failure_index_groups_failed_cases_by_metric():
     assert index["forbidden_tool_violation_rate"]["failed_case_count"] == 0
 
 
+def test_latest_report_replaces_existing_symlink_with_regular_file(tmp_path):
+    """latest 必须是 Typora 可直接打开的普通文件。"""
+    snapshot = tmp_path / "baseline_v1_20260827_120000.md"
+    latest = tmp_path / "baseline_v1_latest.md"
+    snapshot.write_text("# report\n", encoding="utf-8")
+    latest.symlink_to(snapshot.name)
+
+    _replace_latest_copy(latest, snapshot)
+
+    assert latest.is_symlink() is False
+    assert latest.read_text(encoding="utf-8") == "# report\n"
+
+
 @pytest.mark.asyncio
 async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_path):
     tracer = get_tracer("tests.baseline_v1")
@@ -255,8 +269,10 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
     assert report["experiment_config"]["models"]["provider"] == "mock"
     assert paths["snapshot_json"].name.startswith("baseline_v1_20")
     assert paths["snapshot_markdown"].name.startswith("baseline_v1_20")
-    assert paths["json"].resolve() == paths["snapshot_json"].resolve()
-    assert paths["markdown"].resolve() == paths["snapshot_markdown"].resolve()
+    assert paths["json"].is_symlink() is False
+    assert paths["markdown"].is_symlink() is False
+    assert paths["json"].read_bytes() == paths["snapshot_json"].read_bytes()
+    assert paths["markdown"].read_bytes() == paths["snapshot_markdown"].read_bytes()
     markdown = paths["markdown"].read_text(encoding="utf-8")
     assert "Baseline Workflow Replay V1" in markdown
     assert "Analyzer Rule Hit Rate" in markdown
