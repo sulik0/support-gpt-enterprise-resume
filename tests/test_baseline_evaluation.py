@@ -273,8 +273,20 @@ async def test_v1_replays_full_ticket_state_and_records_trace_performance(tmp_pa
     assert paths["markdown"].is_symlink() is False
     assert paths["json"].read_bytes() == paths["snapshot_json"].read_bytes()
     assert paths["markdown"].read_bytes() == paths["snapshot_markdown"].read_bytes()
+    assert paths["error_analysis"].name == "error_analysis_latest.md"
+    assert paths["error_analysis"].is_symlink() is False
+    assert paths["error_analysis_snapshot"].name.startswith(
+        "error_analysis_20"
+    )
+    assert (
+        paths["error_analysis"].read_bytes()
+        == paths["error_analysis_snapshot"].read_bytes()
+    )
     markdown = paths["markdown"].read_text(encoding="utf-8")
     assert "Baseline Workflow Replay V1" in markdown
     assert "Analyzer Rule Hit Rate" in markdown
     assert "实验配置" in markdown
     assert "按指标定位失败 Case" in markdown
+    error_analysis = paths["error_analysis"].read_text(encoding="utf-8")
+    assert "FAIL Cases：0" in error_analysis
+    assert "本次没有 FAIL Case" in error_analysis

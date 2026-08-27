@@ -83,7 +83,7 @@ python -m pip install -r requirements/eval.txt
 python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
-评测报告保存在 `evaluation/reports/`，该目录不进 Git。正式 Baseline 同时生成不可变时间戳 JSON/Markdown 快照与可直接打开的 `latest` 普通文件副本，并固定记录 Dataset Hash、模型、Prompt/Workflow 版本、阈值、Token、延迟与 Trace 配置。
+评测报告保存在 `evaluation/reports/`，该目录不进 Git。正式 Baseline 同时生成不可变时间戳 JSON/Markdown 快照与可直接打开的 `latest` 普通文件副本，并固定记录 Dataset Hash、模型、Prompt/Workflow 版本、阈值、Token、延迟与 Trace 配置。每次还会基于已生成 JSON 纯离线生成 `error_analysis_<run_id>.md` 和 `error_analysis_latest.md`，只分析 FAIL Case，不重放 Workflow 或调用 LLM。
 
 ## 可观测
 

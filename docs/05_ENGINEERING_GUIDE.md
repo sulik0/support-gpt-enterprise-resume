@@ -213,6 +213,13 @@ jq '.metric_failure_index.required_tool_hit_rate.failed_case_ids' \
   evaluation/reports/baseline_v1/baseline_v1_latest.json
 ```
 
+Baseline JSON/Markdown 完成后会自动生成：
+
+- `error_analysis_<run_id>.md`：与本次 Baseline 时间戳对应的不可变快照。
+- `error_analysis_latest.md`：原子替换的最新普通文件副本。
+
+Error Analysis 只读取本次 JSON 中 `behavior_evaluation.passed=false` 的 Case，输出 Failure Breakdown、Intent Confusion Matrix、HITL/Approval mismatch、Tool 问题以及每个 Case 的 Expected/Actual/Trace。它不导入 Workflow 执行路径，不调用 LLM，不重新读取或修改 Dataset，不修改 Agent State。
+
 ## Feedback Pipeline
 
 `/chat`、`/suggest-response` 和工单 Workflow 将结果持久化为 AgentRun；用户评价、人工修正和 Evaluation 以 FeedbackEvent 关联同一 `agent_run_id` 与 `trace_id`。

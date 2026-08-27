@@ -27,6 +27,7 @@
 - [x] 实现 Baseline Workflow Replay V1：固定 100 条完整 Ticket State 回放、六项确定性行为指标、逐 Case 结果和 OTel Trace 同源性能汇总。
 - [x] 建立 Evaluation Report 生命周期：清理旧 `report_*.json`、单条评测最多保留 20 份、Baseline 使用时间戳快照与 latest 普通文件副本，并固化完整实验配置。
 - [x] Baseline Report 增加 `metric_failure_index`，支持按 Intent、Department、Required/Forbidden Tool、HITL 和 Approval 指标反查失败 Case 与 Trace ID。
+- [x] Baseline 每次运行后纯离线生成 Error Analysis 时间戳快照与 latest 副本，覆盖 Failure Breakdown、Intent Confusion Matrix、HITL/Approval mismatch、Tool 问题和逐 FAIL Case 详情。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -50,7 +51,7 @@
 
 ## 已知问题与风险
 
-- [x] 2026-08-27 在 Python 3.12 与关闭外部 OTel exporter 的隔离配置下完成 143 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 2026-08-27 在 Python 3.12 与关闭外部 OTel exporter 的隔离配置下完成 146 条全量测试；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。

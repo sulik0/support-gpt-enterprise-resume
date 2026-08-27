@@ -13,6 +13,7 @@ from statistics import mean
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from src.config import settings
+from src.evaluation.baseline_error_analysis import write_baseline_error_analysis
 from src.evaluation.offline_rag import (
     EvaluationRecord,
     WorkflowRunner,
@@ -554,6 +555,8 @@ def write_baseline_report(report: Dict[str, Any], output_dir: Path) -> Dict[str,
         "snapshot_markdown": snapshot_markdown.name,
         "latest_json": latest_json.name,
         "latest_markdown": latest_markdown.name,
+        "error_analysis_snapshot": f"error_analysis_{report['run_id']}.md",
+        "error_analysis_latest": "error_analysis_latest.md",
     }
     snapshot_json.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
@@ -600,7 +603,13 @@ async def run_baseline_evaluation_v1(
         dataset_path=dataset_path,
         execution_metadata=execution_metadata,
     )
-    return write_baseline_report(report, output_dir)
+    paths = write_baseline_report(report, output_dir)
+    error_paths = write_baseline_error_analysis(paths["snapshot_json"], output_dir)
+    return {
+        **paths,
+        "error_analysis": error_paths["latest"],
+        "error_analysis_snapshot": error_paths["snapshot"],
+    }
 
 
 def _render_markdown(report: Dict[str, Any]) -> str:

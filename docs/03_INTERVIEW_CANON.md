@@ -255,6 +255,8 @@ Baseline V1 是独立的真实回放报告：固定读取上述 100 条数据，
 
 报告版本策略是“时间戳快照 + latest 普通文件副本”：每次运行保留独立 JSON / Markdown，latest 原子替换为最新内容，便于 Typora 等工具直接打开。实验配置固定包含 Dataset 名称、版本与 SHA256、启用/忽略指标、Workflow/Prompt 版本、Resolver/Analyzer/QA 模型、Token/Context 限制、Risk 阈值和 OTel/LangSmith 项目配置。旧单条评测不再堆积在报告根目录，而是隔离保存并只保留最近 20 份；运行报告目录不提交 Git。
 
+每次 Baseline 完成后还会读取本次时间戳 JSON，生成同 Run ID 的 `error_analysis_<run_id>.md` 和 `error_analysis_latest.md`。该后处理只分析 FAIL Case，包含 Failure Breakdown、Intent Confusion Matrix、HITL/Approval mismatch、Tool 问题以及逐 Case Expected/Actual/Trace；过程纯离线、deterministic，不调用 LLM，不重放 LangGraph，也不修改 Dataset 或 Agent。
+
 项目已提供真实 LLM Regression 专用入口：`smoke` 固定选取 12 条并预计 27 次 Workflow LLM 调用，`full` 运行 100 条并预计 258 次；入口拒绝 Mock，需要显式 `--confirm-live`，并在报告中记录 Provider、Model、Endpoint Host、Token、成本和延迟。2026-08-26 已使用 `deepseek-v4-flash` 作为 Resolver、`qwen-turbo` 作为 Analyzer/QA 完成一次 100 条 Baseline V1：实际 217 次 LLM 调用，Case Pass Rate `0.54`，平均端到端耗时约 `2.50s`，P95 约 `4.15s`，平均总 Token `715.59`。该结果是当前 Dataset、Prompt、模型和阈值组合下的首轮实验基线，不代表生产质量结论；后续必须使用快照中的 Dataset SHA256 和完整实验配置做同口径比较。
 
 ## 20. Feedback Pipeline
@@ -314,7 +316,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
-| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；2026-08-27 在 Python 3.12 隔离配置下 143 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
+| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；2026-08-27 在 Python 3.12 隔离配置下 146 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
