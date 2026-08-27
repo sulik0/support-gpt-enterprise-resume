@@ -1,246 +1,130 @@
-# SupportGPT Enterprise 🚀
+# SupportGPT Enterprise
 
 [![CI](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/ci.yml/badge.svg)](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/ci.yml)
-[![Python Version](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
-[![FastAPI](https://img.shields.ly/badge/FastAPI-0.110%2B-green)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.ly/badge/LangGraph-0.0.28-orange)](https://github.com/langchain-ai/langgraph)
-[![Docker](https://img.shields.ly/badge/Docker-ready-blue)](https://www.docker.com/)
+[![Python](https://img.shields.io/badge/Python-3.11-blue)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-green)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-workflow-orange)](https://github.com/langchain-ai/langgraph)
 
-**SupportGPT Enterprise** is an enterprise-grade AI Copilot platform built for Fortune 500 customer support organizations. It integrates RAG-based context retrieval, multi-agent orchestration, advanced input/output safety guardrails, token/cost observability, and human-in-the-loop workflows into a unified, high-performance service.
+SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初版 FAQ 问答升级为支持工单理解、业务 Tool 联动、Hybrid RAG、安全风控、回复校验、Human-in-the-loop 审批、OpenTelemetry 可观测和离线评测的 LangGraph Workflow。
 
-The platform is designed to augment customer service agents rather than replace them, providing suggested responses, ticket summarization, CRM contexts, order lookups, and real-time hallucination evaluation metrics.
+## 核心能力
 
----
+| 领域 | 当前能力 |
+|---|---|
+| Agent Workflow | Analyzer、Tooling、Retriever、Resolver、QA、Escalation；Tool/RAG 并行执行 |
+| LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
+| RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
+| Tool Calling | CRM、OMS、Ticket Mock Adapter；ToolRegistry、Schema、RBAC、风险控制 |
+| Safety | 多层 Prompt Injection 规则、Qwen3Guard Adapter、Risk Engine、PII/泄露过滤 |
+| HITL | 高风险、低置信度、低 QA、投诉与退款场景审批 |
+| Observability | OpenTelemetry 统一采集，Collector 导出 LangSmith Trace 和 Prometheus Metrics |
+| Evaluation | Ragas、DeepEval、确定性 Agent/Security Evaluator、100 条 Baseline Workflow Replay |
+| Feedback | AgentRun + FeedbackEvent + Trace 关联，脱敏 SFT/DPO 候选导出 |
+| Frontend | 用户咨询页、客服审批后台、Agent 可观测页 |
 
-## 🌟 Feature Highlights & Matrix
+## 快速启动
 
-For a quick summary of the capabilities supported by this repository, please review our [Feature Matrix](FEATURE_MATRIX.md).
+### 后端
 
-| Feature Group | Capabilities | Tech Stack | Documentation |
-|---|---|---|---|
-| **Multi-Agent** | Intent classification, RAG retrieval, resolution drafting, QA verification, SLA routing | LangGraph, LangChain | [Agent Architecture](docs/AGENT_ARCHITECTURE.md) |
-| **RAG Pipeline** | Versioning, chunking splitters, hybrid vector search, source citations | ChromaDB, PyPDF2, BeautifulSoup | [RAG Architecture](docs/RAG_ARCHITECTURE.md) |
-| **Observability** | Workflow/LLM/Retriever/Tool traces, latency, tokens, USD estimates | LangSmith, OpenTelemetry, Prometheus | [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md) |
-| **AI Guardrails** | Layered direct/indirect Prompt Injection detection, Qwen3Guard semantic classification, PII scrubbing, output filters, independent Risk Engine | Deterministic rules, Qwen3Guard-Gen-0.6B, LangGraph safety routing | [Security Guide](docs/SECURITY_GUIDE.md) |
-| **HITL Approval** | Staging drafts, agent modifications, approval history, review latency checks | FastAPI, SQLAlchemy, PostgreSQL | [System Design](SYSTEM_DESIGN.md) |
-| **Evaluation** | RAG/Agent/Security unified report, Workflow Replay, confusion matrix and safe-disposition metrics | Ragas, DeepEval, deterministic security evaluator | [Agent Evaluation](docs/AGENT_EVALUATION_PHASE1.md) |
-
----
-
-## 📂 Repository Structure
-
-The layout reflects production-grade engineering principles:
-
-```text
-supportgpt-enterprise/
-├── .github/workflows/         # CI/CD Pipeline
-├── src/                       # FastAPI Backend
-│   ├── auth/                  # JWT Authentication & RBAC
-│   ├── models/                # SQLAlchemy & Pydantic Schemas
-│   ├── agents/                # LangGraph Node Implementations
-│   ├── guardrails/            # AI Safety Guards (PII, Injections)
-│   ├── risk/                  # Independent risk scoring and disposition policy
-│   ├── rag/                   # Ingestion, Chunking, ChromaDB, KB versions
-│   ├── approval/              # Human-in-the-Loop workflows
-│   ├── memory/                # Conversation & session state stores
-│   ├── tools/                 # CRM, Ticketing, and Invoice tools
-│   ├── observability/         # OpenTelemetry tracing/metrics, Cost estimators
-│   ├── evaluation/            # Unified metrics engines
-│   └── llm/                   # Pluggable LLM Providers (Mock / OpenAI)
-├── frontend/                  # Vite + React Dashboard UI
-├── tests/                     # Test Suites (Unit, integration, E2E, load)
-├── docs/                      # Phase 1-10 manuals and diagrams
-├── deployment/                # Dockerfile, compose, and Kubernetes manifests
-├── monitoring/                # Prometheus targets and Grafana templates
-└── scripts/                   # DB seeding and evaluation execution scripts
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+python scripts/seed_kb.py
+uvicorn src.main:app --reload
 ```
 
----
+- Health：[http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- Swagger：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-## 🛠️ Quick Start Guide
+默认使用 Mock LLM、SQLite 和本地 ChromaDB，Redis 未启动时可正常降级。
 
-### 1. Local Development (Backend)
-1. Clone the repository and navigate to the directory:
-   ```bash
-   cd supportgpt-enterprise
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   python3.11 -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   pip install -r requirements/test.txt  # only needed for local tests
-   ```
-4. Configure env parameters:
-   ```bash
-   cp .env.example .env
-   ```
-   该配置默认使用 Mock LLM、SQLite、无 Redis 降级模式和版本化的本地 ChromaDB 目录，无需外部服务即可启动。
-5. Seed the Vector Database:
-   ```bash
-   python scripts/seed_kb.py
-   ```
-6. Run the FastAPI development server:
-   ```bash
-   uvicorn src.main:app --reload
-   ```
-   Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to view the interactive API docs.
+### 前端
 
-   如果本地曾被其他 ChromaDB 大版本写入，请使用新的 `VECTOR_DB_PERSIST_DIR` 并重新执行 `scripts/seed_kb.py`，不要直接复用不兼容的 SQLite schema。
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### Optional Fast Model for Analyzer and QA
+打开 [http://127.0.0.1:3000](http://127.0.0.1:3000)。
 
-Resolver 默认继续使用 `LLM_MODEL_NAME`。Analyzer 与 QA 可以共用独立的 OpenAI-compatible 小模型服务，例如 Qwen Turbo：
+### 真实 LLM
 
 ```dotenv
-LLM_FAST_MODEL_NAME=qwen-turbo
-LLM_FAST_BASE_URL=<Qwen OpenAI-compatible endpoint>
-LLM_FAST_API_KEY=<Qwen API key>
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://example.com/v1
+LLM_API_KEY=<api-key>
+LLM_MODEL_NAME=<model-name>
 ```
 
-如需为两个节点选择不同模型，可再设置 `LLM_ANALYZER_MODEL_NAME` 和 `LLM_QA_MODEL_NAME`。未配置 Fast Model 时，两者自动回退主模型。
+Analyzer 和 QA 可配置 `LLM_FAST_*`、`LLM_ANALYZER_MODEL_NAME` 和 `LLM_QA_MODEL_NAME` 使用小模型。默认回复语言与用户当前输入一致，除非用户明确要求切换。
 
-### Optional Qwen3Guard semantic safety service
-
-Qwen3Guard 与业务 LLM 使用独立端点，默认关闭，因此不影响无 GPU 的本地启动。可按官方 OpenAI-compatible 方式启动：
+## 测试与评测
 
 ```bash
-vllm serve Qwen/Qwen3Guard-Gen-0.6B \
-  --port 18001 \
-  --max-model-len 32768
-```
-
-然后在 `.env` 中设置：
-
-```bash
-QWEN3_GUARD_ENABLED=true
-QWEN3_GUARD_BASE_URL=http://127.0.0.1:18001/v1
-QWEN3_GUARD_API_KEY=EMPTY
-QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
-```
-
-正常 Workflow 最多增加 `user_input`、`tool_result` 和 `rag_document` 三次 Guard 调用。确定性规则强命中会在 Guard 模型前直接短路。
-
-### 2. Local Development (Frontend)
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000) to view the interactive dashboard.
-
-### 3. Running with Docker Compose
-To boot up the entire stack including backend, databases, cache, and Prometheus:
-```bash
-docker-compose -f deployment/docker-compose.yml up --build
-```
-
----
-
-## 📊 Telemetry and Observability Dashboard
-When the stack is running, you can access monitoring panels:
-- **API Health**: [http://localhost:8000/health](http://localhost:8000/health)
-- **Collector Metrics Exporter**: [http://localhost:8889/metrics](http://localhost:8889/metrics)
-- **Prometheus Dashboard**: [http://localhost:9090](http://localhost:9090)
-- **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
-
-Phase 1 的 OpenTelemetry 统一采集、Collector → LangSmith/Prometheus 导出和 Grafana 验收流程参见 [Observability Phase 1](docs/OBSERVABILITY_PHASE1.md)。
-
-主管或管理员登录 React 工作台后，可打开“Agent 可观测性”页面，查看已持久化的 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要。在 `frontend/.env` 中配置 LangSmith Project 链接：
-
-```dotenv
-VITE_API_BASE_URL=http://localhost:8000
-VITE_LANGSMITH_PROJECT_URL=https://smith.langchain.com/<your-project-url>
-```
-
-前端只保存 Project URL，不得放置 LangSmith API Key。API Key 仍只存在 Collector 环境变量中。
-
-前端分为用户咨询页和客服员工后台。用户页通过 `POST /support/requests` 创建工单并同步执行 Agent：普通请求只返回安全的最终回复，高风险或低质量请求只返回“已转人工”。客服后台通过受 RBAC 保护的 `GET /staff/review-queue` 仅加载待审批工单，打开详情时读取持久化结果，不会重复调用模型。
-
-如果本地未启动 Collector，Backend 会在启动时跳过不可达的 OTLP exporter，避免 `localhost:4318` 重试日志刷屏。需要恢复 LangSmith Trace 时，先启动 Collector，再重启 Backend。前端 JWT 过期时会自动清理旧登录态并要求重新登录。
-
----
-
-## 🧪 Testing Suite
-To verify compilation and test coverage:
-```bash
+python -m pip install -r requirements/test.txt
 python -m compileall src tests
-pytest tests/test_agents.py tests/test_rag.py -q
-```
-Optional evaluation and load-test dependencies are split into `requirements/eval.txt` and `requirements/load.txt`. For details, see our [Testing Guide](docs/TESTING_GUIDE.md).
-
-Run the independent phase-1 Agent/RAG evaluation after seeding the knowledge base:
-
-```bash
-pip install -r requirements/eval.txt
-python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
+python -m pytest -q
 ```
 
-统一 JSON / Markdown 报告还会输出安全专项指标，包括 Prompt Injection 检测的
-Precision、Recall、F1、误报率，以及自动化阻断、安全短路、上下文隔离、人工介入和
-critical 风险处置正确率。Baseline 100 中的 14 条攻击与 86 条非攻击样本共同构成混淆矩阵。
-
-真实 LLM 回归使用独立的成本保护入口；建议先 Dry Run 核对模型与调用预算：
-
-```bash
-python scripts/run_real_llm_regression.py --suite smoke --dry-run
-python scripts/run_real_llm_regression.py --suite smoke --confirm-live
-```
-
-Mock Provider、缺少密钥、示例模型名和超出调用上限都会在第一次模型请求前失败。报告记录 Provider、Model、Endpoint Host、Token、估算成本和 Workflow 延迟，不记录 API Key。
-
-第一版固定 100 条 Baseline 评测使用独立入口，默认逐条构造完整 Ticket State 并真实回放当前 LangGraph Workflow：
+Baseline 100 真实 Workflow Replay：
 
 ```bash
 python scripts/run_baseline_eval.py --dry-run
 python scripts/run_baseline_eval.py --confirm-live
 ```
 
-Case Pass 只由 Intent Accuracy、Department Accuracy、Required Tool Hit Rate、Forbidden Tool Violation Rate、HITL Accuracy 和 Approval Accuracy 决定。报告同时输出端到端及各节点 Average / P50 / P95、Token、模型、Analyzer Rule Hit Rate、LLM 调用次数和 Trace ID；`reference_answer`、priority、expected nodes 与安全标签保留在 Dataset 和报告快照中，但暂不参与本版判定。
-
-每次正式运行会在 `evaluation/reports/baseline_v1/` 写入一组不可变时间戳快照，例如 `baseline_v1_20260826_215300.json/md`；`baseline_v1_latest.json/md` 只是指向最新快照的相对软链接，不替代历史版本。JSON 和 Markdown 都固定记录 Dataset 名称/版本/SHA256、Evaluator 指标范围、Workflow/Prompt 版本、各节点模型、Token/Context 限制、Risk 阈值和 Observability 配置。旧版单条评测报告改存 `evaluation/reports/single_response/` 并自动只保留最近 20 份；整个运行报告目录不进入 Git。
-
-### Feedback Pipeline
-
-`/chat` 和 `/suggest-response` 返回 `agent_run_id`。用户评分、人工审批修正和质量评测可据此关联 OpenTelemetry Trace、Prompt / Workflow / Model 版本与执行快照。
-
-导出经过 PII 脱敏和质量门控的训练候选：
+Ragas + DeepEval：
 
 ```bash
-python scripts/export_training_candidates.py
+python -m pip install -r requirements/eval.txt
+python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
-详细设计见 [Feedback Pipeline 第一阶段](docs/FEEDBACK_PIPELINE_PHASE1.md)。
+评测报告保存在 `evaluation/reports/`，该目录不进 Git。正式 Baseline 同时生成时间戳 JSON/Markdown 快照与 `latest` 相对软链接，并固定记录 Dataset Hash、模型、Prompt/Workflow 版本、阈值、Token、延迟与 Trace 配置。
 
----
+## 可观测
 
-## 📄 Detailed Specifications
-For deep technical explorations, read our dedicated guides:
-- [System Design & Database Schemas](SYSTEM_DESIGN.md)
-- [Enterprise Architecture Blueprint](ARCHITECTURE.md)
-- [API Documentation Specification](API_DOCUMENTATION.md)
-- [Deployment & Orchestration Manual](DEPLOYMENT_GUIDE.md)
-- [Contributing Standards](CONTRIBUTING.md)
+最小启动 OpenTelemetry Collector：
 
----
+```bash
+docker compose -f deployment/docker-compose.yml up -d otel-collector
+```
 
-## Resume Upgrade Notes
+应用只使用 OpenTelemetry SDK：
 
-This fork includes resume-oriented upgrades and documentation:
+```text
+Application
+  -> OTLP Collector
+      -> LangSmith Trace
+      -> Prometheus Metrics
+          -> Grafana
+```
 
-- [Resume Upgrade Plan](docs/RESUME_UPGRADE_PLAN.md)
-- [Resume Project Guide](docs/RESUME_PROJECT_GUIDE.md)
-- [Resume Upgrade Change Log](docs/CHANGELOG_RESUME_UPGRADE.md)
-- [Mock Boundaries and Resume Claims](docs/MOCK_BOUNDARIES.md)
+Collector 未启动时后端会 fail-open，不影响 Agent 主流程。
 
-The CRM, order-management, and ticketing integrations are local mock adapters intended for demo and interview use. The architecture is adapter-driven so these mocks can be replaced with real enterprise service clients.
+## 文档
+
+本项目只维护以下统一文档：
+
+1. [项目概览](docs/00_PROJECT_CONTEXT.md)
+2. [技术架构](docs/01_ARCHITECTURE.md)
+3. [业务流程](docs/02_BUSINESS_LOGIC.md)
+4. [事实口径](docs/03_INTERVIEW_CANON.md)
+5. [技术决策](docs/04_DECISIONS.md)
+6. [工程指南](docs/05_ENGINEERING_GUIDE.md)
+7. [Prompt 设计](docs/06_PROMPTS.md)
+8. [AI 交接](docs/07_AI_HANDOFF.md)
+9. [任务清单](docs/08_TODO.md)
+10. [面试问答](docs/09_INTERVIEW_QA.md)
+
+未来任何 AI 或开发者参与项目前，应先阅读 [docs/00_PROJECT_CONTEXT.md](docs/00_PROJECT_CONTEXT.md)。
+
+## 实现边界
+
+- CRM、OMS、Ticketing 和默认 LLM 是 Mock Adapter，架构保留替换边界，但不得表述为已接入真实企业系统。
+- Docker Compose 和 Kubernetes 是可复现部署模板，不代表已生产上线。
+- Qwen3Guard 默认关闭，Risk Engine 阈值尚未用真实客服数据校准。
+- Feedback Pipeline 当前只导出脱敏训练候选，尚未执行 SFT/DPO 训练和自动发布。
