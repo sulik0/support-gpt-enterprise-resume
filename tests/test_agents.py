@@ -483,6 +483,80 @@ async def test_qa_accepts_tool_grounded_read_response_without_llm(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "citations", "tool_context", "citation_verified"),
+    [
+        (
+            "Puede cambiar las preferencias en Ajustes (fuente: S2).",
+            [
+                Citation(source="outage", text="API outage recovery", score=0.4),
+                Citation(
+                    source="account",
+                    text="Navigate to Settings and Preferences to update the profile.",
+                    score=0.2,
+                ),
+            ],
+            {},
+            True,
+        ),
+        (
+            "Your support history shows no previous cases.",
+            [],
+            {"past_tickets": []},
+            False,
+        ),
+    ],
+)
+async def test_qa_accepts_valid_cross_language_citation_and_empty_tool_result(
+    monkeypatch, response, citations, tool_context, citation_verified
+):
+    async def unexpected_qa_call(**kwargs):
+        raise AssertionError("deterministic evidence should not call LLM Judge")
+
+    monkeypatch.setattr(
+        "src.agents.quality_assurance.llm_provider.evaluate_qa",
+        unexpected_qa_call,
+    )
+    result = await quality_assurance_agent.verify(
+        {
+            "description": "Where are my settings or previous cases?",
+            "suggested_response": response,
+            "context_citations": citations,
+            "tool_context": tool_context,
+            "errors": [],
+        }
+    )
+
+    assert result["qa_score"] == 0.95
+    assert result["citation_verified"] is citation_verified
+    assert result["risk_requires_human"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        "Please reply with the specific problem details and steps to reproduce.",
+        "We need human review because the available evidence does not cover this topic.",
+    ],
+)
+async def test_qa_accepts_generic_clarification_and_safe_knowledge_limitation(response):
+    result = await quality_assurance_agent.verify(
+        {
+            "description": "How should support explain this topic?",
+            "suggested_response": response,
+            "context_citations": [],
+            "tool_context": {},
+            "errors": [],
+        }
+    )
+
+    assert result["qa_strategy"] == "rule"
+    assert result["qa_score"] >= 0.9
+    assert result["risk_requires_human"] is False
+
+
+@pytest.mark.asyncio
 async def test_qa_only_escalates_safe_limitation_for_authoritative_business_gap():
     knowledge = await quality_assurance_agent.verify(
         {

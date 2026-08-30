@@ -227,7 +227,9 @@ class QualityAssuranceAgent:
             return {
                 "score": 0.95,
                 "hallucination_detected": False,
-                "citation_verified": bool(citations),
+                "citation_verified": cls._has_valid_citation_reference(
+                    filtered_response, citations
+                ),
                 "response_grounded": True,
                 "response_requires_human": False,
             }
@@ -251,6 +253,8 @@ class QualityAssuranceAgent:
                 "please describe",
                 "please provide",
                 "provide more details",
+                "specific problem details",
+                "steps to reproduce",
                 "have not described",
                 "haven’t received any details",
                 "haven't received any details",
@@ -268,6 +272,7 @@ class QualityAssuranceAgent:
             marker in lowered
             for marker in (
                 "human review is needed",
+                "need human review",
                 "manual review",
                 "cannot determine",
                 "unable to determine",
@@ -313,10 +318,45 @@ class QualityAssuranceAgent:
                 re.search(r"\b(?:s[1-9]|source)\b", lowered) and len(overlap) >= 2
             ):
                 return True
+            # 跨语言回复无法做词汇重合，但 citation label 必须真实存在。
+            if cls._has_valid_citation_reference(response, citations):
+                return True
+
+        if cls._empty_tool_result_supported(response, tool_context):
+            return True
 
         for value in cls._tool_scalar_values(tool_context):
             if re.search(rf"(?<!\w){re.escape(value.lower())}(?!\w)", lowered):
                 return True
+        return False
+
+    @staticmethod
+    def _has_valid_citation_reference(response: str, citations: list[Any]) -> bool:
+        """验证回复中的 S1/S2 等标签确实指向本次 Retriever 结果。"""
+        indexes = {
+            int(value)
+            for value in re.findall(r"(?i)(?<!\w)s([1-9][0-9]*)(?!\w)", response)
+        }
+        return bool(indexes) and all(1 <= index <= len(citations) for index in indexes)
+
+    @staticmethod
+    def _empty_tool_result_supported(
+        response: str, tool_context: Dict[str, Any]
+    ) -> bool:
+        """空列表也是 Tool 的可验证结果，不应交给 LLM 猜测。"""
+        lowered = response.lower()
+        if tool_context.get("past_tickets") == [] and re.search(
+            r"\b(?:no|not any|without)\b.{0,24}\b(?:previous|past|support)\b.{0,16}"
+            r"\b(?:case|cases|ticket|tickets)\b|无.{0,8}历史.{0,8}工单",
+            lowered,
+        ):
+            return True
+        if tool_context.get("recent_orders") == [] and re.search(
+            r"\b(?:no|not any|cannot find|couldn't find)\b.{0,24}"
+            r"\b(?:order|orders)\b|未找到.{0,8}订单",
+            lowered,
+        ):
+            return True
         return False
 
     @staticmethod
