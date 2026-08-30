@@ -78,6 +78,17 @@ class RiskEngine:
             score = max(score, 0.85)
             reasons.add("untrusted_context_guard_unavailable")
 
+        degradation_level = str(state.get("degradation_level", "none")).lower()
+        if degradation_level == "partial":
+            score = max(score, 0.45)
+            reasons.add("dependency_partially_degraded")
+        elif degradation_level == "human_required":
+            score = max(score, 0.82)
+            reasons.add("dependency_requires_human")
+        elif degradation_level == "failed":
+            score = max(score, 0.9)
+            reasons.add("dependency_failed")
+
         priority = str(state.get("priority", "medium")).lower()
         sentiment = str(state.get("sentiment", "neutral")).lower()
         intent = normalize_intent(state.get("intent"))

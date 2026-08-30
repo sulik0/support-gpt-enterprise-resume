@@ -23,6 +23,7 @@
 - 优化：Analyzer 规则优先，Analyzer/QA 可使用小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
 - RAG：ChromaDB + 关键词/向量 Hybrid Search + 轻量 rerank + version/category filter + citation。
 - Tool：Mock CRM/OMS/Ticket Adapter 通过 ToolRegistry 暴露，具备 Schema、RBAC、风险和审计边界。
+- 故障治理：LLM/RAG/Tool 统一超时、有界 Retry、进程内 Circuit Breaker 与 Fallback；高风险/非幂等写 Tool 禁止自动重试。
 - 安全：确定性多层规则 + 可选 Qwen3Guard-Gen-0.6B + Risk Engine + 输出过滤 + HITL。
 - Memory：Redis 短期状态，PostgreSQL 长期持久化，Redis 不可用时回退数据库。
 - 可观测：OpenTelemetry 唯一采集，OTLP 统一导出，Collector 分发 LangSmith Trace 和 Prometheus Metrics。
@@ -56,6 +57,7 @@
 | Tool Registry / Adapter | `src/tools/` |
 | RAG | `src/rag/` |
 | Guardrails / Risk | `src/guardrails/`、`src/risk/` |
+| Resilience | `src/resilience/` |
 | Memory | `src/memory/` |
 | Approval | `src/approval/` |
 | Trace / Metrics / 脱敏 | `src/observability/` |
@@ -82,12 +84,13 @@
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未基于真实运营数据校准。
 - Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
 - Docker Compose/Kubernetes 是可复现模板，不代表生产上线。
-- 当前第一次真实 Baseline V1 通过率为 0.54，还需对失败 Case 归因并重测。
+- Resilience 当前是单进程 V1，没有分布式 Breaker、Queue / DLQ 和写 Tool 幂等对账。
+- 真实 Baseline V1 在同一固定 100 条 Dataset 上经归因优化后通过率为 0.99，仍不等于生产业务指标。
 
 ## 当前优先级
 
 1. 为 Feedback 表引入 Alembic migration。
-2. 对 Baseline V1 失败 Case 做归因与同配置复测。
+2. 为 Resilience V1 增加故障注入、多副本 Breaker 与写 Tool 幂等对账设计。
 3. 建设 Dataset Registry、人工复核与数据保留策略。
 4. 增强 Tool 与 Ticket State 的持久化审计。
 5. 使用 Shadow Mode 校准 Qwen3Guard 与 Risk Engine。

@@ -119,7 +119,7 @@ State 包含：工单与客户标识、主题与描述、知识库版本；情�
 
 当前根本不提供动态 Planner。执行路径由固定图决定，工具选择是确定性规则，所有工具经过 Registry，退款初筛要求 Manager 权限，QA 和 Escalation 是固定关卡。
 
-系统也没有 Reflection Loop 和通用自动 Retry，因此不会因低分而无限重写或重复调用工具。高风险失败转人工。
+系统没有 Reflection Loop 或因 QA 低分而自动重写的 Retry。依赖层只对明确的瞬时故障做有界 Retry，高风险失败转人工，不会无限重新生成或重复写操作。
 
 ### 17. 如何保证退款流程一定经过审批？
 
@@ -251,13 +251,13 @@ Tool 能访问客户、订单和工单事实，未来还可能产生退款、取
 
 每个当前工具的超时为 1 秒。超时后停止等待，记录 `timeout`、耗时和错误，不把它伪装成成功。
 
-当前没有自动重试。对未来真实外部读工具可采用有限退避重试；对写操作必须先解决幂等和重复副作用。
+当前低风险读 Tool 对 Timeout、Connection 和 Server Error 做默认一次有界 Retry，并通过进程内 Circuit Breaker 快速隔离持续故障。高风险或非幂等写 Tool 不自动重试；超时后结果不确定必须转人工对账。
 
 ### 38. 外部系统失败怎么办？
 
 当前 Adapter 是 Mock，但 Registry 已把执行异常转换为可审计错误。Tooling 整体异常时会返回空业务上下文和错误列表，后续 RAG 与 QA 仍可继续；上下文不足时应走保守回复或人工审批。
 
-当前没有 Circuit Breaker、Fallback Provider、消息队列或 Dead Letter Queue。生产接入真实系统时需要补齐这些能力。
+当前 LLM/RAG/Tool 已共用故障分类、有界 Retry 和进程内 Circuit Breaker；LLM 可配置 OpenAI-compatible Fallback Provider，Hybrid RAG 单路失败时使用另一路。当前没有分布式 Breaker、消息队列或 Dead Letter Queue。
 
 ### 39. 如何记录工具调用审计？
 
@@ -693,7 +693,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 失败会被记录为 validation_error、permission_denied、timeout 或 error，不会伪装成成功。Tooling 可在无业务上下文的情况下继续到 RAG，QA 再根据依据决定是否转人工。
 
-当前没有通用重试和 Circuit Breaker。生产读工具可有限重试，写工具必须先解决幂等与重复副作用。
+当前低风险读 Tool 会对可重试的瞬时故障做有界 Retry，连续失败会打开进程内 Circuit Breaker。失败结果、尝试次数和降级等级进入审计、AgentState、Risk Engine、Trace 和 Metrics；上下文不足时保守回复或转人工。写 Tool 仍必须先完成幂等键和结果对账。
 
 ### 108. 如果 RAG 检索到了错误文档怎么办？
 
@@ -724,6 +724,6 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 - 只引用 `03_INTERVIEW_CANON.md` 中可证实的事实。
 - CRM、OMS、历史工单、退款初筛和默认 LLM 必须明确为 Mock。
 - 当前是 6 个逻辑 Agent 节点、4 个注册 Tool、0 个 MCP。
-- 当前没有 TaskState、Checkpoint、动态 Planner、自动 Reflection、通用 Retry、pgvector、Milvus 或生产级搜索后端。
+- 当前没有 TaskState、Checkpoint、动态 Planner、自动 Reflection、分布式 Circuit Breaker / Queue / DLQ、pgvector、Milvus 或生产级搜索后端。
 - 当前没有真实上线指标、P95/QPS 基准、真实客户数据或业务提升百分比。
 - 个人职责和是否独立开发必须按本人真实经历回答，不能根据仓库推断。

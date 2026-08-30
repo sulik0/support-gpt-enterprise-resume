@@ -330,6 +330,7 @@ resolved / closed --reopen--> in_progress
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
 - Qwen3Guard-Gen-0.6B 已作为独立 OpenAI-compatible 语义安全 Adapter 接入三类信任边界；默认关闭外部服务，启用后将 `Safe / Controversial / Unsafe` 交给 Risk Engine。
 - 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。
+- 第一版 Resilience 已覆盖 LLM、Hybrid RAG 和 Tool：统一故障分类、超时、有界 Retry、进程内 Circuit Breaker、可选备用模型/单路 RAG Fallback，并将降级事件关联 AgentState、Risk Engine、Trace 和 Metrics。
 - MVP 主链路已实测通过：FastAPI `/health` -> LangGraph Workflow -> Ticket / AgentRun 持久化 -> 用户评价 -> FeedbackEvent 持久化。
 - 覆盖 Agent、API、Auth、Guardrails、RAG、Evaluation、Observability、Tool Registry 和工单状态机的 pytest 测试模块。
 
@@ -343,6 +344,7 @@ resolved / closed --reopen--> in_progress
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。
 - **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
+- **故障治理**：已完成单进程第一版；尚无分布式 Circuit Breaker、Queue / DLQ、跨服务幂等键、写操作结果对账与故障注入压测。
 
 ### 已知环境限制
 

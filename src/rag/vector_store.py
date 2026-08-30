@@ -1,4 +1,5 @@
 import os
+import asyncio
 import math
 import re
 from collections import Counter
@@ -8,6 +9,8 @@ from chromadb.config import Settings as ChromaSettings
 from src.config import settings
 from src.rag.embedding import embedding_provider
 from src.models.schemas import Citation
+from src.resilience.executor import resilience_executor
+from src.resilience.policies import rag_policy
 
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "can", "for", "from",
@@ -95,23 +98,38 @@ class VectorStoreManager:
         Combines vector similarity with lexical BM25-style matching and a
         lightweight rerank step while preserving version/category filters.
         """
-        query_vector = await embedding_provider.get_embedding(query)
-        
         where_filter = self._build_where_filter(version, category_filter)
         candidate_k = max(top_k * 4, top_k)
 
-        results = self.collection.query(
-            query_embeddings=[query_vector],
-            n_results=candidate_k,
-            where=where_filter
+        # 向量路与词法路相互隔离，单路失败时仍可降级检索。
+        vector_result, lexical_result = await asyncio.gather(
+            resilience_executor.execute(
+                component="rag",
+                operation="vector_search",
+                call=lambda: self._vector_candidates(
+                    query, where_filter, candidate_k
+                ),
+                policy=rag_policy(),
+                circuit_key="rag:vector_store",
+            ),
+            resilience_executor.execute(
+                component="rag",
+                operation="lexical_search",
+                call=lambda: asyncio.to_thread(
+                    self._lexical_candidates,
+                    query,
+                    where_filter,
+                    candidate_k,
+                ),
+                policy=rag_policy(),
+                circuit_key="rag:lexical_store",
+            ),
         )
+        if not vector_result.success and not lexical_result.success:
+            vector_result.unwrap()
 
-        vector_candidates = self._parse_vector_results(results)
-        lexical_candidates = self._lexical_candidates(
-            query=query,
-            where_filter=where_filter,
-            limit=candidate_k
-        )
+        vector_candidates = vector_result.value or []
+        lexical_candidates = lexical_result.value or []
 
         reranked = self._rerank_candidates(
             query=query,
@@ -133,6 +151,22 @@ class VectorStoreManager:
             ))
 
         return citations
+
+    async def _vector_candidates(
+        self,
+        query: str,
+        where_filter: Dict[str, Any],
+        candidate_k: int,
+    ) -> List[Dict[str, Any]]:
+        """执行 Embedding 和 Chroma 查询，供独立超时/熔断策略包装。"""
+        query_vector = await embedding_provider.get_embedding(query)
+        results = await asyncio.to_thread(
+            self.collection.query,
+            query_embeddings=[query_vector],
+            n_results=candidate_k,
+            where=where_filter,
+        )
+        return self._parse_vector_results(results)
 
     def _build_where_filter(
         self,
@@ -178,13 +212,10 @@ class VectorStoreManager:
         if not tokens:
             return []
 
-        try:
-            records = self.collection.get(
-                where=where_filter,
-                include=["documents", "metadatas"]
-            )
-        except Exception:
-            return []
+        records = self.collection.get(
+            where=where_filter,
+            include=["documents", "metadatas"]
+        )
 
         docs = records.get("documents", []) if records else []
         metas = records.get("metadatas", []) if records else []

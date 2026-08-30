@@ -59,7 +59,7 @@ class ResolutionAgent:
             return {
                 **state,
                 "errors": state.get("errors", []) + [f"Resolver agent error: {str(e)}"],
-                "suggested_response": "I apologize, but I encountered an error while writing a resolution. Please escalate to a support manager.",
+                "suggested_response": self._failure_response(description),
             }
 
     @staticmethod
@@ -124,6 +124,16 @@ class ResolutionAgent:
         return (
             "Please describe the specific support issue or task you need help with, "
             "and I will continue from there."
+        )
+
+    @staticmethod
+    def _failure_response(description: str) -> str:
+        """依赖恢复失败时使用当前输入语言给出保守回复。"""
+        if any("\u4e00" <= char <= "\u9fff" for char in description):
+            return "抱歉，当前暂时无法生成可靠回复，已转交人工客服复核。"
+        return (
+            "I’m sorry, but I cannot generate a reliable response right now. "
+            "This request has been routed to a support specialist for review."
         )
 
 

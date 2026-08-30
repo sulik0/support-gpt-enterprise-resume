@@ -148,6 +148,7 @@ async def test_providers_mocking(mocker):
     openai_client.assert_called_once_with(
         api_key="compatible-api-key",
         base_url="https://llm.example.com/v1",
+        max_retries=0,
     )
     analysis, _, _ = await op_provider.analyze_ticket("Hello")
     assert analysis["sentiment"] == "positive"

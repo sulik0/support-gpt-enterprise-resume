@@ -139,7 +139,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 11. TaskState 与任务规划
 
-当前没有独立 `TaskState`。LangGraph 使用单一 `AgentState` 传递工单输入、分类结果与置信度、工具上下文、citation、回复草稿、QA、安全信号、`risk_level`、`risk_score`、`risk_reasons`、人工/自动化建议、升级结论、token、成本和错误信息。
+当前没有独立 `TaskState`。LangGraph 使用单一 `AgentState` 传递工单输入、分类结果与置信度、工具上下文、citation、回复草稿、QA、安全信号、`risk_level`、`risk_score`、`risk_reasons`、人工/自动化建议、降级等级与脱敏依赖事件、升级结论、token、成本和错误信息。
 
 当前也没有独立 Planner 或动态任务分解。系统采用固定 Workflow，并根据安全结果、部门、意图和优先级做有限的规则路由。当前唯一的受限重新规划是：类别检索无结果时，保留知识库版本并放宽类别进行一次回退检索。
 
@@ -172,6 +172,8 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。不能说 Prompt 已版本化、已灰度或已通过线上实验优化。
 
 OpenAI-compatible Provider 支持主模型与 Fast Model 分离：Resolver 使用 `LLM_MODEL_NAME`，Analyzer 与 QA 优先使用 `LLM_FAST_MODEL_NAME`，并可通过节点级模型名覆盖。Fast Model 可配置独立 Base URL 与 API Key，例如接入 Qwen Turbo；未配置时回退主模型。
+
+LLM 已禁用 SDK 内建重试，由统一 Resilience Executor 执行超时、瞬时故障有界 Retry 和进程内 Circuit Breaker。可选通过 `LLM_FALLBACK_MODEL_NAME / BASE_URL / API_KEY` 切换独立 OpenAI-compatible 备用模型。默认 Retry 上限为 1，Auth、Validation 和 Malformed Response 不重试。
 
 ## 14. 安全与 Risk Engine
 
@@ -322,7 +324,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
-| 工具、LLM 或 QA 异常 | 外部能力或 Provider 可能失败 | 记录错误、使用安全降级、触发人工审批 | 不要说已实现 Circuit Breaker、消息队列或通用 Retry |
+| 工具、LLM、RAG 或 QA 异常 | 外部能力或 Provider 可能失败 | 统一故障分类、有界 Retry、进程内 Circuit Breaker、LLM/RAG Fallback、安全降级与人工审批；高风险/非幂等写 Tool 不重试 | 不要说已实现分布式 Breaker、消息队列/DLQ、写操作幂等对账或生产故障演练 |
 | 会话历史未进入推理 | 历史当前只保存和读取 | 将其作为后续改造项 | 不要说系统已经具备多轮上下文推理 |
 | 工具审计不持久化 | 审计记录当前驻留进程内并可随响应返回 | 作为后续审计表改造项 | 不要说已有完整合规审计平台 |
 | Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；本地启动前检不可达时跳过 exporter，Collector 恢复后重启 Backend 恢复上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |

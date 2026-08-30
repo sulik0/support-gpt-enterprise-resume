@@ -22,6 +22,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | Observability | OpenTelemetry 统一采集，Collector 导出 LangSmith Trace 和 Prometheus Metrics |
 | Evaluation | Ragas、DeepEval、确定性 Agent/Security Evaluator、100 条 Baseline Workflow Replay |
 | Feedback | AgentRun + FeedbackEvent + Trace 关联，脱敏 SFT/DPO 候选导出 |
+| Resilience | LLM/RAG/Tool 统一超时、有界 Retry、Circuit Breaker、Fallback 与风险降级 |
 | Frontend | 用户咨询页、客服审批后台、Agent 可观测页 |
 
 ## 快速启动
@@ -62,6 +63,8 @@ LLM_MODEL_NAME=<model-name>
 ```
 
 Analyzer 和 QA 可配置 `LLM_FAST_*`、`LLM_ANALYZER_MODEL_NAME` 和 `LLM_QA_MODEL_NAME` 使用小模型。默认回复语言与用户当前输入一致，除非用户明确要求切换。
+
+可选配置 `LLM_FALLBACK_*` 指向独立备用模型。SDK 内建重试已关闭，由 Resilience 模块统一执行超时、有界 Retry 和 Circuit Breaker；仅低风险读 Tool 可自动重试。
 
 ## 测试与评测
 

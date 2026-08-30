@@ -76,6 +76,23 @@ LLM_QA_MODEL_NAME=qwen-turbo
 
 未配置 Fast Model 时自动回退主模型。Resolver 始终使用 `LLM_MODEL_NAME`。
 
+可选备用模型与 Resilience 配置：
+
+```dotenv
+LLM_FALLBACK_BASE_URL=<openai-compatible-endpoint>
+LLM_FALLBACK_API_KEY=<api-key>
+LLM_FALLBACK_MODEL_NAME=<fallback-model>
+RESILIENCE_LLM_TIMEOUT_SECONDS=20
+RESILIENCE_LLM_MAX_RETRIES=1
+RESILIENCE_RAG_TIMEOUT_SECONDS=5
+RESILIENCE_RAG_MAX_RETRIES=1
+RESILIENCE_TOOL_READ_MAX_RETRIES=1
+RESILIENCE_CIRCUIT_FAILURE_THRESHOLD=3
+RESILIENCE_CIRCUIT_RECOVERY_SECONDS=30
+```
+
+`LLM_FALLBACK_*` 三项必须同时配置。仅超时、限流、连接与服务端故障可重试；Auth、Schema / Validation 与错误 JSON 不重试。仅低风险读 Tool 使用自动 Retry，高风险或非幂等写操作必须单次执行并在结果不确定时转人工。
+
 ## 安全配置
 
 输入、Tool Result 和 RAG Document 均经过多层 Prompt Injection 检测；结果与 Qwen3Guard 语义分类共同进入 Risk Engine。Qwen3Guard 默认关闭：

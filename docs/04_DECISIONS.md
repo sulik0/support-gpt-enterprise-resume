@@ -604,7 +604,7 @@ LangGraph Checkpoint 可以保存执行中状态，用于长流程恢复、中�
 
 阈值已通过 `RISK_*` 环境变量集中配置，但未基于真实运营数据校准、无策略版本和灰度机制；状态事件尚未单独持久化。
 
-## 决策 19：采用受限 Error Recovery，而非通用自动 Retry
+## 决策 19：采用统一有界 Resilience，而非无差别自动 Retry
 
 ### 问题背景
 
@@ -612,31 +612,31 @@ LangGraph Checkpoint 可以保存执行中状态，用于长流程恢复、中�
 
 ### 候选方案
 
-- 单次 RAG 回退 + 保守降级 + 人工接管
-- 通用自动 Retry
-- Circuit Breaker + Queue + Dead Letter Queue
+- 按故障类型的有界 Retry + Circuit Breaker + Fallback + 人工接管
+- 无差别自动 Retry
+- Circuit Breaker + Queue + Dead Letter Queue 的完整分布式方案
 - 失败即终止
 
 ### 优点与缺点
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
-| 受限恢复 | 行为可预测，避免重复副作用 | 自动恢复能力有限 |
+| 有界 Resilience | 故障分类、次数、退避、熔断和降级统一可观测 | 增加状态与策略配置复杂度 |
 | 通用 Retry | 对瞬态故障友好 | 可能重复调用工具或反复消耗 LLM 成本 |
 | 完整韧性体系 | 适合生产外部依赖 | 引入幂等、队列和运维复杂度 |
 | 失败即终止 | 实现最简单 | 客户体验和可用性差 |
 
 ### 最终方案
 
-类别过滤无结果时仅进行一次 RAG 回退；Redis 失败回退 SQL；工具和模型失败采用安全降级或人工升级，不做通用自动 Retry。
+LLM、RAG 与 Tool 统一经过 Resilience Executor。仅 Timeout、Rate Limit、Connection 和 Server Error 进行默认一次有界 Retry；LLM 可选切换 OpenAI-compatible 备用模型；Hybrid RAG 向量/词法单路失败时使用另一路；仅低风险读 Tool 可重试，高风险或非幂等写操作禁止重试。降级事件进入 AgentState、Risk Engine、Trace 和 Metrics。
 
 ### 为什么选择
 
-当前工具以读操作和 Mock 为主，系统优先避免不可见的重复行为。
+当前工具以读操作和 Mock 为主，但真实 Provider 的瞬时失败需要有界自恢复。通过 Operation Type 和 Risk Level 限制 Retry，比全局统一重试更安全。
 
 ### 工程权衡
 
-对短暂外部服务故障的自动恢复能力有限。未来加入 Retry 时必须同时加入幂等键、次数上限、退避、审计和高风险禁重试规则。
+当前 Circuit Breaker 为单进程内状态，多副本不共享；没有 Queue、Dead Letter Queue、分布式幂等键或写操作结果对账。`asyncio.to_thread` 超时后不能强制杀死底层线程，真实写 Tool 仍必须使用幂等键与业务对账。
 
 ## 决策 20：采用 Prometheus + OpenTelemetry 双层可观测
 
@@ -822,7 +822,7 @@ CD 只监听成功的 `Release Quality Gate`，使用该 Workflow 的 `head_sha`
 | 数据 | SQLite 本地、PostgreSQL Compose | 无迁移、读写分离、多租户 |
 | 记忆 | Redis 可选 + SQL 兜底 | 历史未注入生成 Prompt |
 | 审批 | 独立 Risk Engine + HITL + 状态机 | 阈值可配置但未用生产数据校准，状态事件未持久化 |
-| 恢复 | 受限回退、人工接管 | 无通用 Retry / Queue / Circuit Breaker |
+| 恢复 | LLM/RAG/Tool 有界 Retry + 进程内 Circuit Breaker + Fallback + 人工接管 | 无分布式 Breaker、Queue / DLQ 和写操作对账 |
 | 观测 | OpenTelemetry + OTLP Collector + LangSmith / Prometheus | Collector 尚未高可用，未接 Jaeger / Tempo |
 | 评测 | Adapter + 本地降级 + 固定 100 条 Baseline | 无人工标注生产 Ground Truth 和真实线上基线 |
 | 发布治理 | PR Mock 100 Case Gate + Real-LLM Release Gate | V1 只以六项确定性行为指标决定 Case Pass，语义质量尚未纳入门禁 |

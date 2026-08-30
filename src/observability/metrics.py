@@ -84,3 +84,20 @@ FEEDBACK_EVENTS_TOTAL = meter.create_counter(
 TRAINING_CANDIDATES_TOTAL = meter.create_counter(
     "training_candidates", description="Total SFT or DPO candidate samples exported"
 )
+DEPENDENCY_CALLS_TOTAL = meter.create_counter(
+    "dependency_calls", description="Total resilient dependency operations"
+)
+DEPENDENCY_CALL_DURATION_SECONDS = meter.create_histogram(
+    "dependency_call_duration_seconds",
+    unit="s",
+    description="End-to-end resilient dependency operation duration",
+)
+DEPENDENCY_RETRIES_TOTAL = meter.create_counter(
+    "dependency_retries", description="Total bounded dependency retries"
+)
+DEPENDENCY_FALLBACKS_TOTAL = meter.create_counter(
+    "dependency_fallbacks", description="Total dependency fallback activations"
+)
+DEGRADED_AGENT_REQUESTS_TOTAL = meter.create_counter(
+    "degraded_agent_requests", description="Total Agent requests by degradation level"
+)

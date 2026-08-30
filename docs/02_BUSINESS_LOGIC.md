@@ -378,7 +378,7 @@ Review 的对象是完整草稿，需要同时看到客户问题、工具上下�
 ## 17. 业务边界
 
 - 当前工具、订单、客户和历史工单均为本地 Mock，不代表真实企业系统联动。
-- 当前没有 MCP、动态 Planner、自动 Reflection、通用 Retry、持久化 Checkpoint 或多租户知识隔离。
+- 当前没有 MCP、动态 Planner、自动 Reflection、分布式 Circuit Breaker / Queue / DLQ、持久化 Checkpoint 或多租户知识隔离；LLM/RAG/Tool 已有单进程有界恢复能力。
 - 当前保存会话历史，但未将历史注入本次回复推理。
 - 当前系统可以返回 AI 草稿和审批结果，但不代表已在真实客服中心上线或产生真实业务操作。
 

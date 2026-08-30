@@ -43,6 +43,20 @@ class Settings(BaseSettings):
     LLM_RESOLVER_MAX_RAG_CHARS: int = Field(default=5000, ge=500, le=20000)
     LLM_RESOLVER_MAX_TOOL_CHARS: int = Field(default=2500, ge=500, le=10000)
     LLM_QA_MAX_CONTEXT_CHARS: int = Field(default=4000, ge=500, le=20000)
+    # Resilience 默认只执行一次有界 Retry，避免放大故障。
+    RESILIENCE_ENABLED: bool = Field(default=True)
+    RESILIENCE_LLM_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0.0)
+    RESILIENCE_LLM_MAX_RETRIES: int = Field(default=1, ge=0, le=3)
+    RESILIENCE_RAG_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0.0)
+    RESILIENCE_RAG_MAX_RETRIES: int = Field(default=1, ge=0, le=3)
+    RESILIENCE_TOOL_READ_MAX_RETRIES: int = Field(default=1, ge=0, le=3)
+    RESILIENCE_RETRY_BASE_DELAY_SECONDS: float = Field(default=0.1, ge=0.0, le=5.0)
+    RESILIENCE_CIRCUIT_FAILURE_THRESHOLD: int = Field(default=3, ge=1, le=20)
+    RESILIENCE_CIRCUIT_RECOVERY_SECONDS: float = Field(default=30.0, gt=0.0)
+    # 备用模型是可选的 OpenAI-compatible endpoint。
+    LLM_FALLBACK_MODEL_NAME: Optional[str] = Field(default=None)
+    LLM_FALLBACK_BASE_URL: Optional[str] = Field(default=None)
+    LLM_FALLBACK_API_KEY: Optional[str] = Field(default=None)
     PROMPT_VERSION: str = Field(default="support-v1")
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。
@@ -115,6 +129,20 @@ class Settings(BaseSettings):
             < self.RISK_CRITICAL_THRESHOLD
         ):
             raise ValueError("Risk thresholds must satisfy medium < high < critical.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_llm_fallback(self):
+        """备用 LLM 三项配置必须同时出现，避免故障时才暴露配置错误。"""
+        values = (
+            self.LLM_FALLBACK_MODEL_NAME,
+            self.LLM_FALLBACK_BASE_URL,
+            self.LLM_FALLBACK_API_KEY,
+        )
+        if any(values) and not all(values):
+            raise ValueError(
+                "LLM fallback requires model name, base URL and API key together."
+            )
         return self
 
     # Feedback Pipeline

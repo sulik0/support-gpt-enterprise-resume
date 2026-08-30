@@ -10,6 +10,8 @@ from src.models.intents import (
     normalize_intent,
 )
 from src.observability.tracing import record_current_llm_io, trace_operation
+from src.resilience.executor import resilience_executor
+from src.resilience.policies import llm_policy
 
 
 RESOLUTION_LANGUAGE_POLICY = (
@@ -266,6 +268,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         self.client = AsyncOpenAI(
             api_key=settings.LLM_API_KEY,
             base_url=settings.LLM_BASE_URL or None,
+            max_retries=0,
         )
         self.model = settings.LLM_MODEL_NAME
         self.fast_client = self.client
@@ -286,6 +289,7 @@ class OpenAILLMProvider(BaseLLMProvider):
             self.fast_client = AsyncOpenAI(
                 api_key=settings.LLM_FAST_API_KEY,
                 base_url=settings.LLM_FAST_BASE_URL or None,
+                max_retries=0,
             )
         self.analyzer_model = (
             settings.LLM_ANALYZER_MODEL_NAME
@@ -307,6 +311,14 @@ class OpenAILLMProvider(BaseLLMProvider):
             and (settings.LLM_QA_MODEL_NAME or settings.LLM_FAST_MODEL_NAME)
             else self.client
         )
+        self.fallback_client = None
+        self.fallback_model = settings.LLM_FALLBACK_MODEL_NAME
+        if self.fallback_model:
+            self.fallback_client = AsyncOpenAI(
+                api_key=settings.LLM_FALLBACK_API_KEY,
+                base_url=settings.LLM_FALLBACK_BASE_URL,
+                max_retries=0,
+            )
 
     async def _call_gpt(
         self,
@@ -315,6 +327,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         max_tokens: int | None = None,
         model: str | None = None,
         client: Any = None,
+        operation: str = "chat",
     ) -> Tuple[str, int, int]:
         kwargs = {}
         if json_mode:
@@ -323,16 +336,37 @@ class OpenAILLMProvider(BaseLLMProvider):
             kwargs["max_tokens"] = max_tokens
 
         selected_model = model or self.model
-        record_current_llm_io(input_value=messages, model=selected_model)
         selected_client = client or self.client
-        response = await selected_client.chat.completions.create(
-            model=selected_model, messages=messages, temperature=0.0, **kwargs
+
+        async def invoke(target_client: Any, target_model: str) -> Tuple[str, int, int]:
+            """单次 SDK 调用禁用内建重试，由 Resilience 统一管理。"""
+            record_current_llm_io(input_value=messages, model=target_model)
+            response = await target_client.chat.completions.create(
+                model=target_model, messages=messages, temperature=0.0, **kwargs
+            )
+            content = response.choices[0].message.content or ""
+            if json_mode:
+                json.loads(content)
+            record_current_llm_io(output_value=content)
+            return (
+                content,
+                int(response.usage.prompt_tokens or 0),
+                int(response.usage.completion_tokens or 0),
+            )
+
+        fallback = None
+        if self.fallback_client is not None and self.fallback_model:
+            fallback = lambda: invoke(self.fallback_client, self.fallback_model)
+        result = await resilience_executor.execute(
+            component="llm",
+            operation=operation,
+            call=lambda: invoke(selected_client, selected_model),
+            policy=llm_policy(operation),
+            fallback=fallback,
+            fallback_name=self.fallback_model,
+            circuit_key=f"llm:{selected_model}",
         )
-        content = response.choices[0].message.content or ""
-        record_current_llm_io(output_value=content)
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
-        return content, input_tokens, output_tokens
+        return result.unwrap()
 
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
@@ -350,6 +384,7 @@ class OpenAILLMProvider(BaseLLMProvider):
             max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
             model=self.analyzer_model,
             client=self.analyzer_client,
+            operation="analyze_ticket",
         )
         return _normalize_ticket_analysis(json.loads(content)), in_tok, out_tok
 
@@ -379,6 +414,7 @@ class OpenAILLMProvider(BaseLLMProvider):
             messages,
             json_mode=False,
             max_tokens=settings.LLM_RESOLVER_MAX_TOKENS,
+            operation="generate_resolution",
         )
 
     @trace_operation(name="supportgpt.llm.evaluate_qa", component="llm")
@@ -404,6 +440,7 @@ class OpenAILLMProvider(BaseLLMProvider):
             max_tokens=settings.LLM_QA_MAX_TOKENS,
             model=self.qa_model,
             client=self.qa_client,
+            operation="evaluate_qa",
         )
         return json.loads(content), in_tok, out_tok
 
@@ -422,21 +459,32 @@ class OpenAILLMProvider(BaseLLMProvider):
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-        return await self._call_gpt(messages, json_mode=False)
+        return await self._call_gpt(
+            messages, json_mode=False, operation="run_chat"
+        )
 
 
 class AzureOpenAILLMProvider(BaseLLMProvider):
     """通过 Azure OpenAI 部署实现统一 LLM Provider 接口。"""
 
     def __init__(self):
-        from openai import AsyncAzureOpenAI
+        from openai import AsyncAzureOpenAI, AsyncOpenAI
 
         self.client = AsyncAzureOpenAI(
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
             api_key=settings.AZURE_OPENAI_API_KEY,
             api_version=settings.AZURE_OPENAI_API_VERSION,
+            max_retries=0,
         )
         self.deployment = settings.AZURE_OPENAI_DEPLOYMENT
+        self.fallback_client = None
+        self.fallback_model = settings.LLM_FALLBACK_MODEL_NAME
+        if self.fallback_model:
+            self.fallback_client = AsyncOpenAI(
+                api_key=settings.LLM_FALLBACK_API_KEY,
+                base_url=settings.LLM_FALLBACK_BASE_URL,
+                max_retries=0,
+            )
 
     async def _call_gpt(
         self,
@@ -444,6 +492,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         json_mode: bool = False,
         max_tokens: int | None = None,
         model: str | None = None,
+        operation: str = "chat",
     ) -> Tuple[str, int, int]:
         kwargs = {}
         if json_mode:
@@ -452,15 +501,36 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             kwargs["max_tokens"] = max_tokens
 
         selected_model = model or self.deployment
-        record_current_llm_io(input_value=messages, model=selected_model)
-        response = await self.client.chat.completions.create(
-            model=selected_model, messages=messages, temperature=0.0, **kwargs
+
+        async def invoke(target_client: Any, target_model: str) -> Tuple[str, int, int]:
+            """将 Azure 与备用兼容服务收敛到同一故障策略。"""
+            record_current_llm_io(input_value=messages, model=target_model)
+            response = await target_client.chat.completions.create(
+                model=target_model, messages=messages, temperature=0.0, **kwargs
+            )
+            content = response.choices[0].message.content or ""
+            if json_mode:
+                json.loads(content)
+            record_current_llm_io(output_value=content)
+            return (
+                content,
+                int(response.usage.prompt_tokens or 0),
+                int(response.usage.completion_tokens or 0),
+            )
+
+        fallback = None
+        if self.fallback_client is not None and self.fallback_model:
+            fallback = lambda: invoke(self.fallback_client, self.fallback_model)
+        result = await resilience_executor.execute(
+            component="llm",
+            operation=operation,
+            call=lambda: invoke(self.client, selected_model),
+            policy=llm_policy(operation),
+            fallback=fallback,
+            fallback_name=self.fallback_model,
+            circuit_key=f"llm:{selected_model}",
         )
-        content = response.choices[0].message.content or ""
-        record_current_llm_io(output_value=content)
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
-        return content, input_tokens, output_tokens
+        return result.unwrap()
 
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
@@ -477,6 +547,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             json_mode=True,
             max_tokens=settings.LLM_ANALYZER_MAX_TOKENS,
             model=settings.LLM_ANALYZER_MODEL_NAME or self.deployment,
+            operation="analyze_ticket",
         )
         return _normalize_ticket_analysis(json.loads(content)), in_tok, out_tok
 
@@ -506,6 +577,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             messages,
             json_mode=False,
             max_tokens=settings.LLM_RESOLVER_MAX_TOKENS,
+            operation="generate_resolution",
         )
 
     @trace_operation(name="supportgpt.llm.evaluate_qa", component="llm")
@@ -530,6 +602,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             json_mode=True,
             max_tokens=settings.LLM_QA_MAX_TOKENS,
             model=settings.LLM_QA_MODEL_NAME or self.deployment,
+            operation="evaluate_qa",
         )
         return json.loads(content), in_tok, out_tok
 
@@ -548,7 +621,9 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-        return await self._call_gpt(messages, json_mode=False)
+        return await self._call_gpt(
+            messages, json_mode=False, operation="run_chat"
+        )
 
 
 # Provider factory

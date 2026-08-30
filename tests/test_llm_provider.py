@@ -33,7 +33,9 @@ def test_openai_compatible_provider_uses_default_sdk_url(monkeypatch):
     with patch("openai.AsyncOpenAI", return_value=client) as client_factory:
         provider = OpenAILLMProvider()
 
-    client_factory.assert_called_once_with(api_key="test-key", base_url=None)
+    client_factory.assert_called_once_with(
+        api_key="test-key", base_url=None, max_retries=0
+    )
     assert provider.client is client
     assert provider.model == "chat-model"
 
@@ -202,6 +204,7 @@ async def test_analyzer_and_qa_use_separate_fast_provider(monkeypatch):
     assert factory.call_args_list[1].kwargs == {
         "api_key": "fast-key",
         "base_url": "https://fast.example/v1",
+        "max_retries": 0,
     }
     fast_models = [
         call.kwargs["model"] for call in fast_client.chat.completions.create.await_args_list
@@ -214,3 +217,45 @@ async def test_analyzer_and_qa_use_separate_fast_provider(monkeypatch):
         "messages"
     ][1]["content"]
     assert "billing_dispute|outage_report|order_cancellation" in analyzer_prompt
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_uses_compatible_fallback_model(monkeypatch):
+    monkeypatch.setattr("src.llm.provider.settings.LLM_API_KEY", "main-key")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_MODEL_NAME", "main-model")
+    monkeypatch.setattr("src.llm.provider.settings.LLM_BASE_URL", "https://main/v1")
+    monkeypatch.setattr(
+        "src.llm.provider.settings.LLM_FALLBACK_API_KEY", "backup-key"
+    )
+    monkeypatch.setattr(
+        "src.llm.provider.settings.LLM_FALLBACK_MODEL_NAME", "backup-model"
+    )
+    monkeypatch.setattr(
+        "src.llm.provider.settings.LLM_FALLBACK_BASE_URL", "https://backup/v1"
+    )
+    monkeypatch.setattr("src.llm.provider.settings.RESILIENCE_LLM_MAX_RETRIES", 0)
+
+    main_client = MagicMock()
+    main_client.chat.completions.create = AsyncMock(
+        side_effect=ConnectionError("primary unavailable")
+    )
+    completion = MagicMock()
+    completion.choices = [MagicMock(message=MagicMock(content="backup reply"))]
+    completion.usage = MagicMock(prompt_tokens=8, completion_tokens=2)
+    backup_client = MagicMock()
+    backup_client.chat.completions.create = AsyncMock(return_value=completion)
+
+    with patch(
+        "openai.AsyncOpenAI", side_effect=[main_client, backup_client]
+    ) as factory:
+        provider = OpenAILLMProvider()
+        response, input_tokens, output_tokens = await provider.run_chat(
+            [{"role": "user", "content": "hello"}], ""
+        )
+
+    assert factory.call_count == 2
+    assert response == "backup reply"
+    assert (input_tokens, output_tokens) == (8, 2)
+    assert backup_client.chat.completions.create.await_args.kwargs["model"] == (
+        "backup-model"
+    )

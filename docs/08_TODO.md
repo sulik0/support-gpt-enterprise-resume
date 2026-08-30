@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-08-30。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-08-31。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -31,6 +31,7 @@
 - [x] 建立 PR Agent Quality Gate：固定 100 条 Dataset 使用 Mock Provider 完整回放 Workflow，校验 Dataset Hash、六项行为指标与新增失败 Case。
 - [x] 建立真实 LLM Release Quality Gate：显式付费确认、调用预算、行为/延迟/Token/LLM Calls 阈值与 Actions Artifact。
 - [x] 建立门禁后 CD：仅对通过 Release Gate 的同一 Git SHA 构建镜像，发布 GHCR 不可变 SHA Tag 并生成 Provenance Attestation。
+- [x] 完成 Resilience V1：LLM/RAG/Tool 统一故障分类、超时、有界 Retry、进程内 Circuit Breaker、Fallback、AgentState/Risk/OTel 联动与高风险禁重试。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -44,6 +45,7 @@
 - [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。
+- [ ] 建设 Resilience V2：分布式 Circuit Breaker、故障注入/混沌测试、写 Tool 幂等键与结果对账，并评估 Queue / DLQ。
 
 ## P2
 
@@ -62,4 +64,5 @@
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。
 - [ ] Qwen3Guard 默认未启用且尚无本项目真实运行指标，未知语义变体与误报率仍需通过持续红队样本验证。
 - [ ] Risk Engine 阈值尚未基于真实客服运营数据校准，当前采用保守的 high / critical 转人工策略。
+- [ ] Circuit Breaker 当前只在单进程内生效；`asyncio.to_thread` 超时不能终止已运行的底层线程，真实写 Tool 上线前必须补幂等和对账。
 - [ ] 用户咨询页当前使用演示客户选择器；生产接入前必须绑定真实用户身份与工单归属，并增加限流和异步处理完成通知。

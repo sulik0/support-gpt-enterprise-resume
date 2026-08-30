@@ -16,6 +16,9 @@ from src.observability.tracing import (
     set_span_attributes,
 )
 from src.observability.metrics import TOOL_CALLS_TOTAL, TOOL_CALL_DURATION_SECONDS
+from src.resilience.executor import resilience_executor
+from src.resilience.models import OperationType
+from src.resilience.policies import tool_policy
 
 
 ROLE_RANK = {
@@ -54,6 +57,7 @@ class ToolDefinition:
     handler: Callable[..., Any]
     risk_level: str = "low"
     allowed_intents: Optional[frozenset[IntentType]] = None
+    operation_type: OperationType = OperationType.READ
 
 
 class ToolRegistry:
@@ -80,6 +84,7 @@ class ToolRegistry:
                 "timeout_seconds": tool.timeout_seconds,
                 "mocked": tool.mocked,
                 "risk_level": tool.risk_level,
+                "operation_type": tool.operation_type.value,
                 "allowed_intents": (
                     sorted(str(intent) for intent in tool.allowed_intents)
                     if tool.allowed_intents is not None
@@ -207,11 +212,21 @@ class ToolRegistry:
                 error=str(exc),
             )
 
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(definition.handler, **args.model_dump()),
-                timeout=definition.timeout_seconds,
-            )
+        resilient_result = await resilience_executor.execute(
+            component="tool",
+            operation=name,
+            call=lambda: asyncio.to_thread(
+                definition.handler, **args.model_dump()
+            ),
+            policy=tool_policy(
+                timeout_seconds=definition.timeout_seconds,
+                operation_type=definition.operation_type,
+                high_risk=definition.risk_level == "high",
+            ),
+            circuit_key=f"tool:{name}",
+        )
+        event = resilient_result.event
+        if resilient_result.success:
             return self._record_call(
                 name=name,
                 role=role,
@@ -220,30 +235,25 @@ class ToolRegistry:
                 status="success",
                 started=started,
                 mocked=definition.mocked,
-                result=result,
+                result=resilient_result.value,
+                attempts=event.attempts,
+                degradation_level=event.degradation_level.value,
             )
-        except TimeoutError:
-            return self._record_call(
-                name=name,
-                role=role,
-                ticket_id=ticket_id,
-                allowed=True,
-                status="timeout",
-                started=started,
-                mocked=definition.mocked,
-                error=f"Tool '{name}' timed out after {definition.timeout_seconds}s.",
-            )
-        except Exception as exc:
-            return self._record_call(
-                name=name,
-                role=role,
-                ticket_id=ticket_id,
-                allowed=True,
-                status="error",
-                started=started,
-                mocked=definition.mocked,
-                error=str(exc),
-            )
+        error_type = event.error_type.value if event.error_type else "unknown"
+        status = "timeout" if error_type == "timeout" else event.status
+        return self._record_call(
+            name=name,
+            role=role,
+            ticket_id=ticket_id,
+            allowed=True,
+            status=status,
+            started=started,
+            mocked=definition.mocked,
+            error=f"Tool dependency failed ({error_type}).",
+            attempts=event.attempts,
+            error_type=error_type,
+            degradation_level=event.degradation_level.value,
+        )
 
     def _is_allowed(self, role: str, min_role: str) -> bool:
         return ROLE_RANK.get(role, 0) >= ROLE_RANK.get(min_role, 999)
@@ -285,6 +295,9 @@ class ToolRegistry:
         mocked: bool,
         result: Any = None,
         error: Optional[str] = None,
+        attempts: int = 0,
+        error_type: Optional[str] = None,
+        degradation_level: str = "none",
     ) -> Dict[str, Any]:
         record = {
             "tool_name": name,
@@ -295,6 +308,9 @@ class ToolRegistry:
             "latency_ms": round((time.time() - started) * 1000, 2),
             "mocked": mocked,
             "error": error,
+            "attempts": attempts,
+            "error_type": error_type,
+            "degradation_level": degradation_level,
         }
         self._audit_log.append(record)
         try:

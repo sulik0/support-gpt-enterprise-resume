@@ -18,6 +18,7 @@ from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
     AGENT_NODE_EXECUTIONS_TOTAL,
     AGENT_REQUESTS_TOTAL,
+    DEGRADED_AGENT_REQUESTS_TOTAL,
     LLM_COST_TOTAL,
 )
 from src.observability.tracing import (
@@ -31,6 +32,8 @@ from src.observability.tracing import (
     set_span_attributes,
 )
 from src.risk.engine import risk_engine
+from src.resilience.context import begin_resilience_scope, finish_resilience_scope
+from src.resilience.models import DEGRADATION_RANK, DependencyEvent
 
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
@@ -87,6 +90,10 @@ class AgentState(TypedDict):
     cost_usd: float
     latency_seconds: float
     approval_required: bool
+    degradation_level: str
+    degradation_reasons: List[str]
+    dependency_events: List[Dict[str, Any]]
+    fallbacks_used: List[str]
     workflow_path: List[str]
     errors: List[str]
 
@@ -99,16 +106,24 @@ async def _run_node(
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     status = "success"
+    scope_token = begin_resilience_scope()
+    scope_finished = False
+    events: list[DependencyEvent] = []
     try:
         result = await handler(state)
+        events = finish_resilience_scope(scope_token)
+        scope_finished = True
         result = {
             **result,
             "workflow_path": [*state.get("workflow_path", []), node],
         }
+        result = _apply_resilience_events(result, events)
         if len(result.get("errors", [])) > len(state.get("errors", [])):
             status = "error"
         return result
     except BaseException:
+        if not scope_finished:
+            finish_resilience_scope(scope_token)
         status = "error"
         raise
     finally:
@@ -119,6 +134,39 @@ async def _run_node(
             )
         except Exception:
             logger.debug("Unable to record metrics for Agent node %s", node)
+
+
+def _apply_resilience_events(
+    state: Dict[str, Any], events: list[DependencyEvent]
+) -> Dict[str, Any]:
+    """将 Node 内的 Retry/Fallback/失败事件合并到 AgentState。"""
+    if not events:
+        return state
+    serialized = [event.as_dict() for event in events]
+    existing_level = str(state.get("degradation_level", "none"))
+    degradation_level = max(
+        [existing_level, *(item.degradation_level.value for item in events)],
+        key=lambda item: DEGRADATION_RANK.get(item, 0),
+    )
+    reasons = [
+        f"{event.component}.{event.operation}:{event.status}"
+        for event in events
+        if event.degradation_level.value != "none"
+    ]
+    fallbacks = [event.fallback_used for event in events if event.fallback_used]
+    return {
+        **state,
+        "degradation_level": degradation_level,
+        "degradation_reasons": _unique_values(
+            state.get("degradation_reasons", []), reasons
+        ),
+        "dependency_events": _unique_values(
+            state.get("dependency_events", []), serialized
+        ),
+        "fallbacks_used": _unique_values(
+            state.get("fallbacks_used", []), fallbacks
+        ),
+    }
 
 
 async def analyze_node(state: AgentState) -> Dict[str, Any]:
@@ -261,6 +309,29 @@ def _merge_context_results(
             tool_result.get("risk_block_automation")
             or retrieval_result.get("risk_block_automation")
         ),
+        "degradation_level": max(
+            [
+                str(state.get("degradation_level", "none")),
+                str(tool_result.get("degradation_level", "none")),
+                str(retrieval_result.get("degradation_level", "none")),
+            ],
+            key=lambda item: DEGRADATION_RANK.get(item, 0),
+        ),
+        "degradation_reasons": _unique_values(
+            state.get("degradation_reasons", []),
+            tool_result.get("degradation_reasons", []),
+            retrieval_result.get("degradation_reasons", []),
+        ),
+        "dependency_events": _unique_values(
+            state.get("dependency_events", []),
+            tool_result.get("dependency_events", []),
+            retrieval_result.get("dependency_events", []),
+        ),
+        "fallbacks_used": _unique_values(
+            state.get("fallbacks_used", []),
+            tool_result.get("fallbacks_used", []),
+            retrieval_result.get("fallbacks_used", []),
+        ),
         "tokens_input": (
             state.get("tokens_input", 0)
             + max(
@@ -377,6 +448,9 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "guardrail.semantic_label": state.get("semantic_guard_label", "not_run"),
         "guardrail.semantic_degraded": state.get("semantic_guard_degraded", False),
         "guardrail.semantic_check_count": len(state.get("semantic_guard_checks", [])),
+        "resilience.degradation_level": state.get("degradation_level", "none"),
+        "resilience.event_count": len(state.get("dependency_events", [])),
+        "resilience.fallback_count": len(state.get("fallbacks_used", [])),
     }
 
 
@@ -502,6 +576,10 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "cost_usd": 0.0,
         "latency_seconds": 0.0,
         "approval_required": False,
+        "degradation_level": "none",
+        "degradation_reasons": [],
+        "dependency_events": [],
+        "fallbacks_used": [],
         "workflow_path": [],
         "errors": [],
     }
@@ -570,6 +648,11 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         "risk.block_automation": final_output.get("risk_block_automation", False),
         "security.threat_detected": final_output.get("security_threat_detected", False),
         "security.source": final_output.get("security_source"),
+        "resilience.degradation_level": final_output.get(
+            "degradation_level", "none"
+        ),
+        "resilience.event_count": len(final_output.get("dependency_events", [])),
+        "resilience.fallback_count": len(final_output.get("fallbacks_used", [])),
     }
 
     # Determine if human approval is required
@@ -588,6 +671,11 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     # Record OpenTelemetry usage metrics.
     try:
         LLM_COST_TOTAL.add(cost, {"model": model_name})
+        if final_output.get("degradation_level", "none") != "none":
+            DEGRADED_AGENT_REQUESTS_TOTAL.add(
+                1,
+                {"level": final_output.get("degradation_level", "unknown")},
+            )
     except Exception:
         logger.debug("Unable to record LLM usage metrics")
 

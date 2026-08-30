@@ -416,7 +416,7 @@ Redis 是可选组件，不是启动前提。
 
 ## 12. Error Recovery
 
-当前恢复策略以“安全降级、明确错误、人工接管”为主，而不是无限自动重试。
+当前由 `src/resilience/` 统一实现超时、故障分类、有界 Retry、进程内 Circuit Breaker、Fallback 与降级事件。核心原则仍是“有界恢复、安全降级、人工接管”，不做无限重试。
 
 | 故障类型 | 当前处理 | 设计原因 | 未采用方案与权衡 |
 |---|---|---|---|
@@ -424,14 +424,14 @@ Redis 是可选组件，不是启动前提。
 | Tool / RAG 间接 Prompt Injection | 清空受污染上下文，从 Tooling 或 Retriever 直接进入 Escalation | 外部文本只能被视为数据，不能成为生成指令 | 完全信任 Adapter 或知识库会使间接注入穿过输入防线 |
 | Qwen3Guard 不可用或输出无法解析 | 输入边界保留确定性规则并标记降级转人工；Tool / RAG 边界隔离未扫描上下文 | 语义安全服务失败不得阻断主请求，也不得默认信任外部内容 | 对所有请求 fail-closed 会导致服务大面积不可用 |
 | Redis 不可用 | 自动读取 SQL 历史，保存 Redis 失败不阻断主流程 | 缓存不能成为业务单点 | 强制 Redis 高可用成本不适合本地 Demo |
-| RAG 类别无结果 | 保留知识库版本并移除类别限制，再检索一次 | 避免分类误差造成零召回 | 多次广泛重试会增加延迟和跨域知识风险 |
-| 工具超时、权限或参数错误 | 记录审计状态；Tooling 失败时返回空上下文和错误信息，流程可继续 | 读工具失败不应直接导致整个工单不可处理 | 当前没有自动 Retry、Circuit Breaker 或持久化 Dead Letter Queue |
-| Resolver 错误 | 返回安全的升级提示文本 | 避免把异常直接暴露给客户 | 当前未做模型级重试，防止重复成本和重复副作用 |
+| RAG 单路失败或类别无结果 | 向量路与词法路独立恢复，单路失败仍可用另一路候选；类别零召回时保留版本并放宽类别一次 | 避免 Embedding / Vector DB 成为单点，同时不破坏版本隔离 | 未引入外部搜索集群或持久化召回缓存 |
+| 工具超时或瞬时故障 | 低风险读 Tool 最多有界重试；高风险或非幂等写操作禁止自动重试；结果记录审计和降级状态 | 平衡瞬时恢复与重复副作用风险 | 超时线程不可强制终止，真实写工具仍需幂等键和结果对账 |
+| LLM 超时、限流或 5xx | 禁用 SDK 隐式重试，统一有界 Retry；可选切换 `LLM_FALLBACK_*` 备用模型；仍失败时输出同语言安全提示并转人工 | 重试次数、成本和故障分类可观测 | 备用模型需独立配置，不保证不同模型回复完全一致 |
 | QA 错误 | 将回复标记为低分与潜在幻觉 | 失败时采取保守策略，推动审批 | 自动放行会放大未知风险 |
 | 非法状态流转 | 返回 `409 Conflict` 并保持原状态 | 防止审批前关闭等业务错误 | 直接覆盖状态简单但不可审计、不可控 |
 | 数据库异常 | 请求事务回滚并抛出错误 | 保证单次事务一致性 | 当前无 Outbox、Saga 或跨系统补偿事务 |
 
-**Retry 边界**：当前唯一显式业务 Retry 是 RAG 类别过滤失败后的单次回退查询。工具调用、LLM 调用和审批动作均没有通用自动重试机制。未来如增加 Retry，必须配置最大次数、退避、幂等键、可观测记录和高风险操作禁重试规则。
+**Retry 边界**：仅 `timeout / rate_limit / connection / server_error` 可自动重试，默认最多重试一次并指数退避。Auth、Validation、Malformed Response 不重试。高风险 Tool 和非幂等写操作一律单次；审批、数据库事务与消息处理尚未纳入该模块。Circuit Breaker 当前是单进程内状态，不是分布式协调或持久化队列。
 
 ## 13. Risk Engine
 
@@ -440,7 +440,7 @@ Risk Engine 位于 `src/risk/engine.py`，是独立于 Prompt、业务 LLM Provi
 | 维度 | 设计 |
 |---|---|
 | 职责 | 统一综合规则安全、语义安全、业务、分类置信度、QA、幻觉和 Workflow 错误，决定风险等级与处置建议 |
-| 输入 | `security_risk_score`、`semantic_guard_label`、`semantic_guard_degraded`、优先级、情绪、意图、`analyzer_confidence`、`qa_score`、幻觉标记、错误列表 |
+| 输入 | `security_risk_score`、`semantic_guard_label`、`semantic_guard_degraded`、优先级、情绪、意图、`analyzer_confidence`、`qa_score`、幻觉标记、`degradation_level`、错误列表 |
 | 输出 | `risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation` |
 | 默认阈值 | `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；Analyzer 低置信度阈值 `0.65`，QA 阈值 `0.8` |
 | 设计原因 | 避免 Analyzer、QA、Escalation 分散维护相互矛盾的魔法数字，也避免让 LLM 自行判定是否放行 |
@@ -549,7 +549,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | 检索 | ChromaDB Hybrid RAG | 兼顾语义与精确词，适合 Demo | 纯向量、生产搜索集群 |
 | 记忆 | SQL 持久化 + 可选 Redis | Redis 故障不阻断流程 | Redis 强依赖、向量长期记忆 |
 | 质量保障 | QA + Response Filter + HITL | 高风险回答优先保守处理 | 自动 Reflection 循环、全自动闭环 |
-| 恢复 | 受限回退与人工接管 | 避免无限 Retry 和重复副作用 | 无边界自动重试 |
+| 恢复 | 统一故障分类 + 有界 Retry + 进程内 Circuit Breaker + Fallback + HITL | 恢复瞬时故障且避免重复副作用 | 无分布式 Breaker、Queue / DLQ 与写操作对账 |
 | 可观测 | OpenTelemetry + OTLP Collector | 统一采集 Trace / Metrics，转发 LangSmith 与 Prometheus | 应用直连多个后端会形成双轨并增加数据治理成本 |
 | 发布 | PR Mock Gate + 真实 LLM Release Gate + GHCR CD | 兼顾每次变更的确定性保护与发布前真实模型验证 | 不在每个 PR 调用付费模型，当前 CD 只发布镜像而不部署生产集群 |
 
