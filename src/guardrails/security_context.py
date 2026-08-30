@@ -1,0 +1,28 @@
+"""识别安全内容的引用、转述和知识性讨论语境。"""
+
+import re
+import unicodedata
+
+
+_REFERENTIAL_CONTEXT = re.compile(
+    r"(?:^|description:\s*|[.!?]。！？]\s*)"
+    r"(?:what is|what does|(?:please\s+)?explain|describe|compare|difference between|"
+    r"i am reporting|i(?:'m| am) quoting|another user (?:said|wrote)|"
+    r"quoted text|for training|for awareness|security example|"
+    r"什么是|请解释|请说明|区别|我在举报|我在引用|有人说|有人写道|"
+    r"引用内容|安全示例)"
+)
+_EXECUTE_REFERENCED_PAYLOAD = re.compile(
+    r"(?:and|then|now|please).{0,24}"
+    r"(?:follow|execute|obey|perform|do it|apply it|comply)|"
+    r"(?:然后|现在|请).{0,16}(?:执行|遵循|照做|应用|服从)"
+)
+
+
+def is_referential_security_context(text: str) -> bool:
+    """仅当文本在讨论风险语句且没有要求执行它时返回 True。"""
+    normalized = unicodedata.normalize("NFKC", text or "").lower()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return bool(_REFERENTIAL_CONTEXT.search(normalized)) and not bool(
+        _EXECUTE_REFERENCED_PAYLOAD.search(normalized)
+    )

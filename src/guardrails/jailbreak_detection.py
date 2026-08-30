@@ -1,4 +1,5 @@
 from src.config import settings
+from src.guardrails.security_context import is_referential_security_context
 from src.observability.metrics import GUARDRAIL_VIOLATIONS_TOTAL
 
 JAILBREAK_SIGNATURES = [
@@ -22,6 +23,9 @@ def detect_jailbreak(text: str) -> bool:
     Returns True if a jailbreak attempt is detected.
     """
     if not settings.JAILBREAK_DETECTION_ENABLED or not text:
+        return False
+
+    if is_referential_security_context(text):
         return False
 
     text_lower = text.lower()

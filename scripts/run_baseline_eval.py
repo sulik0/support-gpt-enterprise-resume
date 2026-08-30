@@ -108,6 +108,11 @@ async def main() -> None:
     print(f"Markdown snapshot: {paths['snapshot_markdown']}")
     print(f"Error Analysis: {paths['error_analysis']}")
     print(f"Error Analysis snapshot: {paths['error_analysis_snapshot']}")
+    if paths.get("diff"):
+        print(f"Diff Report: {paths['diff']}")
+        print(f"Diff JSON: {paths['diff_json']}")
+        print(f"Diff snapshot: {paths['diff_snapshot']}")
+        print(f"Compared with: {paths['diff_previous_snapshot_json']}")
 
 
 if __name__ == "__main__":

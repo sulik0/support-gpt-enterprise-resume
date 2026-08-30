@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
+from src.models.intents import IntentType, normalize_intent
 from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
@@ -41,7 +42,7 @@ class RefundEligibilityInput(BaseModel):
 
 @dataclass(frozen=True)
 class ToolDefinition:
-    """描述 Tool 的协议、权限、超时和执行入口。"""
+    """描述 Tool 的协议、权限、风险、适用意图和执行入口。"""
 
     name: str
     description: str
@@ -51,6 +52,8 @@ class ToolDefinition:
     timeout_seconds: float
     mocked: bool
     handler: Callable[..., Any]
+    risk_level: str = "low"
+    allowed_intents: Optional[frozenset[IntentType]] = None
 
 
 class ToolRegistry:
@@ -76,6 +79,12 @@ class ToolRegistry:
                 "min_role": tool.min_role,
                 "timeout_seconds": tool.timeout_seconds,
                 "mocked": tool.mocked,
+                "risk_level": tool.risk_level,
+                "allowed_intents": (
+                    sorted(str(intent) for intent in tool.allowed_intents)
+                    if tool.allowed_intents is not None
+                    else None
+                ),
             }
             for tool in self._tools.values()
         ]
@@ -89,6 +98,9 @@ class ToolRegistry:
         payload: Dict[str, Any],
         role: str = "agent",
         ticket_id: Optional[int] = None,
+        intent: Any = None,
+        request_risk_level: Optional[str] = None,
+        forbidden_tools: Optional[set[str] | frozenset[str]] = None,
     ) -> Dict[str, Any]:
         with observed_span(
             tracer,
@@ -98,11 +110,22 @@ class ToolRegistry:
                 "gen_ai.tool.name": name,
                 "tool.name": name,
                 "tool.role": role,
+                "tool.policy.intent": str(intent) if intent is not None else None,
+                "tool.policy.request_risk_level": request_risk_level,
+                "tool.policy.forbidden": name in (forbidden_tools or set()),
                 "ticket.id": ticket_id,
                 "tool.payload_keys": sorted(payload.keys()),
             },
         ) as span:
-            result = await self._call_tool_impl(name, payload, role, ticket_id)
+            result = await self._call_tool_impl(
+                name,
+                payload,
+                role,
+                ticket_id,
+                intent=intent,
+                request_risk_level=request_risk_level,
+                forbidden_tools=forbidden_tools or frozenset(),
+            )
             set_span_attributes(
                 span,
                 {
@@ -121,6 +144,10 @@ class ToolRegistry:
         payload: Dict[str, Any],
         role: str,
         ticket_id: Optional[int],
+        *,
+        intent: Any,
+        request_risk_level: Optional[str],
+        forbidden_tools: set[str] | frozenset[str],
     ) -> Dict[str, Any]:
         started = time.time()
         definition = self._tools.get(name)
@@ -146,6 +173,24 @@ class ToolRegistry:
                 started=started,
                 mocked=definition.mocked,
                 error=f"Role '{role}' cannot call tool '{name}'. Required role: {definition.min_role}.",
+            )
+
+        policy_error = self._policy_error(
+            definition,
+            intent=intent,
+            request_risk_level=request_risk_level,
+            forbidden_tools=forbidden_tools,
+        )
+        if policy_error:
+            return self._record_call(
+                name=name,
+                role=role,
+                ticket_id=ticket_id,
+                allowed=False,
+                status="policy_denied",
+                started=started,
+                mocked=definition.mocked,
+                error=policy_error,
             )
 
         try:
@@ -203,6 +248,32 @@ class ToolRegistry:
     def _is_allowed(self, role: str, min_role: str) -> bool:
         return ROLE_RANK.get(role, 0) >= ROLE_RANK.get(min_role, 999)
 
+    @staticmethod
+    def _policy_error(
+        definition: ToolDefinition,
+        *,
+        intent: Any,
+        request_risk_level: Optional[str],
+        forbidden_tools: set[str] | frozenset[str],
+    ) -> Optional[str]:
+        """在 Handler 之前独立校验 forbidden tool、意图边界和高风险语义。"""
+        if definition.name in forbidden_tools:
+            return f"Tool '{definition.name}' is forbidden by the current request policy."
+        if intent is not None and definition.allowed_intents is not None:
+            normalized_intent = normalize_intent(intent)
+            if normalized_intent not in definition.allowed_intents:
+                return (
+                    f"Intent '{normalized_intent}' cannot call tool "
+                    f"'{definition.name}'."
+                )
+        if definition.risk_level == "high":
+            if str(request_risk_level or "").lower() not in {"high", "critical"}:
+                return (
+                    f"High-risk tool '{definition.name}' requires a high-risk "
+                    "business request and human authorization."
+                )
+        return None
+
     def _record_call(
         self,
         name: str,
@@ -254,6 +325,7 @@ tool_registry.register(
         timeout_seconds=1.0,
         mocked=True,
         handler=crm_tool.get_customer_profile,
+        allowed_intents=frozenset(IntentType),
     )
 )
 
@@ -269,6 +341,13 @@ tool_registry.register(
         timeout_seconds=1.0,
         mocked=True,
         handler=order_mgmt_tool.get_order_history,
+        allowed_intents=frozenset(
+            {
+                IntentType.BILLING_DISPUTE,
+                IntentType.ORDER_CANCELLATION,
+                IntentType.ORDER_STATUS,
+            }
+        ),
     )
 )
 
@@ -284,6 +363,7 @@ tool_registry.register(
         timeout_seconds=1.0,
         mocked=True,
         handler=ticketing_tool.get_past_tickets,
+        allowed_intents=frozenset(IntentType),
     )
 )
 
@@ -324,5 +404,7 @@ tool_registry.register(
         timeout_seconds=1.0,
         mocked=True,
         handler=mock_refund_eligibility_check,
+        risk_level="high",
+        allowed_intents=frozenset({IntentType.BILLING_DISPUTE}),
     )
 )

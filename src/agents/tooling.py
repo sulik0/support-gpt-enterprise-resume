@@ -41,10 +41,19 @@ class ToolingAgent:
         )
 
         try:
-            should_fetch_orders = department in {"billing", "shipping"} or intent in {
+            # Tool Routing 仅依赖归一化意图，不让错误 department 继续传播。
+            should_fetch_orders = intent in {
                 IntentType.BILLING_DISPUTE,
                 IntentType.ORDER_CANCELLATION,
                 IntentType.ORDER_STATUS,
+            }
+            automated_forbidden_tools = {"orders.check_refund_eligibility"}
+            if not should_fetch_orders:
+                automated_forbidden_tools.add("orders.get_order_history")
+            policy_kwargs = {
+                "intent": intent,
+                "request_risk_level": state.get("risk_level", "low"),
+                "forbidden_tools": automated_forbidden_tools,
             }
             pending_calls = [
                 tool_registry.call_tool(
@@ -52,12 +61,14 @@ class ToolingAgent:
                     {"customer_id": customer_id},
                     role=operator_role,
                     ticket_id=ticket_id,
+                    **policy_kwargs,
                 ),
                 tool_registry.call_tool(
                     "tickets.get_past_tickets",
                     {"customer_id": customer_id},
                     role=operator_role,
                     ticket_id=ticket_id,
+                    **policy_kwargs,
                 ),
             ]
             if should_fetch_orders:
@@ -67,6 +78,7 @@ class ToolingAgent:
                         {"customer_id": customer_id},
                         role=operator_role,
                         ticket_id=ticket_id,
+                        **policy_kwargs,
                     )
                 )
             tool_calls = list(await asyncio.gather(*pending_calls))
@@ -155,6 +167,8 @@ class ToolingAgent:
                     "operator_role": operator_role,
                     "schema_validated": True,
                     "permission_checked": True,
+                    "risk_checked": True,
+                    "forbidden_tool_checked": True,
                     "audit_enabled": True,
                 },
                 "mock_note": "CRM, order, and ticketing tools are local mock adapters behind the tool registry.",

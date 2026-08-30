@@ -105,6 +105,26 @@ async def test_analyzer_ambiguous_intent_falls_back_to_llm(monkeypatch):
     assert result["intent"] == "information_request"
     assert result["analyzer_confidence"] == 0.5
     assert result["tokens_input"] == 80
+    assert result["department"] == "general"
+
+
+@pytest.mark.parametrize(
+    ("query", "intent", "department"),
+    [
+        ("Where can I update my account preferences?", "information_request", "general"),
+        ("What fee applies if I cancel an order before fulfillment?", "information_request", "general"),
+        ("What is the hardware warranty period?", "information_request", "general"),
+        ("Please cancel my order ORD-7001.", "order_cancellation", "shipping"),
+        ("The API returns 504 errors. What should I verify?", "outage_report", "technical"),
+        ("What invoice total is stored for ORD-7001?", "billing_dispute", "billing"),
+    ],
+)
+def test_analyzer_rule_taxonomy_boundaries(query, intent, department):
+    result = ticket_analyzer_agent._match_rule(query)
+
+    assert result is not None
+    assert result["intent"] == intent
+    assert result["department"] == department
 
 
 @pytest.mark.asyncio
@@ -434,6 +454,79 @@ async def test_qa_without_context_skips_llm(monkeypatch):
     assert result["qa_strategy"] == "rule"
     assert result["qa_score"] == 0.45
     assert result["tokens_input"] == 0
+
+
+@pytest.mark.asyncio
+async def test_qa_accepts_tool_grounded_read_response_without_llm(monkeypatch):
+    async def unexpected_qa_call(**kwargs):
+        raise AssertionError("grounded Tool response should not call LLM Judge")
+
+    monkeypatch.setattr(
+        "src.agents.quality_assurance.llm_provider.evaluate_qa",
+        unexpected_qa_call,
+    )
+    result = await quality_assurance_agent.verify(
+        {
+            "description": "What customer tier is on my profile?",
+            "suggested_response": "Your customer tier is VIP.",
+            "context_citations": [],
+            "tool_context": {"customer_profile": {"tier": "VIP"}},
+            "errors": [],
+        }
+    )
+
+    assert result["qa_strategy"] == "rule"
+    assert result["qa_score"] == 0.95
+    assert result["hallucination_detected"] is False
+    assert result["response_grounded"] is True
+    assert result["risk_requires_human"] is False
+
+
+@pytest.mark.asyncio
+async def test_qa_only_escalates_safe_limitation_for_authoritative_business_gap():
+    knowledge = await quality_assurance_agent.verify(
+        {
+            "description": "What is prompt injection?",
+            "suggested_response": "I don't have enough information; human review is needed.",
+            "context_citations": [],
+            "tool_context": {},
+            "errors": [],
+        }
+    )
+    warranty = await quality_assurance_agent.verify(
+        {
+            "description": "What is the hardware warranty period?",
+            "suggested_response": "I cannot determine it; human review is needed.",
+            "context_citations": [],
+            "tool_context": {},
+            "errors": [],
+        }
+    )
+
+    assert knowledge["response_requires_human"] is False
+    assert knowledge["risk_requires_human"] is False
+    assert warranty["response_requires_human"] is True
+    assert warranty["risk_requires_human"] is True
+
+
+@pytest.mark.asyncio
+async def test_tooling_does_not_propagate_stale_department_to_order_tool():
+    result = await tooling_agent.enrich(
+        {
+            "ticket_id": 401,
+            "customer_id": "cust_101",
+            "subject": "Navigation",
+            "description": "Where are account settings?",
+            "department": "shipping",
+            "intent": "information_request",
+            "risk_level": "low",
+            "errors": [],
+        }
+    )
+
+    called = {call["tool_name"] for call in result["tool_calls"]}
+    assert "orders.get_order_history" not in called
+    assert result["tool_context"]["tool_policy"]["risk_checked"] is True
 
 
 @pytest.mark.asyncio

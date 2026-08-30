@@ -108,6 +108,9 @@ class RiskEngine:
             reasons.add("medium_analyzer_confidence")
 
         if stage in {"output", "final"}:
+            if bool(state.get("response_requires_human", False)):
+                score = max(score, 0.82)
+                reasons.add("authoritative_answer_unavailable")
             qa_score = self._bounded_score(state.get("qa_score", 1.0), default=1.0)
             if bool(state.get("hallucination_detected", False)):
                 score = max(score, 0.9)

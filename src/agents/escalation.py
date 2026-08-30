@@ -58,6 +58,9 @@ class EscalationAgent:
         elif sentiment == "negative" and priority == "high":
             escalate = True
             reason = "Negative customer sentiment combined with high priority."
+        elif state.get("response_requires_human", False):
+            escalate = True
+            reason = "Authoritative business guidance is unavailable; human review required."
         elif "qa_score_below_threshold" in assessment.reasons or hallucination_detected:
             escalate = True
             reason = (

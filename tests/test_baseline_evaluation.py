@@ -11,6 +11,7 @@ from src.evaluation.baseline_evaluation import (
     evaluate_baseline_behavior,
     run_baseline_evaluation_v1,
 )
+from src.evaluation.baseline_diff import build_baseline_diff, generate_baseline_diff
 from src.models.intents import IntentType
 from src.observability.tracing import get_tracer, observed_span, trace_operation
 
@@ -19,6 +20,87 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = (
     PROJECT_ROOT / "evaluation" / "baseline" / "supportgpt_baseline_100.json"
 )
+
+
+def _diff_report(run_id, passed_values, *, intent=0.5, latency=2.0, calls=8):
+    """构造只包含 Diff 所需字段的固定报告。"""
+    return {
+        "run_id": run_id,
+        "generated_at": f"2026-08-30T{run_id[-6:]}+00:00",
+        "experiment_config": {
+            "dataset": {"sha256": "d" * 64},
+            "models": {"provider": "test"},
+        },
+        "behavior_summary": {
+            "intent_accuracy": intent,
+            "department_accuracy": 0.7,
+            "required_tool_hit_rate": 0.8,
+            "forbidden_tool_violation_rate": 0.1,
+            "hitl_accuracy": 0.6,
+            "approval_accuracy": 0.6,
+            "case_pass_rate": sum(passed_values) / len(passed_values),
+        },
+        "performance_summary": {
+            "end_to_end_latency_seconds": {
+                "average": latency,
+                "p50": latency - 0.2,
+                "p95": latency + 0.8,
+            },
+            "tokens": {"average_total": 400.0},
+            "llm": {"call_count": calls},
+            "analyzer": {"rule_hit_rate": 0.5},
+        },
+        "cases": [
+            {
+                "id": f"case-{index}",
+                "dataset_case": {"query": f"query-{index}"},
+                "trace_id": str(index) * 32,
+                "behavior_evaluation": {
+                    "passed": passed,
+                    "failures": [] if passed else ["intent mismatch"],
+                },
+            }
+            for index, passed in enumerate(passed_values, start=1)
+        ],
+    }
+
+
+def test_baseline_diff_compares_metrics_and_all_case_transitions(tmp_path):
+    previous = _diff_report("20260830_120000", [False, True, False, True])
+    current = _diff_report(
+        "20260830_130000",
+        [True, False, False, True],
+        intent=0.75,
+        latency=1.5,
+        calls=6,
+    )
+
+    diff = build_baseline_diff(previous, current)
+
+    assert diff["case_transitions"]["FAIL→PASS"]["case_ids"] == ["case-1"]
+    assert diff["case_transitions"]["PASS→FAIL"]["case_ids"] == ["case-2"]
+    assert diff["case_transitions"]["FAIL→FAIL"]["case_ids"] == ["case-3"]
+    assert diff["case_transitions"]["PASS→PASS"]["case_ids"] == ["case-4"]
+    metric = {row["metric"]: row for row in diff["metrics"]}
+    assert metric["Intent Accuracy"]["delta"] == 0.25
+    assert metric["Average Latency"]["delta"] == -0.5
+    assert metric["LLM Calls"]["delta"] == -2.0
+
+    previous_path = tmp_path / "baseline_v1_20260830_120000.json"
+    current_path = tmp_path / "baseline_v1_20260830_130000.json"
+    previous_path.write_text(json.dumps(previous), encoding="utf-8")
+    current_path.write_text(json.dumps(current), encoding="utf-8")
+    paths = generate_baseline_diff(current_path, tmp_path)
+
+    assert paths is not None
+    assert paths["markdown"].is_symlink() is False
+    assert paths["json"].is_symlink() is False
+    assert paths["snapshot_markdown"].name == (
+        "baseline_diff_20260830_120000_to_20260830_130000.md"
+    )
+    markdown = paths["markdown"].read_text(encoding="utf-8")
+    assert "FAIL→PASS" in markdown
+    assert "Analyzer Rule Hit Rate" in markdown
 
 
 def test_v1_behavior_pass_ignores_future_dataset_fields():

@@ -689,7 +689,7 @@ async def recommend_escalation(
     return TicketEscalationResponse(
         ticket_id=ticket.id,
         escalation_recommended=agent_output.get("escalation_recommended", False),
-        escalation_reason=agent_output.get("escalation_reason", "Standard flow"),
+        escalation_reason=agent_output.get("escalation_reason") or "Standard flow",
         suggested_department=agent_output.get("department", "general"),
         sla_hours=agent_output.get("sla_hours", 24.0),
     )

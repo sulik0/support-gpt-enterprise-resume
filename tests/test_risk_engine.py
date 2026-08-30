@@ -59,6 +59,31 @@ def test_risk_engine_blocks_security_threat_and_flags_bad_output():
     assert "hallucination_detected" in bad_output.reasons
 
 
+def test_risk_engine_keeps_safe_information_limitation_low_but_routes_policy_gap():
+    safe = RiskEngine().assess(
+        {
+            "intent": IntentType.INFORMATION_REQUEST,
+            "analyzer_confidence": 0.95,
+            "qa_score": 0.9,
+            "response_requires_human": False,
+        },
+        stage="output",
+    )
+    policy_gap = RiskEngine().assess(
+        {
+            "intent": IntentType.INFORMATION_REQUEST,
+            "analyzer_confidence": 0.95,
+            "qa_score": 0.9,
+            "response_requires_human": True,
+        },
+        stage="output",
+    )
+
+    assert safe.requires_human is False
+    assert policy_gap.requires_human is True
+    assert "authoritative_answer_unavailable" in policy_gap.reasons
+
+
 def test_risk_engine_fuses_qwen3_guard_severity_and_degraded_context():
     controversial = RiskEngine().assess(
         {

@@ -5,6 +5,7 @@ from src.config import settings
 from src.models.intents import (
     DEFAULT_INTENT,
     IntentType,
+    intent_prompt_guide,
     intent_prompt_values,
     normalize_intent,
 )
@@ -23,6 +24,19 @@ CHAT_LANGUAGE_POLICY = (
     "asks for a different response language, use the requested language instead. "
     "Do not preserve a previous response language unless the latest user message asks you to."
 )
+
+
+def _ticket_classifier_prompt(text: str) -> str:
+    """所有真实 Provider 共用同一份 Intent Taxonomy 与输出约束。"""
+    return (
+        "Classify this support ticket by the business meaning below. Distinguish a "
+        "request to perform an operation from a request explaining policy or navigation. "
+        "Payment, invoice and refund questions are billing_dispute. A current API error, "
+        "timeout or outage is outage_report, not information_request. Return only JSON "
+        "with exactly: intent, priority, department, sentiment, confidence_score. "
+        f"intent must be one of {intent_prompt_values()}. Taxonomy:\n"
+        f"{intent_prompt_guide()}\nTicket: {text}"
+    )
 
 
 def _normalize_ticket_analysis(analysis: Dict[str, Any]) -> Dict[str, Any]:
@@ -322,14 +336,7 @@ class OpenAILLMProvider(BaseLLMProvider):
 
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
-        prompt = (
-            "Classify this support ticket. Return only JSON with exactly these fields: "
-            "intent, priority, department, sentiment, confidence_score. "
-            f"intent must be exactly one of: {intent_prompt_values()}; "
-            "priority: low|medium|high|urgent; department: "
-            "billing|technical|shipping|general; sentiment: positive|neutral|negative; "
-            f"confidence_score: 0..1. Ticket: {text}"
-        )
+        prompt = _ticket_classifier_prompt(text)
         messages = [
             {
                 "role": "system",
@@ -457,14 +464,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
 
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
-        prompt = (
-            "Classify this support ticket. Return only JSON with exactly these fields: "
-            "intent, priority, department, sentiment, confidence_score. "
-            f"intent must be exactly one of: {intent_prompt_values()}; "
-            "priority: low|medium|high|urgent; department: "
-            "billing|technical|shipping|general; sentiment: positive|neutral|negative; "
-            f"confidence_score: 0..1. Ticket: {text}"
-        )
+        prompt = _ticket_classifier_prompt(text)
         messages = [
             {
                 "role": "system",

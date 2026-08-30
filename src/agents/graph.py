@@ -76,6 +76,8 @@ class AgentState(TypedDict):
     qa_score: float
     hallucination_detected: bool
     citation_verified: bool
+    response_grounded: bool
+    response_requires_human: bool
     qa_strategy: str
     escalation_recommended: bool
     escalation_reason: Optional[str]
@@ -489,6 +491,8 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "qa_score": 1.0,
         "hallucination_detected": False,
         "citation_verified": False,
+        "response_grounded": False,
+        "response_requires_human": False,
         "qa_strategy": "not_run",
         "escalation_recommended": False,
         "escalation_reason": None,

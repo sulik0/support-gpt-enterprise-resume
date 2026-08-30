@@ -8,6 +8,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from src.config import settings
+from src.guardrails.security_context import is_referential_security_context
 from src.observability.metrics import GUARDRAIL_VIOLATIONS_TOTAL
 
 
@@ -182,6 +183,12 @@ def analyze_prompt_injection(
 
     normalized = normalize_prompt_text(text[:20000])
     score, layers, signals = _scan_candidate(normalized)
+
+    # 引用、举报和知识性讨论不等于要求 Agent 执行其中指令。
+    if signals and is_referential_security_context(normalized):
+        score = min(score, 0.45)
+        layers.add("referential_context")
+        signals.add("non_executable_reference")
 
     # Base64 区分大小写，因此解码必须使用未转小写的原始文本。
     for decoded in _decoded_candidates(text[:20000]):

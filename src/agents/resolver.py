@@ -40,6 +40,8 @@ class ResolutionAgent:
             response_text, in_tok, out_tok = await llm_provider.generate_resolution(
                 subject=subject, description=description, context=combined_context
             )
+            if not response_text.strip():
+                response_text = self._empty_response_fallback(description)
 
             # Update metrics
             state["tokens_input"] = state.get("tokens_input", 0) + in_tok
@@ -91,7 +93,13 @@ class ResolutionAgent:
             "recent_orders": [
                 {
                     key: order.get(key)
-                    for key in ("order_id", "status", "items", "order_date")
+                    for key in (
+                        "order_id",
+                        "status",
+                        "items",
+                        "total_amount",
+                        "order_date",
+                    )
                     if order.get(key) is not None
                 }
                 for order in (tool_context.get("recent_orders") or [])[:2]
@@ -107,6 +115,16 @@ class ResolutionAgent:
         }
         content = json.dumps(compact, default=str, ensure_ascii=False, separators=(",", ":"))
         return content[: settings.LLM_RESOLVER_MAX_TOOL_CHARS]
+
+    @staticmethod
+    def _empty_response_fallback(description: str) -> str:
+        """模型返回空内容时给出安全、可继续的澄清回复。"""
+        if any("\u4e00" <= char <= "\u9fff" for char in description):
+            return "请补充您遇到的具体问题或操作目标，我会继续为您查询。"
+        return (
+            "Please describe the specific support issue or task you need help with, "
+            "and I will continue from there."
+        )
 
 
 resolution_agent = ResolutionAgent()

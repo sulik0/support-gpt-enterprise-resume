@@ -14,6 +14,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 from src.config import settings
 from src.evaluation.baseline_error_analysis import write_baseline_error_analysis
+from src.evaluation.baseline_diff import generate_baseline_diff
 from src.evaluation.offline_rag import (
     EvaluationRecord,
     WorkflowRunner,
@@ -505,6 +506,12 @@ def build_baseline_report(
                         "risk_level": record.workflow_output.get("risk_level"),
                         "risk_score": record.workflow_output.get("risk_score"),
                         "qa_score": record.workflow_output.get("qa_score"),
+                        "response_grounded": record.workflow_output.get(
+                            "response_grounded", False
+                        ),
+                        "response_requires_human": record.workflow_output.get(
+                            "response_requires_human", False
+                        ),
                         "suggested_response": record.response,
                         "context_citations": record.workflow_output.get(
                             "context_citations", []
@@ -605,11 +612,25 @@ async def run_baseline_evaluation_v1(
     )
     paths = write_baseline_report(report, output_dir)
     error_paths = write_baseline_error_analysis(paths["snapshot_json"], output_dir)
-    return {
+    output_paths = {
         **paths,
         "error_analysis": error_paths["latest"],
         "error_analysis_snapshot": error_paths["snapshot"],
     }
+    diff_paths = generate_baseline_diff(paths["snapshot_json"], output_dir)
+    if diff_paths is not None:
+        output_paths.update(
+            {
+                "diff": diff_paths["markdown"],
+                "diff_json": diff_paths["json"],
+                "diff_snapshot": diff_paths["snapshot_markdown"],
+                "diff_snapshot_json": diff_paths["snapshot_json"],
+                "diff_previous_snapshot_json": diff_paths[
+                    "previous_snapshot_json"
+                ],
+            }
+        )
+    return output_paths
 
 
 def _render_markdown(report: Dict[str, Any]) -> str:

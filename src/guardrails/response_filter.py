@@ -2,8 +2,7 @@ from src.config import settings
 from src.observability.metrics import GUARDRAIL_VIOLATIONS_TOTAL
 
 LEAK_SIGNATURES = [
-    "system prompt",
-    "retrieved context",
+    "knowledge retrieval agent",
     "rag pipeline",
     "agent state",
     "langgraph",
@@ -14,6 +13,17 @@ LEAK_SIGNATURES = [
     "you are an escalation agent",
     "you are a resolution agent",
 ]
+
+SAFE_SECURITY_RESPONSES = (
+    "cannot reveal the system prompt",
+    "can't reveal the system prompt",
+    "will not reveal the system prompt",
+    "do not reveal the system prompt",
+    "never reveal the system prompt",
+    "无法提供系统提示词",
+    "不能泄露系统提示词",
+    "请勿输出系统提示词",
+)
 
 FALLBACK_RESPONSE = (
     "I apologize for the inconvenience. Let me look up the details in our documentation "
@@ -29,6 +39,8 @@ def filter_response(text: str) -> str:
         return text
 
     text_lower = text.lower()
+    if any(signature in text_lower for signature in SAFE_SECURITY_RESPONSES):
+        return text
     leaked = False
 
     for signature in LEAK_SIGNATURES:

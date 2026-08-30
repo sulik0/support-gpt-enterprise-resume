@@ -1,5 +1,7 @@
-import time
 import logging
+import json
+import re
+import time
 from typing import Dict, Any
 
 from src.config import settings
@@ -10,6 +12,10 @@ from src.observability.metrics import (
     QA_SCORE_HISTOGRAM,
 )
 from src.risk.engine import risk_engine
+from src.models.intents import (
+    has_authoritative_business_evidence,
+    requires_authoritative_business_answer,
+)
 
 logger = logging.getLogger("supportgpt.agents.quality_assurance")
 
@@ -31,16 +37,20 @@ class QualityAssuranceAgent:
 
         query = str(state.get("description", ""))
         citations = state.get("context_citations", [])
+        tool_context = state.get("tool_context", {})
         raw_response = state.get("suggested_response", "")
         filtered_response_text = filter_response(raw_response)
-        context_texts = self._compact_context(citations)
+        context_texts = self._compact_context(citations, tool_context)
 
         try:
             # 确定性失败直接阻断，有证据的回复才交给轻量 Judge。
-            rule_result = self._rule_failure(
+            rule_result = self._rule_evaluation(
+                query=query,
                 raw_response=raw_response,
                 filtered_response=filtered_response_text,
-                has_context=bool(context_texts),
+                citations=citations,
+                tool_context=tool_context,
+                context_texts=context_texts,
             )
             if rule_result is None:
                 qa_eval, in_tok, out_tok = await llm_provider.evaluate_qa(
@@ -62,6 +72,15 @@ class QualityAssuranceAgent:
             qa_score = qa_eval.get("score", qa_eval.get("qa_score", 0.0))
             hallucinated = qa_eval.get("hallucination_detected", False)
             citation_verified = qa_eval.get("citation_verified", False)
+            response_grounded = bool(
+                qa_eval.get(
+                    "response_grounded",
+                    citation_verified and not hallucinated,
+                )
+            )
+            response_requires_human = bool(
+                qa_eval.get("response_requires_human", False)
+            )
 
             # Observe score distribution
             QA_SCORE_HISTOGRAM.record(qa_score)
@@ -85,6 +104,8 @@ class QualityAssuranceAgent:
                 "qa_score": qa_score,
                 "hallucination_detected": hallucinated,
                 "citation_verified": citation_verified,
+                "response_grounded": response_grounded,
+                "response_requires_human": response_requires_human,
                 "qa_strategy": strategy,
                 "errors": state.get("errors", [])
                 + (
@@ -108,8 +129,10 @@ class QualityAssuranceAgent:
             return {**next_state, **assessment.state_updates()}
 
     @staticmethod
-    def _compact_context(citations: list[Any]) -> list[str]:
-        """只保留最相关的两条证据并限制总长度。"""
+    def _compact_context(
+        citations: list[Any], tool_context: Dict[str, Any] | None = None
+    ) -> list[str]:
+        """同时提供 RAG citation 和 Tool 业务事实，避免将真实查询结果误判为幻觉。"""
         remaining = settings.LLM_QA_MAX_CONTEXT_CHARS
         context = []
         for index, citation in enumerate(citations[:2], start=1):
@@ -124,32 +147,225 @@ class QualityAssuranceAgent:
             remaining -= len(text)
             if remaining <= 0:
                 break
+        if tool_context and remaining > 0:
+            compact_tool = {
+                "customer_profile": tool_context.get("customer_profile", {}),
+                "recent_orders": (tool_context.get("recent_orders") or [])[:2],
+                "past_tickets": (tool_context.get("past_tickets") or [])[:2],
+            }
+            text = "[TOOL] " + json.dumps(
+                compact_tool, ensure_ascii=False, default=str, separators=(",", ":")
+            )
+            context.append(text[:remaining])
         return context
 
-    @staticmethod
-    def _rule_failure(
-        *, raw_response: str, filtered_response: str, has_context: bool
+    @classmethod
+    def _rule_evaluation(
+        cls,
+        *,
+        query: str,
+        raw_response: str,
+        filtered_response: str,
+        citations: list[Any],
+        tool_context: Dict[str, Any],
+        context_texts: list[str],
     ) -> Dict[str, Any] | None:
-        """对空回复、泄露和无证据回复执行确定性失败。"""
+        """先确定性处理泄露、澄清、安全限制和可验证证据。"""
         if not raw_response.strip():
             return {
                 "score": 0.0,
                 "hallucination_detected": True,
                 "citation_verified": False,
+                "response_grounded": False,
+                "response_requires_human": False,
             }
         if filtered_response != raw_response:
             return {
                 "score": 0.5,
                 "hallucination_detected": True,
                 "citation_verified": False,
+                "response_grounded": False,
+                "response_requires_human": True,
             }
-        if not has_context:
+        citation_evidence = " ".join(
+            str(
+                citation.get("text", "")
+                if isinstance(citation, dict)
+                else getattr(citation, "text", "")
+            )
+            for citation in citations
+        )
+        if requires_authoritative_business_answer(
+            query
+        ) and not has_authoritative_business_evidence(query, citation_evidence):
+            return {
+                "score": 0.5,
+                "hallucination_detected": True,
+                "citation_verified": False,
+                "response_grounded": False,
+                "response_requires_human": True,
+            }
+        if cls._is_clarification(filtered_response):
+            return {
+                "score": 0.95,
+                "hallucination_detected": False,
+                "citation_verified": False,
+                "response_grounded": True,
+                "response_requires_human": False,
+            }
+        if cls._is_safe_limitation(filtered_response):
+            return {
+                "score": 0.9,
+                "hallucination_detected": False,
+                "citation_verified": False,
+                "response_grounded": True,
+                "response_requires_human": requires_authoritative_business_answer(
+                    query
+                ),
+            }
+        if cls._has_grounding_support(filtered_response, citations, tool_context):
+            return {
+                "score": 0.95,
+                "hallucination_detected": False,
+                "citation_verified": bool(citations),
+                "response_grounded": True,
+                "response_requires_human": False,
+            }
+        if not context_texts:
             return {
                 "score": 0.45,
                 "hallucination_detected": True,
                 "citation_verified": False,
+                "response_grounded": False,
+                "response_requires_human": False,
             }
         return None
+
+    @staticmethod
+    def _is_clarification(response: str) -> bool:
+        """澄清问题不产生外部事实，不应因无 citation 被判为幻觉。"""
+        lowered = response.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "please describe",
+                "please provide",
+                "provide more details",
+                "have not described",
+                "haven’t received any details",
+                "haven't received any details",
+                "请补充",
+                "请详细描述",
+                "还没有准备好具体问题",
+            )
+        )
+
+    @staticmethod
+    def _is_safe_limitation(response: str) -> bool:
+        """识别明确不承诺、不编造的安全限制性回复。"""
+        lowered = response.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "human review is needed",
+                "manual review",
+                "cannot determine",
+                "unable to determine",
+                "unable to verify",
+                "do not have",
+                "don't have",
+                "does not specify",
+                "not available in the provided",
+                "not included in the available",
+                "cannot reveal",
+                "can't reveal",
+                "cannot provide the system prompt",
+                "需要人工",
+                "人工审核",
+                "人工复核",
+                "无法确定",
+                "无法核实",
+                "未包含",
+                "无法提供系统提示词",
+                "不能泄露系统提示词",
+            )
+        )
+
+    @classmethod
+    def _has_grounding_support(
+        cls, response: str, citations: list[Any], tool_context: Dict[str, Any]
+    ) -> bool:
+        """用 citation 文本重合或 Tool 标量值匹配提供可重现的事实支持。"""
+        lowered = response.lower()
+        citation_text = " ".join(
+            str(
+                citation.get("text", "")
+                if isinstance(citation, dict)
+                else getattr(citation, "text", "")
+            )
+            for citation in citations
+        )
+        if citation_text:
+            response_tokens = cls._content_tokens(lowered)
+            evidence_tokens = cls._content_tokens(citation_text.lower())
+            overlap = response_tokens & evidence_tokens
+            if len(overlap) >= 3 or (
+                re.search(r"\b(?:s[1-9]|source)\b", lowered) and len(overlap) >= 2
+            ):
+                return True
+
+        for value in cls._tool_scalar_values(tool_context):
+            if re.search(rf"(?<!\w){re.escape(value.lower())}(?!\w)", lowered):
+                return True
+        return False
+
+    @staticmethod
+    def _content_tokens(text: str) -> set[str]:
+        """提取用于确定性 grounding 比对的中英文内容词。"""
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "from",
+            "your",
+            "with",
+            "this",
+            "that",
+            "support",
+            "customer",
+            "account",
+        }
+        tokens = {
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", text)
+            if token not in stopwords
+        }
+        chinese_runs = re.findall(r"[\u4e00-\u9fff]{2,}", text)
+        for run in chinese_runs:
+            tokens.update(run[index : index + 2] for index in range(len(run) - 1))
+        return tokens
+
+    @classmethod
+    def _tool_scalar_values(cls, value: Any) -> set[str]:
+        """递归提取 Tool Context 中能在回复里直接验证的标量。"""
+        output: set[str] = set()
+        if isinstance(value, dict):
+            for item in value.values():
+                output.update(cls._tool_scalar_values(item))
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                output.update(cls._tool_scalar_values(item))
+        elif isinstance(value, bool):
+            pass
+        elif isinstance(value, (int, float)):
+            output.add(str(value))
+            if isinstance(value, float) and value.is_integer():
+                output.update({str(int(value)), f"{value:.2f}"})
+        elif value is not None:
+            text = str(value).strip()
+            if len(text) >= 2 and text.lower() != "none":
+                output.add(text)
+        return output
 
 
 quality_assurance_agent = QualityAssuranceAgent()

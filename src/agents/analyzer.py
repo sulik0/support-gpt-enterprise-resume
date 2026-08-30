@@ -9,7 +9,12 @@ from src.guardrails.prompt_injection import analyze_prompt_injection
 from src.guardrails.qwen3_guard import merge_qwen3_guard_result, qwen3_guard
 from src.guardrails.security_policy import build_security_block
 from src.llm.provider import llm_provider
-from src.models.intents import DEFAULT_INTENT, IntentType, normalize_intent
+from src.models.intents import (
+    DEFAULT_INTENT,
+    IntentType,
+    intent_defaults,
+    normalize_intent,
+)
 from src.observability.metrics import (
     AGENT_EXECUTION_DURATION_SECONDS,
     TICKET_SENTIMENT_TOTAL,
@@ -19,118 +24,39 @@ from src.risk.engine import risk_engine
 
 logger = logging.getLogger("supportgpt.agents.analyzer")
 
-_INTENT_RULES = (
-    {
-        "intent": IntentType.BILLING_DISPUTE,
-        "priority": "high",
-        "department": "billing",
-        "sentiment": "negative",
-        "tokens": (
-            "refund",
-            "request a refund",
-            "need a refund",
-            "want a refund",
-            "charged twice",
-            "duplicate charge",
-            "incorrect charge",
-            "unauthorized charge",
-            "退款",
-            "申请退款",
-            "重复扣款",
-            "错误扣款",
-            "未授权扣款",
-        ),
-    },
-    {
-        "intent": IntentType.OUTAGE_REPORT,
-        "priority": "urgent",
-        "department": "technical",
-        "sentiment": "negative",
-        "tokens": (
-            "api is down",
-            "service down",
-            "offline",
-            "service outage",
-            "api timeout",
-            "504",
-            "503",
-            "服务宕机",
-            "接口故障",
-            "接口超时",
-            "服务无法访问",
-        ),
-    },
-    {
-        "intent": IntentType.ORDER_CANCELLATION,
-        "priority": "high",
-        "department": "shipping",
-        "sentiment": "negative",
-        "tokens": (
-            "cancel my order",
-            "cancel order",
-            "order cancellation",
-            "取消订单",
-        ),
-    },
-    {
-        "intent": IntentType.ORDER_STATUS,
-        "priority": "medium",
-        "department": "shipping",
-        "sentiment": "neutral",
-        "tokens": (
-            "order status",
-            "where is my order",
-            "tracking number",
-            "shipment",
-            "delivery status",
-            "not received",
-            "物流",
-            "快递",
-            "订单状态",
-            "还没收到",
-            "没有收到",
-        ),
-    },
-    {
-        "intent": IntentType.ACCOUNT_SUPPORT,
-        "priority": "medium",
-        "department": "general",
-        "sentiment": "neutral",
-        "tokens": (
-            "account settings",
-            "reset password",
-            "cannot login",
-            "can't login",
-            "update my profile",
-            "账户设置",
-            "账号设置",
-            "重置密码",
-            "无法登录",
-            "修改资料",
-        ),
-    },
-    {
-        "intent": IntentType.WARRANTY_CLAIM,
-        "priority": "medium",
-        "department": "general",
-        "sentiment": "neutral",
-        "tokens": (
-            "warranty",
-            "repair",
-            "replacement",
-            "保修",
-            "维修",
-            "换货",
-        ),
-    },
-    {
-        "intent": IntentType.FEEDBACK,
-        "priority": "low",
-        "department": "general",
-        "sentiment": "positive",
-        "tokens": ("thank you", "thanks", "great service", "谢谢", "感谢"),
-    },
+_BILLING_DOMAIN = re.compile(
+    r"\b(refund|payment|invoice|billing|charged?|card payment|bank statement)\b|"
+    r"退款|支付|发票|账单|扣款|银行卡"
 )
+_API_INCIDENT = re.compile(
+    r"(?:\bapi\b|接口|服务).{0,50}"
+    r"(?:\b504\b|\b503\b|error|timeout|timing out|down|offline|crash|broken|"
+    r"connectivity|slow|报错|超时|宕机|离线|无法访问|故障|缓慢)|"
+    r"(?:\b504\b|\b503\b|报错|超时|宕机|故障).{0,30}(?:\bapi\b|接口|服务)"
+)
+_ORDER_STATUS = re.compile(
+    r"\b(track|tracking|shipping status|delivery status|order status|where is (?:my )?order|"
+    r"has been delivered|current status of order|package has not arrived|not received)\b|"
+    r"订单状态|物流|快递|查询订单|订单.*(?:签收|配送)|包裹.*未到"
+)
+_CANCELLATION_ACTION = re.compile(
+    r"\b(?:please |need to |want to |help me )?cancel (?:my |this |the )?order\b|"
+    r"请?.{0,6}取消.{0,4}订单"
+)
+_CANCELLATION_INFORMATION = re.compile(
+    r"\b(if i cancel|cancellation fee|cancel an order before|can .* cancel|"
+    r"order cancellation policy)\b|取消订单.{0,12}(?:费用|政策|是否|能否)"
+)
+_ACCOUNT_INCIDENT = re.compile(
+    r"\b(?:cannot|can't|unable to) (?:log ?in|sign ?in)|account (?:is )?locked|"
+    r"invalid credentials|login keeps failing\b|无法登录|账户被锁|凭据失效"
+)
+_WARRANTY_ACTION = re.compile(
+    r"\b(?:file|open|start|submit) (?:a )?(?:warranty )?claim\b|"
+    r"\b(?:repair|replace) my (?:device|hardware|item)\b|"
+    r"申请保修|发起维修|维修我的|更换我的"
+)
+_FEEDBACK = re.compile(r"\bthank you\b|\bthanks\b|\bgreat service\b|谢谢|感谢")
 
 
 class TicketAnalyzerAgent:
@@ -205,7 +131,9 @@ class TicketAnalyzerAgent:
         # 5. 高置信度固定意图优先走规则，模糊请求再调用 LLM。
         try:
             analysis = (
-                None if semantic_result.degraded else self._match_rule(semantic_text)
+                None
+                if semantic_result.degraded
+                else self._match_rule(clean_description or clean_subject)
             )
             strategy = "rule" if analysis else "llm"
             in_tok = 0
@@ -242,14 +170,15 @@ class TicketAnalyzerAgent:
                 duration, {"agent_name": "ticket_analyzer"}
             )
 
+            defaults = intent_defaults(normalized_intent)
             next_state = {
                 **state,
                 "description": clean_description,
                 "subject": clean_subject,
                 "sentiment": analysis.get("sentiment", "neutral"),
-                "priority": analysis.get("priority", "medium"),
+                "priority": defaults.priority,
                 "intent": normalized_intent,
-                "department": analysis.get("department", "general"),
+                "department": defaults.department,
                 "analyzer_confidence": analyzer_confidence,
                 "analyzer_strategy": strategy,
                 "errors": state.get("errors", []),
@@ -272,33 +201,50 @@ class TicketAnalyzerAgent:
 
     @staticmethod
     def _match_rule(text: str) -> Dict[str, Any] | None:
-        """仅在唯一意图组命中时返回高置信度分类。"""
+        """先区分实际业务操作与说明性咨询，歧义才交给 LLM。"""
         normalized = " ".join(text.lower().split())
-        matches = [
-            rule
-            for rule in _INTENT_RULES
-            if any(
-                TicketAnalyzerAgent._contains_token(normalized, token)
-                for token in rule["tokens"]
-            )
-        ]
-        if len(matches) != 1:
+        candidates: list[IntentType] = []
+        if _BILLING_DOMAIN.search(normalized):
+            candidates.append(IntentType.BILLING_DISPUTE)
+            if _ORDER_STATUS.search(normalized):
+                candidates.append(IntentType.ORDER_STATUS)
+        elif _API_INCIDENT.search(normalized):
+            candidates.append(IntentType.OUTAGE_REPORT)
+        else:
+            if _CANCELLATION_ACTION.search(normalized) and not _CANCELLATION_INFORMATION.search(
+                normalized
+            ):
+                candidates.append(IntentType.ORDER_CANCELLATION)
+            if _ORDER_STATUS.search(normalized):
+                candidates.append(IntentType.ORDER_STATUS)
+            if _ACCOUNT_INCIDENT.search(normalized):
+                candidates.append(IntentType.ACCOUNT_SUPPORT)
+            if _WARRANTY_ACTION.search(normalized):
+                candidates.append(IntentType.WARRANTY_CLAIM)
+            if _FEEDBACK.search(normalized):
+                candidates.append(IntentType.FEEDBACK)
+
+        if len(set(candidates)) > 1:
             return None
-        rule = matches[0]
+        intent = candidates[0] if candidates else IntentType.INFORMATION_REQUEST
+        defaults = intent_defaults(intent)
         return {
-            "intent": rule["intent"],
-            "priority": rule["priority"],
-            "department": rule["department"],
-            "sentiment": rule["sentiment"],
+            "intent": intent,
+            "priority": defaults.priority,
+            "department": defaults.department,
+            "sentiment": (
+                "negative"
+                if intent
+                in {
+                    IntentType.BILLING_DISPUTE,
+                    IntentType.OUTAGE_REPORT,
+                    IntentType.ORDER_CANCELLATION,
+                    IntentType.ACCOUNT_SUPPORT,
+                }
+                else "positive" if intent == IntentType.FEEDBACK else "neutral"
+            ),
             "confidence_score": 0.95,
         }
-
-    @staticmethod
-    def _contains_token(text: str, token: str) -> bool:
-        """英文关键词使用单词边界，中文关键词使用子串匹配。"""
-        if token.isascii():
-            return bool(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text))
-        return token in text
 
     @staticmethod
     def _confidence(value: Any) -> float:
