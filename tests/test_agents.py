@@ -557,6 +557,52 @@ async def test_qa_accepts_generic_clarification_and_safe_knowledge_limitation(re
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        "We haven’t received any problem details yet.",
+        "请告知具体需要协助的内容，我们将为您处理。",
+        "This requires human review because the available evidence does not cover it.",
+    ],
+)
+async def test_qa_wording_variants_do_not_create_random_hitl(response):
+    result = await quality_assurance_agent.verify(
+        {
+            "description": "I need general support guidance.",
+            "suggested_response": response,
+            "context_citations": [],
+            "tool_context": {},
+            "errors": [],
+        }
+    )
+
+    assert result["qa_strategy"] == "rule"
+    assert result["risk_requires_human"] is False
+
+
+@pytest.mark.asyncio
+async def test_qa_verifies_missing_requested_order_from_tool_result():
+    result = await quality_assurance_agent.verify(
+        {
+            "description": "Please track order ORD-MISSING-99.",
+            "suggested_response": (
+                "We could not locate order ORD-MISSING-99 in your account. "
+                "Please check the number."
+            ),
+            "context_citations": [],
+            "tool_context": {
+                "recent_orders": [{"order_id": "ORD-7001", "status": "delivered"}]
+            },
+            "errors": [],
+        }
+    )
+
+    assert result["qa_strategy"] == "rule"
+    assert result["response_grounded"] is True
+    assert result["risk_requires_human"] is False
+
+
+@pytest.mark.asyncio
 async def test_qa_only_escalates_safe_limitation_for_authoritative_business_gap():
     knowledge = await quality_assurance_agent.verify(
         {

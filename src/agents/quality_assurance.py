@@ -223,6 +223,16 @@ class QualityAssuranceAgent:
                     query
                 ),
             }
+        if cls._missing_requested_order_supported(
+            query, filtered_response, tool_context
+        ):
+            return {
+                "score": 0.95,
+                "hallucination_detected": False,
+                "citation_verified": False,
+                "response_grounded": True,
+                "response_requires_human": False,
+            }
         if cls._has_grounding_support(filtered_response, citations, tool_context):
             return {
                 "score": 0.95,
@@ -247,7 +257,7 @@ class QualityAssuranceAgent:
     def _is_clarification(response: str) -> bool:
         """澄清问题不产生外部事实，不应因无 citation 被判为幻觉。"""
         lowered = response.lower()
-        return any(
+        if any(
             marker in lowered
             for marker in (
                 "please describe",
@@ -260,7 +270,17 @@ class QualityAssuranceAgent:
                 "haven't received any details",
                 "请补充",
                 "请详细描述",
+                "请告知具体",
+                "具体需要协助的内容",
                 "还没有准备好具体问题",
+            )
+        ):
+            return True
+        return bool(
+            re.search(
+                r"haven['’]t received any .{0,24}details|"
+                r"(?:no|without) .{0,16}problem details",
+                lowered,
             )
         )
 
@@ -273,6 +293,7 @@ class QualityAssuranceAgent:
             for marker in (
                 "human review is needed",
                 "need human review",
+                "requires human review",
                 "manual review",
                 "cannot determine",
                 "unable to determine",
@@ -329,6 +350,36 @@ class QualityAssuranceAgent:
             if re.search(rf"(?<!\w){re.escape(value.lower())}(?!\w)", lowered):
                 return True
         return False
+
+    @staticmethod
+    def _missing_requested_order_supported(
+        query: str, response: str, tool_context: Dict[str, Any]
+    ) -> bool:
+        """用 OMS 返回验证“目标订单不存在”，避免负向查询被误判为幻觉。"""
+        requested_ids = {
+            value.upper()
+            for value in re.findall(r"(?i)\bORD-[A-Z0-9-]+\b", query)
+        }
+        if not requested_ids:
+            return False
+        known_ids = {
+            str(order.get("order_id", "")).upper()
+            for order in (tool_context.get("recent_orders") or [])
+            if isinstance(order, dict)
+        }
+        missing_ids = requested_ids - known_ids
+        lowered = response.lower()
+        missing_language = bool(
+            re.search(
+                r"\b(?:not (?:find|found|locate)|could not (?:find|locate)|"
+                r"couldn't (?:find|locate)|no (?:matching )?order)\b|"
+                r"未找到|没有找到|不存在",
+                lowered,
+            )
+        )
+        return missing_language and any(
+            order_id.lower() in lowered for order_id in missing_ids
+        )
 
     @staticmethod
     def _has_valid_citation_reference(response: str, citations: list[Any]) -> bool:
