@@ -26,7 +26,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 - 通过 ToolRegistry 统一工具协议，实现 Schema 校验、RBAC、超时和调用审计。
 - 使用 Hybrid RAG 兼顾语义检索与政策编号、产品名、时间窗口等精确词匹配。
 - 保持默认 Mock LLM、可选 Redis 和 SQLite 本地配置，使项目在无企业凭据、无外部 LLM 和无 Redis 时仍可复现。
-- 通过 Prometheus、OpenTelemetry、分层依赖和 Python 3.11 CI 提供基础可观测性与可维护性。
+- 通过 Prometheus、OpenTelemetry、分层依赖、Python 3.11 CI 和 Agent Evaluation Quality Gate 提供可观测性、可维护性与发布质量保障。
 
 ## 核心能力
 
@@ -294,6 +294,8 @@ resolved / closed --reopen--> in_progress
 - Baseline V1 在同一次 OTel Trace 中采集端到端与 Analyzer / Tool / RAG / Resolver / QA 节点耗时、Token、模型、Analyzer 策略和 LLM 调用明细，报告汇总 Average、P50、P95、平均 Token 与 Rule Hit Rate，并关联实际 Agent Trace ID。
 - 每次 Baseline V1 正式运行同时保存带本地时间戳的不可变 JSON / Markdown 快照，`baseline_v1_latest.*` 以普通文件副本保留最新内容，兼容 Typora 等不打开符号链接的桌面工具；报告固定记录 Dataset SHA256、Evaluator 范围、Workflow/Prompt 版本、模型、生成限制、Risk 阈值与 Observability 配置。旧单条评测隔离到 `single_response/` 并最多保留 20 份，所有运行报告默认不提交 Git。
 - Baseline JSON 写入后会纯离线、确定性生成 `error_analysis_<run_id>.md` 与 `error_analysis_latest.md`，只分析 FAIL Case 的 Failure Breakdown、Intent Confusion Matrix、HITL/Approval mismatch、Tool 问题和逐 Case Expected/Actual/Trace，不重放 Workflow、不调用 LLM、不修改 Dataset 或 Agent。
+- PR Gate 使用 Mock Provider 在隔离 SQLite/Chroma 目录中回放同一固定 100 条 Workflow，对 Dataset Hash、六项行为指标和新增失败 Case 执行免费、确定性门禁。Release Gate 必须显式确认付费调用，对真实 LLM 报告额外检查 P95、Token、LLM Calls 和 Analyzer Rule Hit Rate。
+- GitHub Actions `CI` 执行全量后端测试、前端构建、PR Gate 和镜像构建；仅当 `Release Quality Gate` 通过时，`CD` 才会将完全相同 Git SHA 的镜像发布到 GHCR。当前交付目标是镜像仓库，不代表已自动部署生产集群。
 - 正式离线报告同时输出 Faithfulness、Answer Relevancy、Context Precision、Context Recall、Agent 行为指标、Security Precision / Recall / F1 / 误报率、安全处置正确率、citation hit rate、Workflow Path 和 Trace ID。
 - 没有可用 API Key 时可显式选择 `local` 确定性指标进行 CI 烟测；正式 RAGAS / DeepEval 模式缺少依赖或密钥会直接失败，不会自动伪装为正式结果。
 - 报告写入 `evaluation/reports/evaluation_latest.json` 和 `evaluation_latest.md`。
@@ -318,7 +320,7 @@ resolved / closed --reopen--> in_progress
 - SQLAlchemy 持久化模型、Redis 可选会话存储与 SQL 降级。
 - Human-in-the-Loop 审批与工单状态机。
 - OpenTelemetry 统一 Trace / Metrics 采集、OTLP Collector、LangSmith Trace 后端和 Prometheus / Grafana 指标展示。
-- Docker Compose、Kubernetes manifests、分层 requirements 和 Python 3.11 GitHub Actions smoke CI。
+- Docker Compose、Kubernetes manifests、分层 requirements、Python 3.11 GitHub Actions 全量 CI、两级 Evaluation Quality Gate 与 GHCR CD。
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent / Security 指标并关联 Trace ID。
 - Baseline Workflow Replay V1：固定 100 条 Dataset、完整 Ticket State、六项确定性行为指标、逐 Case 执行结果及 OTel Trace 同源性能报告。
@@ -336,7 +338,7 @@ resolved / closed --reopen--> in_progress
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
 - **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
-- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口和统一报告；2026-08-26 已完成一次 DeepSeek + Qwen 真实全量 Baseline V1，Case Pass Rate 为 `0.54`，平均耗时约 `2.50s`、P95 约 `4.15s`。这只是首轮可复现实验基线，人工标注、稳定质量阈值和 CI Quality Gate 仍需继续建设。
+- **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口、统一报告与两级 Quality Gate。2026-08-30 同一固定 Dataset 的 DeepSeek + Qwen 真实复测将 Case Pass Rate 从 `0.54` 提升到 `0.99`，平均耗时约 `1.62s`、P95 约 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。PR Gate 要求 Mock 确定性回放 100% 通过，Release Gate 固化当前真实模型质量和性能阈值；语义回答质量与人工标注仍是后续评测范围。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。

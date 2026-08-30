@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-08-27。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-08-30。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -28,6 +28,9 @@
 - [x] 建立 Evaluation Report 生命周期：清理旧 `report_*.json`、单条评测最多保留 20 份、Baseline 使用时间戳快照与 latest 普通文件副本，并固化完整实验配置。
 - [x] Baseline Report 增加 `metric_failure_index`，支持按 Intent、Department、Required/Forbidden Tool、HITL 和 Approval 指标反查失败 Case 与 Trace ID。
 - [x] Baseline 每次运行后纯离线生成 Error Analysis 时间戳快照与 latest 副本，覆盖 Failure Breakdown、Intent Confusion Matrix、HITL/Approval mismatch、Tool 问题和逐 FAIL Case 详情。
+- [x] 建立 PR Agent Quality Gate：固定 100 条 Dataset 使用 Mock Provider 完整回放 Workflow，校验 Dataset Hash、六项行为指标与新增失败 Case。
+- [x] 建立真实 LLM Release Quality Gate：显式付费确认、调用预算、行为/延迟/Token/LLM Calls 阈值与 Actions Artifact。
+- [x] 建立门禁后 CD：仅对通过 Release Gate 的同一 Git SHA 构建镜像，发布 GHCR 不可变 SHA Tag 并生成 Provenance Attestation。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -37,7 +40,7 @@
 - [ ] 增加 Train / Validation / Test 划分及数据泄漏检查。
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
 - [ ] 增加 Prompt Registry、内容快照、灰度和回滚门禁。
-- [ ] 基于首次真实 100 条 Baseline 的 46 条失败 Case 完成归因修复，建立稳定质量阈值并执行同配置复测。
+- [x] 基于首次真实 100 条 Baseline 完成归因修复，Case Pass 由 `0.54` 提升到 `0.99`，固化 Release Gate 阈值与已知失败 Case 白名单。
 - [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。

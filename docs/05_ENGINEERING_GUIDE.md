@@ -164,6 +164,14 @@ python -m pytest tests/test_agents.py tests/test_rag.py -q
 
 测试使用内存 SQLite，不污染本地开发数据。覆盖率 90%+ 是生产化目标，不得表述为当前已强制达成。
 
+PR Agent Quality Gate：
+
+```bash
+python scripts/run_ci_quality_gate.py
+```
+
+该入口强制覆盖本地 `.env` 中的模型、Guard 和 OTel 配置，使用 Mock Provider 与临时 SQLite/Chroma 目录回放固定 100 条完整 Workflow。门禁策略存放在 `evaluation/quality_gate_policy.json`，当前要求固定 Dataset SHA256、100 条 Case、六项行为指标全部达到确定性目标，且不得出现新的失败 Case。JSON、Markdown、Baseline 和 Error Analysis 保存在 `evaluation/reports/ci_quality_gate/`，GitHub Actions 会作为 Artifact 保留 14 天。
+
 Locust 压测：
 
 ```bash
@@ -200,6 +208,16 @@ Baseline 100 Workflow Replay：
 python scripts/run_baseline_eval.py --dry-run
 python scripts/run_baseline_eval.py --confirm-live
 ```
+
+对已有报告执行 Release Gate，不重新调用 Workflow 或 LLM：
+
+```bash
+python scripts/check_quality_gate.py \
+  --profile release \
+  --report evaluation/reports/baseline_v1/baseline_v1_latest.json
+```
+
+Release Profile 当前要求：Intent、Department、Required Tool 均为 `1.0`，Forbidden Tool Violation 为 `0`，HITL、Approval 与 Case Pass 至少 `0.99`，P95 不超过 `5s`，平均 Token 不超过 `550`，100 Case 总 LLM Calls 不超过 `100`，Analyzer Rule Hit Rate 至少 `0.95`。已知失败 Case 采用显式 ID 白名单，聚合分数达标也不能掩盖新的 `PASS→FAIL`。
 
 正式 Baseline 每次产生一组不可变时间戳 JSON/Markdown 快照，`baseline_v1_latest.json/md` 是可直接打开的最新普通文件副本，由报告器原子替换。报告目录不进 Git；实验配置、Dataset SHA256、模型、Prompt/Workflow 版本、Token 与 Trace ID 必须写入报告。
 
@@ -248,6 +266,14 @@ docker compose -f deployment/docker-compose.yml up --build
 ```
 
 主要端口：Backend `8000`、PostgreSQL `5432`、Redis `6379`、OTLP gRPC `4317`、OTLP HTTP `4318`、Collector Metrics `8889`、Prometheus `9090`、Grafana `3000`。Kubernetes 模板位于 `deployment/k8s/`，它仅是部署样例，不代表已在生产环境运行。
+
+## CI/CD
+
+- `.github/workflows/ci.yml`：PR/Push 必跑全量 Backend Tests、Frontend Build、100 Case Mock Workflow Gate，并在全部通过后验证 Backend 镜像可构建。
+- `.github/workflows/release-quality-gate.yml`：仅手动触发；必须勾选付费调用确认，通过 `release-quality-gate` GitHub Environment 读取真实模型 Secrets，运行同一固定 100 条 Baseline 和 Release Profile。
+- `.github/workflows/cd.yml`：只监听成功的 `Release Quality Gate`，检出其 `head_sha`，构建并发布 `latest` 与不可变 `sha-<commit>` 镜像到 GHCR，同时生成 Build Provenance Attestation。
+
+仓库需要在 GitHub `release-quality-gate` Environment 配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL_NAME`；Fast Model Secrets 可选。建议为该 Environment 设置 Required Reviewer，避免无意触发真实模型成本。CD 当前完成的是经过质量门禁的容器交付，未获得具体集群凭据，因此不会自动修改 Kubernetes 集群。
 
 ## 开发约定
 

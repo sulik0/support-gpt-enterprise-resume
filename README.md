@@ -1,6 +1,8 @@
 # SupportGPT Enterprise
 
 [![CI](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/ci.yml/badge.svg)](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/ci.yml)
+[![Release Gate](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/release-quality-gate.yml/badge.svg)](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/release-quality-gate.yml)
+[![CD](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/cd.yml/badge.svg)](https://github.com/sulik0/support-gpt-enterprise-resume/actions/workflows/cd.yml)
 [![Python](https://img.shields.io/badge/Python-3.11-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-green)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-workflow-orange)](https://github.com/langchain-ai/langgraph)
@@ -69,11 +71,27 @@ python -m compileall src tests
 python -m pytest -q
 ```
 
+免费、确定性的 PR Agent Quality Gate：
+
+```bash
+python scripts/run_ci_quality_gate.py
+```
+
+该命令强制使用 Mock Provider，在隔离 SQLite/Chroma 目录中回放固定 100 条完整 Workflow，并按 `evaluation/quality_gate_policy.json` 检查 Dataset Hash、六项行为指标和新增失败 Case。它不会读取本地真实模型配置、调用付费 API 或上报遥测。
+
 Baseline 100 真实 Workflow Replay：
 
 ```bash
 python scripts/run_baseline_eval.py --dry-run
 python scripts/run_baseline_eval.py --confirm-live
+```
+
+对已有真实 Baseline 报告执行纯离线 Release Gate：
+
+```bash
+python scripts/check_quality_gate.py \
+  --profile release \
+  --report evaluation/reports/baseline_v1/baseline_v1_latest.json
 ```
 
 Ragas + DeepEval：
@@ -84,6 +102,8 @@ python scripts/run_agent_eval.py --rag-engine ragas --agent-engine deepeval
 ```
 
 评测报告保存在 `evaluation/reports/`，该目录不进 Git。正式 Baseline 同时生成不可变时间戳 JSON/Markdown 快照与可直接打开的 `latest` 普通文件副本，并固定记录 Dataset Hash、模型、Prompt/Workflow 版本、阈值、Token、延迟与 Trace 配置。每次还会基于已生成 JSON 纯离线生成 `error_analysis_<run_id>.md` 和 `error_analysis_latest.md`，只分析 FAIL Case，不重放 Workflow 或调用 LLM。
+
+GitHub Actions 分为三层：`CI` 执行全量后端测试、前端构建、100 Case PR Gate 和容器构建；`Release Quality Gate` 需要人工确认及 GitHub Environment/Secrets，运行真实模型 100 Case Baseline，并约束 Case Pass、HITL、Token、P95 和 LLM Calls；只有该 Workflow 成功，`CD` 才会将完全相同 Git SHA 的镜像发布到 GHCR。当前 CD 交付到镜像仓库，不代表已经部署到生产 Kubernetes 集群。
 
 ## 可观测
 

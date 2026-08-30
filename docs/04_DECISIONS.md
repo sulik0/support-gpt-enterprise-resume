@@ -694,7 +694,7 @@ Agent 系统既需要运营指标，也需要排查“哪一步慢、哪一步�
 
 ### 最终方案
 
-采用 Docker Compose 编排 backend、PostgreSQL、Redis 和 Prometheus；依赖分为 runtime、test、eval、load；CI 固定 Python 3.11 Smoke Test。
+采用 Docker Compose 编排 backend、PostgreSQL、Redis 和 Prometheus；依赖分为 runtime、test、eval、load；CI 固定 Python 3.11，执行全量后端测试、前端构建、Agent PR Quality Gate 和容器构建验证。
 
 ### 为什么选择
 
@@ -702,7 +702,7 @@ Agent 系统既需要运营指标，也需要排查“哪一步慢、哪一步�
 
 ### 工程权衡
 
-Kubernetes manifests 已存在，但不代表完成生产发布；CI 目前是定向 Smoke Test，尚非完整测试矩阵。
+Kubernetes manifests 已存在，但不代表完成生产发布。当前 CD 只在真实 LLM Release Gate 通过后将同一 Git SHA 的镜像交付到 GHCR，不会自动修改未授权的集群。
 
 ## 决策 22：暂不引入 Prompt Registry、灰度与 A/B 实验
 
@@ -770,6 +770,45 @@ RAG 质量不能只依靠主观体验，需要评估 Faithfulness、Context Prec
 
 当前尚无人工标注 Golden Set，RAGAS 的简化 Ground Truth 也不是标准答案。因此不可宣称已有生产级评测结果。
 
+## 决策 24：采用 PR / Release 两级 Evaluation Quality Gate
+
+### 问题背景
+
+单元测试只能验证局部代码，不能证明固定 Dataset 上的完整 Agent 行为没有回归；但在每个 PR 上调用真实 LLM 会引入成本、网络依赖和非确定性。
+
+### 候选方案
+
+- 只跑 pytest
+- 每个 PR 都跑真实 LLM Baseline
+- PR Mock Workflow Gate + 手动 Real-LLM Release Gate
+- 只生成报告，不阻断发布
+
+### 最终方案
+
+PR/Push 对固定 100 条 Dataset 执行 Mock Provider 完整 Workflow Replay，要求六项行为指标达到确定性目标且无新失败 Case。Release Gate 由人工显式确认付费调用，使用真实 LLM 报告检查行为、P95、Token、LLM Calls 和 Analyzer Rule Hit Rate。门禁策略作为 JSON 进入 Git，报告作为 Actions Artifact 保留。
+
+### 为什么选择
+
+两级设计使每次变更都有免费、快速、可重复的端到端保护，同时把真实模型质量与成本验证放到有人工授权的发布边界。失败 Case 白名单防止相同聚合分数下的 `PASS→FAIL` 被掩盖。
+
+### 工程权衡
+
+Mock Gate 只验证确定性路由和治理逻辑，不代表真实生成质量或延迟。Release Gate 仍受外部模型波动影响，因此使用绝对下限、性能上限、固定 Dataset Hash 与显式已知失败组合管理，不用单次 LLM Judge 分数直接发布。
+
+## 决策 25：CD 只发布通过 Release Gate 的不可变镜像
+
+### 问题背景
+
+如果评测与镜像构建使用不同 Revision，质量结论不能证明交付物。直接使用 `latest` 也无法稳定回滚。
+
+### 最终方案
+
+CD 只监听成功的 `Release Quality Gate`，使用该 Workflow 的 `head_sha` 构建容器，同时发布 `latest` 和 `sha-<commit>` Tag 到 GHCR，并生成 Build Provenance Attestation。
+
+### 工程权衡
+
+当前没有具体生产集群与凭据，因此 CD 终止于受控镜像交付，不伪造自动部署。未来接入集群后，应使用不可变 SHA Tag 或 Digest 部署，并增加灰度健康检查与自动回滚。
+
 ## 决策总览
 
 | 领域 | 最终决策 | 当前边界 |
@@ -785,4 +824,6 @@ RAG 质量不能只依靠主观体验，需要评估 Faithfulness、Context Prec
 | 审批 | 独立 Risk Engine + HITL + 状态机 | 阈值可配置但未用生产数据校准，状态事件未持久化 |
 | 恢复 | 受限回退、人工接管 | 无通用 Retry / Queue / Circuit Breaker |
 | 观测 | OpenTelemetry + OTLP Collector + LangSmith / Prometheus | Collector 尚未高可用，未接 Jaeger / Tempo |
-| 评测 | Adapter + 本地降级 | 无 Golden Set 和生产基线 |
+| 评测 | Adapter + 本地降级 + 固定 100 条 Baseline | 无人工标注生产 Ground Truth 和真实线上基线 |
+| 发布治理 | PR Mock 100 Case Gate + Real-LLM Release Gate | V1 只以六项确定性行为指标决定 Case Pass，语义质量尚未纳入门禁 |
+| CD | Release Gate 通过后发布同 Git SHA 镜像到 GHCR | 尚未部署到生产 Kubernetes 集群 |

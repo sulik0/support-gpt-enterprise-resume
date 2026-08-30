@@ -1,0 +1,168 @@
+{
+  "schema_version": "1.0",
+  "policy_name": "supportgpt-baseline-v1",
+  "dataset": {
+    "case_count": 100,
+    "sha256": "1112c040ff0cea89ffabd73966fa40fe0dc07b450d049769d5af92e68694cf8a",
+    "enabled_behavior_metrics": [
+      "intent_accuracy",
+      "department_accuracy",
+      "required_tool_hit_rate",
+      "forbidden_tool_violation_rate",
+      "hitl_accuracy",
+      "approval_accuracy"
+    ]
+  },
+  "profiles": {
+    "pull_request": {
+      "description": "Mock Provider 全量 Workflow Replay，不调用付费模型。",
+      "allowed_failed_case_ids": [],
+      "requirements": [
+        {
+          "name": "ci_execution_mode",
+          "path": "execution.mode",
+          "operator": "eq",
+          "value": "ci_offline_workflow_replay"
+        },
+        {
+          "name": "mock_provider",
+          "path": "experiment_config.models.provider",
+          "operator": "eq",
+          "value": "mock"
+        },
+        {
+          "name": "intent_accuracy",
+          "path": "behavior_summary.intent_accuracy",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "department_accuracy",
+          "path": "behavior_summary.department_accuracy",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "required_tool_hit_rate",
+          "path": "behavior_summary.required_tool_hit_rate",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "forbidden_tool_violation_rate",
+          "path": "behavior_summary.forbidden_tool_violation_rate",
+          "operator": "lte",
+          "value": 0.0
+        },
+        {
+          "name": "hitl_accuracy",
+          "path": "behavior_summary.hitl_accuracy",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "approval_accuracy",
+          "path": "behavior_summary.approval_accuracy",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "case_pass_rate",
+          "path": "behavior_summary.case_pass_rate",
+          "operator": "gte",
+          "value": 1.0
+        }
+      ]
+    },
+    "release": {
+      "description": "真实 LLM 固定 100 条 Baseline 发布门禁。",
+      "allowed_failed_case_ids": [
+        "baseline-account-spanish-navigation"
+      ],
+      "requirements": [
+        {
+          "name": "release_execution_mode",
+          "path": "execution.mode",
+          "operator": "eq",
+          "value": "real_llm_regression"
+        },
+        {
+          "name": "real_model_provider",
+          "path": "experiment_config.models.provider",
+          "operator": "not_in",
+          "value": [
+            "",
+            "mock",
+            null
+          ]
+        },
+        {
+          "name": "intent_accuracy",
+          "path": "behavior_summary.intent_accuracy",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "department_accuracy",
+          "path": "behavior_summary.department_accuracy",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "required_tool_hit_rate",
+          "path": "behavior_summary.required_tool_hit_rate",
+          "operator": "gte",
+          "value": 1.0
+        },
+        {
+          "name": "forbidden_tool_violation_rate",
+          "path": "behavior_summary.forbidden_tool_violation_rate",
+          "operator": "lte",
+          "value": 0.0
+        },
+        {
+          "name": "hitl_accuracy",
+          "path": "behavior_summary.hitl_accuracy",
+          "operator": "gte",
+          "value": 0.99
+        },
+        {
+          "name": "approval_accuracy",
+          "path": "behavior_summary.approval_accuracy",
+          "operator": "gte",
+          "value": 0.99
+        },
+        {
+          "name": "case_pass_rate",
+          "path": "behavior_summary.case_pass_rate",
+          "operator": "gte",
+          "value": 0.99
+        },
+        {
+          "name": "p95_latency_seconds",
+          "path": "performance_summary.end_to_end_latency_seconds.p95",
+          "operator": "lte",
+          "value": 5.0
+        },
+        {
+          "name": "average_total_tokens",
+          "path": "performance_summary.tokens.average_total",
+          "operator": "lte",
+          "value": 550.0
+        },
+        {
+          "name": "workflow_llm_calls",
+          "path": "performance_summary.llm.call_count",
+          "operator": "lte",
+          "value": 100
+        },
+        {
+          "name": "analyzer_rule_hit_rate",
+          "path": "performance_summary.analyzer.rule_hit_rate",
+          "operator": "gte",
+          "value": 0.95
+        }
+      ]
+    }
+  }
+}

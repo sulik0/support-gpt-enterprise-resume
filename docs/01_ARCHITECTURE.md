@@ -489,6 +489,28 @@ flowchart TD
 | 安全前置 | 用户、Tool、RAG 三类信任边界执行规则 + Qwen3Guard 并提前短路 | 避免不必要的后续工具、检索和业务模型调用 | 增加分类延迟和可用性依赖；默认关闭，需用安全回归集完成阈值校准 |
 | 可观测 | Metrics 与 Trace 覆盖 API、节点、工具、RAG、审批 | 支持定位瓶颈和错误阶段 | Trace 默认仅输出到控制台，尚无集中存储与采样策略 |
 
+## 15.1 CI/CD 与 Evaluation Quality Gate
+
+```mermaid
+flowchart LR
+    PR["PR / Push"] --> Test["全量 Backend Tests"]
+    PR --> FE["Frontend Build"]
+    PR --> MockGate["Mock 100 Case Workflow Gate"]
+    Test --> ImageCheck["Container Build Check"]
+    FE --> ImageCheck
+    MockGate --> ImageCheck
+    Manual["人工确认付费 Release Gate"] --> Live["真实 LLM 100 Case Replay"]
+    Live --> Policy["行为 + P95 + Token + Calls 门禁"]
+    Policy -->|PASS| CD["Build Same Git SHA"]
+    CD --> GHCR["GHCR + Provenance"]
+```
+
+PR Gate 强制使用 Mock Provider、临时 SQLite/Chroma 和关闭外部遥测，对固定 100 条 Dataset 执行完整 LangGraph Workflow Replay。它负责阻止确定性路由、Tool、HITL 和 Approval 回归，不用 Mock 延迟伪装真实性能结论。
+
+Release Gate 仅手动触发，并依赖 GitHub Environment 的人工审核与真实模型 Secrets。它在同一报告上检查 Case Pass、HITL/Approval、P95、Token、LLM Calls 和 Analyzer Rule Hit Rate，并使用已知失败 Case 白名单防止聚合分数掩盖新的 `PASS→FAIL`。门禁为纯离线报告检查，不会再次调用 LLM。
+
+CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与 `sha-<commit>` 两类 GHCR 镜像，同时生成 Build Provenance Attestation。当前边界是“受控镜像交付”，没有具体集群凭据，不声称已完成生产部署。
+
 ## 16. 可扩展性设计
 
 ### 16.1 已有扩展点
@@ -501,6 +523,7 @@ flowchart TD
 | 数据库 | SQLAlchemy Async URL 配置 | 统一 ORM 模型和 Session | 本地 SQLite 与 PostgreSQL 间切换 |
 | 观测后端 | OpenTelemetry SDK + OTLP Collector | Trace、Metrics 与脱敏属性 | Collector 可扩展 LangSmith、Jaeger、Tempo 等 exporter |
 | 部署 | Docker Compose、Kubernetes manifests | 环境变量与容器配置 | 可从本地栈演进至容器平台 |
+| 发布治理 | 版本化 Quality Gate Policy + GitHub Actions | Baseline JSON、Git SHA、指标阈值 | 将 Agent 行为、性能与镜像交付绑定到同一可审计版本 |
 
 ### 16.2 尚未实现但需要预留的扩展
 
@@ -528,5 +551,6 @@ flowchart TD
 | 质量保障 | QA + Response Filter + HITL | 高风险回答优先保守处理 | 自动 Reflection 循环、全自动闭环 |
 | 恢复 | 受限回退与人工接管 | 避免无限 Retry 和重复副作用 | 无边界自动重试 |
 | 可观测 | OpenTelemetry + OTLP Collector | 统一采集 Trace / Metrics，转发 LangSmith 与 Prometheus | 应用直连多个后端会形成双轨并增加数据治理成本 |
+| 发布 | PR Mock Gate + 真实 LLM Release Gate + GHCR CD | 兼顾每次变更的确定性保护与发布前真实模型验证 | 不在每个 PR 调用付费模型，当前 CD 只发布镜像而不部署生产集群 |
 
 后续任何架构变更都必须遵守本文件中的安全短路、ToolRegistry、状态机、Mock 边界与 Redis 可选性约束；如果这些约束本身发生变化，应先更新 `00_PROJECT_CONTEXT.md`，再更新本文和相关测试。

@@ -249,7 +249,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 | 当前通过阈值 | 综合质量分数 `>= 0.75` 且 Hallucination Rate `< 0.35` |
 | 报告 | 统一生成 JSON / Markdown 的 RAG + Agent + Security Evaluation 报告，并记录 Trace ID |
 
-当前有 13 条 Synthetic Golden Dataset，并有一组 100 条 Baseline Dataset，其中 14 条攻击样本和 86 条非攻击样本可形成安全混淆矩阵；非攻击样本中包含 6 条安全语义 hard negative。统一报告包含 citation hit rate、RAG 指标、Agent 行为指标、安全检测与处置指标、用例 Pass/Fail、Workflow Path 与 Trace ID；但尚无人工标注的生产标准答案、稳定质量阈值或真实线上评测数据。无 API Key 时的本地 RAG / Agent 评测是确定性启发式降级，安全指标本身为确定性断言。
+当前有 13 条 Synthetic Golden Dataset，并有一组 100 条 Baseline Dataset，其中 14 条攻击样本和 86 条非攻击样本可形成安全混淆矩阵；非攻击样本中包含 6 条安全语义 hard negative。统一报告包含 citation hit rate、RAG 指标、Agent 行为指标、安全检测与处置指标、用例 Pass/Fail、Workflow Path 与 Trace ID。Baseline V1 已建立可执行的 PR/Release 质量阈值，但尚无人工标注的生产标准答案或真实线上评测数据。无 API Key 时的本地 RAG / Agent 评测是确定性启发式降级，安全指标本身为确定性断言。
 
 Baseline V1 是独立的真实回放报告：固定读取上述 100 条数据，逐条构造完整 Ticket State，Case Pass 只检查 Intent、Department、Required/Forbidden Tool、HITL 和 Approval。reference answer、expected priority、expected nodes、安全标签等字段原样保留但不参与本版判定。性能数据与当前 OTel / LangSmith Trace 同源，包含端到端及五个关键节点的 Average / P50 / P95、Input / Output / Total Token、模型、Analyzer Rule Hit Rate、LLM 调用次数和每条 Case 的 Agent Trace ID。
 
@@ -257,7 +257,9 @@ Baseline V1 是独立的真实回放报告：固定读取上述 100 条数据，
 
 每次 Baseline 完成后还会读取本次时间戳 JSON，生成同 Run ID 的 `error_analysis_<run_id>.md` 和 `error_analysis_latest.md`。该后处理只分析 FAIL Case，包含 Failure Breakdown、Intent Confusion Matrix、HITL/Approval mismatch、Tool 问题以及逐 Case Expected/Actual/Trace；过程纯离线、deterministic，不调用 LLM，不重放 LangGraph，也不修改 Dataset 或 Agent。
 
-项目已提供真实 LLM Regression 专用入口：`smoke` 固定选取 12 条并预计 27 次 Workflow LLM 调用，`full` 运行 100 条并预计 258 次；入口拒绝 Mock，需要显式 `--confirm-live`，并在报告中记录 Provider、Model、Endpoint Host、Token、成本和延迟。2026-08-26 已使用 `deepseek-v4-flash` 作为 Resolver、`qwen-turbo` 作为 Analyzer/QA 完成一次 100 条 Baseline V1：实际 217 次 LLM 调用，Case Pass Rate `0.54`，平均端到端耗时约 `2.50s`，P95 约 `4.15s`，平均总 Token `715.59`。该结果是当前 Dataset、Prompt、模型和阈值组合下的首轮实验基线，不代表生产质量结论；后续必须使用快照中的 Dataset SHA256 和完整实验配置做同口径比较。
+项目已提供真实 LLM Regression 专用入口：`smoke` 固定选取 12 条并预计 27 次 Workflow LLM 调用，`full` 运行 100 条并预计 258 次；入口拒绝 Mock，需要显式 `--confirm-live`，并在报告中记录 Provider、Model、Endpoint Host、Token、成本和延迟。2026-08-26 首次 DeepSeek + Qwen 真实 100 条 Baseline 为 Case Pass `0.54`、平均 `2.50s`、P95 `4.15s`、平均总 Token `715.59`、LLM Calls `217`；2026-08-30 在完全相同 Dataset SHA256 下复测达到 Case Pass `0.99`、平均 `1.62s`、P95 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。这些是特定 Dataset、Prompt、模型和阈值组合下的离线实验结果，不代表生产流量质量。
+
+CI/CD 采用两级门禁：PR/Push 强制使用 Mock Provider 回放固定 100 条 Workflow，要求六项行为指标全部达到确定性目标且无新失败 Case；Release Gate 需要人工确认付费调用，使用真实 LLM 完整回放，固定检查行为、P95、Token、LLM Calls 和 Analyzer Rule Hit Rate。仅 Release Gate 通过的同一 Git SHA 可由 CD 发布到 GHCR；当前没有自动部署到生产 Kubernetes 集群。
 
 ## 20. Feedback Pipeline
 
