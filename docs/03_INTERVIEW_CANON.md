@@ -95,7 +95,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | 检索 | Embedding、Hybrid RAG、BM25 风格词法打分、轻量 rerank |
 | LLM | Mock LLM、OpenAI-compatible（OpenAI / DeepSeek / Qwen / vLLM）、Azure OpenAI Provider |
 | 安全 | JWT、RBAC、PII 脱敏、确定性 Prompt Injection 规则、Qwen3Guard-Gen-0.6B 语义分类、Jailbreak、Response Filter、独立 Risk Engine |
-| 审批 | Human-in-the-Loop、工单状态机 |
+| 审批 | Human-in-the-Loop、工单状态机、高风险 ToolAction 状态机 |
 | 可观测 | OpenTelemetry、LangSmith、Prometheus、Grafana |
 | 部署与验证 | Docker、Docker Compose、Kubernetes manifests、pytest、GitHub Actions |
 
@@ -118,7 +118,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 9. Tool 数量与 Tool Calling
 
-当前 ToolRegistry 中注册 **4 个 Tool**：
+当前 ToolRegistry 中注册 **5 个 Tool**：
 
 | Tool | 权限 | 当前用途 |
 |---|---|---|
@@ -126,8 +126,11 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | 订单历史查询 | agent 及以上 | 返回近期订单、状态和付款信息 |
 | 历史工单查询 | agent 及以上 | 返回过去工单与处理结果 |
 | 退款资格初筛 | manager 及以上 | 高风险 Mock 初筛；主 Workflow 不会自动调用 |
+| 创建退款请求 | manager 及以上 | 高风险 Mock 写 Tool；只能使用已批准 Action 的一次性执行授权，主 Workflow 不会自动调用 |
 
-前三个为读工具，其中客户画像和历史工单在正常请求中调用；订单工具只在账单、物流或相关订单意图下调用。每次调用经过 Schema 校验、RBAC、超时控制和审计记录，并返回是否允许、状态、耗时、Mock 标记和错误信息。
+前四个为读工具，其中客户画像和历史工单在正常请求中调用；订单历史只在账单、物流或相关订单意图下调用。每次调用经过 Schema、RBAC、策略门禁和 Resilience，并持久化脱敏审计。
+
+高风险写 Tool 采用独立 `ToolAction` 状态机：`proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown`。参数加密存储并使用 HMAC 防篡改；提议人不能批准自己的 Action；版本号阻止并发重复执行；未审批、越权、跨客户或 payload hash 不匹配均在 Handler 之前被拒绝。
 
 所有这些 Tool 当前均是本地 Mock Adapter。不得说成已经接入真实 CRM、OMS、工单系统，或能够执行真实退款、改订单、写 CRM 等操作。
 
@@ -202,7 +205,7 @@ Prompt Injection 不再只是英文关键词检测，当前实现为确定性多
 | 本地默认 | SQLite | 降低启动门槛，支持无额外服务运行 |
 | Docker Compose | PostgreSQL | 提供更接近生产的并发与连接池环境 |
 
-持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、`AgentRun`、`AgentRunLink` 和 `FeedbackEvent`。当前没有数据库迁移工具、读写分离、分库分表、`ticket_status_events` 审计表或多租户数据隔离。
+持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、`AgentRun`、`AgentRunLink`、`FeedbackEvent`、`ToolAction`、`ToolActionEvent` 和 `ToolInvocationAudit`。当前没有数据库迁移工具、读写分离、分库分表、`ticket_status_events` 审计表或多租户数据隔离。
 
 ## 16. Redis
 
@@ -326,7 +329,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
 | 工具、LLM、RAG 或 QA 异常 | 外部能力或 Provider 可能失败 | 统一故障分类、有界 Retry、进程内 Circuit Breaker、LLM/RAG Fallback、安全降级与人工审批；高风险/非幂等写 Tool 不重试 | 不要说已实现分布式 Breaker、消息队列/DLQ、写操作幂等对账或生产故障演练 |
 | 会话历史未进入推理 | 历史当前只保存和读取 | 将其作为后续改造项 | 不要说系统已经具备多轮上下文推理 |
-| 工具审计不持久化 | 审计记录当前驻留进程内并可随响应返回 | 作为后续审计表改造项 | 不要说已有完整合规审计平台 |
+| Tool 高风险写入的不确定结果 | Tool 调用审计和 Action Event 已持久化，不确定写结果进入 `unknown` | 禁止自动重试，保留 Trace 与审计关联，后续对账 | 不要说已实现分布式幂等、Outbox 或自动 Reconciliation Worker |
 | Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；本地启动前检不可达时跳过 exporter，Collector 恢复后重启 Backend 恢复上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |
 | Feedback 新表迁移 | 当前使用 SQLAlchemy `create_all` 创建新表 | 本地可直接运行；生产发布前补 Alembic migration | 不要说已经具备生产 Schema Migration |
 | 多层安全检测覆盖边界 | 确定性规范化、特征、启发式和编码载荷，再接 Qwen3Guard 语义分类 | 输入、Tool、RAG 命中 Unsafe 时阻断，Guard 失败时隔离外部上下文并转人工 | 不要说默认已启用 Guard 服务或已建成完整攻防平台 |
@@ -341,7 +344,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 3. 增加 vLLM 自托管 Serving，并采集 TTFT、TPOT、吞吐、并发和 Token 成本；当前尚未实现。
 4. 为知识文档与检索 metadata 增加 `tenant_id`，强制 `tenant_id + kb_version` 过滤，实现多租户隔离测试。
 5. 抽象 `SearchBackend`，保留 Chroma 本地方案并设计 OpenSearch Hybrid Search 方案。
-6. 增加 `ticket_status_events` 和持久化 Tool Calling 审计记录。
+6. 增加 `ticket_status_events`，并将 Tool Governance 扩展为带业务幂等键、Outbox 和自动对账的 V2.2。
 7. 完成客服工作台，展示工单、AI 草稿、Tool Context、citation、QA、风险原因与审批动作。
 8. 引入 Prompt Registry、内容快照、灰度和回滚，并按版本关联质量与成本指标。
 9. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
@@ -354,7 +357,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 
 1. 已实现、部分实现、规划中和未知信息必须明确区分。
 2. 所有 CRM、OMS、Ticketing、退款初筛和默认 LLM 均为 Mock，除非代码与凭据明确变为真实集成。
-3. Agent 数量固定表述为 6 个逻辑节点；Tool 数量固定表述为 4 个注册 Tool，直至代码发生变化。
+3. Agent 数量固定表述为 6 个逻辑节点；Tool 数量固定表述为 5 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
 4. MCP 数量为 0；独立 TaskState、Checkpoint、动态 Planner、自动 Reflection 和 pgvector 均未采用，直至代码发生变化。
 5. Redis 是可选短期缓存，SQL 是持久化兜底；会话历史尚未注入 Agent 推理。
 6. ChromaDB 是当前向量数据库；Hybrid RAG 是当前检索方案。

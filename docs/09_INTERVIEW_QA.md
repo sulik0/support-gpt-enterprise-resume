@@ -8,7 +8,7 @@
 
 这是一个面向企业售后客服场景的、可本地运行的生产风格 Agent 平台。它把初版 FAQ / RAG 问答扩展为一条完整的客服处理链：先理解工单和识别风险，再补充客户、订单与历史工单上下文，检索售后知识，生成回复草稿，执行 QA 和输出过滤，最后决定是否进入人工审批。
 
-平台目前有 6 个逻辑 Agent 节点、4 个注册 Tool，使用 LangGraph 编排，使用 ChromaDB 做 Hybrid RAG，使用 SQLAlchemy 持久化工单与审批，Redis 作为可选短期会话缓存，并通过 Prometheus 和 OpenTelemetry 做可观测性。CRM、OMS、工单工具与默认 LLM 都是本地 Mock，不是已接入的真实企业系统。
+平台目前有 6 个逻辑 Agent 节点、5 个注册 Tool，使用 LangGraph 编排，使用 ChromaDB 做 Hybrid RAG，使用 SQLAlchemy 持久化工单、审批、Tool Action 与调用审计，Redis 作为可选短期会话缓存，并通过 Prometheus 和 OpenTelemetry 做可观测性。CRM、OMS、工单工具与默认 LLM 都是本地 Mock，不是已接入的真实企业系统。
 
 ### 2. 为什么传统 FAQ 系统无法满足售后场景？
 
@@ -243,7 +243,7 @@ Tool 能访问客户、订单和工单事实，未来还可能产生退款、取
 
 ### 36. 如何限制高风险工具？
 
-通过最低角色、输入 Schema、显式注册、超时、审计和不在主 Workflow 自动调用来限制。真实高风险工具还应增加审批凭证、幂等键、金额限制、双人复核和不可重试策略。
+通过最低角色、输入 Schema、显式注册、超时、持久化审计和不在主 Workflow 自动调用来限制。高风险写 Tool 还必须先创建加密 Action，由不同 manager/admin 审批，执行时校验 payload HMAC 与 expected version。当前尚缺业务幂等键、Outbox、金额限制和自动结果对账。
 
 项目当前只实现前一组基础治理，没有真实资金工具。
 
@@ -261,9 +261,7 @@ Tool 能访问客户、订单和工单事实，未来还可能产生退款、取
 
 ### 39. 如何记录工具调用审计？
 
-每次调用记录工具名、调用角色、工单 ID、是否允许、状态、耗时、是否 Mock 和错误。API 会把去除实际结果后的审计信息返回给前端，OpenTelemetry Span 也记录核心属性。
-
-当前 Registry 的审计日志保存在进程内，没有持久化审计表。因此可以说“生成并暴露工具调用审计”，不能说“已建立完整合规审计平台”。
+每次调用持久化工具/版本、调用角色、工单/Action、Request/Trace ID、是否允许、状态、尝试次数、耗时和 Mock 标记。为减少敏感数据副本，表中只保存 payload HMAC、字段名和脱敏结果，不保存原始参数与异常正文。主管可通过 `/tool-audits` 查询，OTel Span 关联 audit/action ID。这是项目级持久化审计，但不应夸大为已通过合规认证的企业审计平台。
 
 ## 六、RAG 知识库
 
@@ -669,7 +667,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 最大问题是缺少能量化质量的 Golden Set 和真实业务数据。现有 RAGAS/DeepEval Adapter 与本地启发式指标能跑通管道，但无法证明真实召回、Faithfulness 或业务收益。
 
-其次是业务系统仍为 Mock、会话历史未注入推理、审计未持久化、无多租户隔离和生产 Trace 后端。
+其次是业务系统仍为 Mock、会话历史未注入推理、无多租户隔离和生产 Trace 后端。Tool 审计已持久化，但真实写 Tool 仍缺业务幂等、Outbox 和自动对账。
 
 ### 104. 如果用户问一个知识库没有的问题怎么办？
 
@@ -723,7 +721,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 - 只引用 `03_INTERVIEW_CANON.md` 中可证实的事实。
 - CRM、OMS、历史工单、退款初筛和默认 LLM 必须明确为 Mock。
-- 当前是 6 个逻辑 Agent 节点、4 个注册 Tool、0 个 MCP。
+- 当前是 6 个逻辑 Agent 节点、5 个注册 Tool、0 个 MCP。
 - 当前没有 TaskState、Checkpoint、动态 Planner、自动 Reflection、分布式 Circuit Breaker / Queue / DLQ、pgvector、Milvus 或生产级搜索后端。
 - 当前没有真实上线指标、P95/QPS 基准、真实客户数据或业务提升百分比。
 - 个人职责和是否独立开发必须按本人真实经历回答，不能根据仓库推断。

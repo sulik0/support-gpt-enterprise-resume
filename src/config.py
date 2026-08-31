@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     LLM_FALLBACK_MODEL_NAME: Optional[str] = Field(default=None)
     LLM_FALLBACK_BASE_URL: Optional[str] = Field(default=None)
     LLM_FALLBACK_API_KEY: Optional[str] = Field(default=None)
+    # Tool Governance V2：本地可从 JWT_SECRET 派生，生产应使用独立 Fernet Key。
+    TOOL_POLICY_VERSION: str = Field(default="tool-policy-v2.1")
+    TOOL_ACTION_ENCRYPTION_KEY: Optional[str] = Field(default=None)
     PROMPT_VERSION: str = Field(default="support-v1")
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。

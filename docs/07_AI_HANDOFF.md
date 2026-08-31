@@ -80,19 +80,19 @@
 
 - 真实 CRM/OMS/Ticketing 尚未接入。
 - 多轮 Memory 已存储，尚未系统性注入 Prompt。
-- Tool 调用记录可返回，但 Registry 完整审计尚未持久化。
+- Tool 调用已持久化脱敏审计；高风险写 Tool 必须经 `ToolAction` 状态机和职责分离审批，Agent Workflow 不会自动执行。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未基于真实运营数据校准。
 - Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
 - Docker Compose/Kubernetes 是可复现模板，不代表生产上线。
-- Resilience 当前是单进程 V1，没有分布式 Breaker、Queue / DLQ 和写 Tool 幂等对账。
+- Resilience 当前是单进程 V1，Tool Governance 为 V2.1；没有分布式 Breaker、Queue / DLQ、Outbox 和写 Tool 幂等/自动对账。
 - 真实 Baseline V1 在同一固定 100 条 Dataset 上经归因优化后通过率为 0.99，仍不等于生产业务指标。
 
 ## 当前优先级
 
 1. 为 Feedback 表引入 Alembic migration。
-2. 为 Resilience V1 增加故障注入、多副本 Breaker 与写 Tool 幂等对账设计。
+2. 为 Resilience V1 增加故障注入、多副本 Breaker，并将 Tool Governance 升级为带幂等键、Outbox 和自动对账的 V2.2。
 3. 建设 Dataset Registry、人工复核与数据保留策略。
-4. 增强 Tool 与 Ticket State 的持久化审计。
+4. 增加 `ticket_status_events`，Tool 审计不再是待办。
 5. 使用 Shadow Mode 校准 Qwen3Guard 与 Risk Engine。
 
 最终任务清单始终以 `08_TODO.md` 为准。

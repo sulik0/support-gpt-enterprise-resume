@@ -46,6 +46,9 @@ TOOL_CALL_DURATION_SECONDS = meter.create_histogram(
     unit="s",
     description="ToolRegistry call duration",
 )
+TOOL_ACTION_TRANSITIONS_TOTAL = meter.create_counter(
+    "tool_action_transitions", description="Total governed Tool Action transitions"
+)
 HUMAN_APPROVALS_TOTAL = meter.create_counter(
     "human_approvals", description="Total human approval workflow events"
 )

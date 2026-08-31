@@ -282,13 +282,25 @@ Tool Calling 通过 ToolRegistry 实现，所有业务工具都必须从该入�
 | 职责 | 对工具定义、参数、权限、超时、Mock 标记和审计进行统一治理 |
 | 输入 | 工具名称、结构化参数、调用角色、工单 ID |
 | 输出 | 工具结果及包含允许状态、执行状态、耗时、错误、Mock 标记的审计记录 |
-| 当前工具 | 客户画像、订单历史、历史工单、退款资格初筛 |
+| 当前工具 | 客户画像、订单历史、历史工单、退款资格初筛、创建 Mock 退款请求 |
 | 调用策略 | 正常工作流中始终读取客户画像和历史工单；仅相关部门或意图读取订单；退款资格初筛为 manager 级工具，当前主流程不会自动调用 |
 | 设计原因 | 客服上下文需要结构化事实，且退款等能力不能由 LLM 无约束触发 |
 | 可替代方案 | OpenAI Function Calling、JSON-RPC、gRPC、直接 HTTP Client、MCP |
-| 最终取舍 | 本地 Registry 依赖少、可测试、适合 Mock；代价是工具目录和审计尚未持久化，且跨进程共享能力有限 |
+| 最终取舍 | 本地 Registry 依赖少、可测试、适合 Mock；调用审计已持久化，但工具发现仍是单进程静态注册 |
 
-### 7.2 MCP
+### 7.2 高风险 Action 状态机与持久化审计
+
+| 维度 | 当前设计 |
+|---|---|
+| 职责 | 将高风险写 Tool 从 Agent 自动路由中隔离，强制提议、审批、执行和终态审计 |
+| 输入 | Ticket、Tool 名、结构化 payload、intent、当前用户与 expected version |
+| 输出 | `ToolAction`、Append-only `ToolActionEvent`、`ToolInvocationAudit` 和脱敏 API 视图 |
+| 设计原因 | 资金类写操作不能因 LLM 错误路由、重放或审批绕过直接产生副作用 |
+| 可替代方案 | 仅 RBAC、通用审批表、消息队列 Saga、外部 Workflow Engine |
+| 最终选择 | 使用确定性状态机，有效路径为 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` |
+| 工程权衡 | 参数使用 Fernet 加密与 HMAC 防篡改，审计只存脱敏摘要；为了职责分离，提议人不能自批。当前没有业务幂等键、Outbox 和自动对账 Worker，因此真实写 Tool 仍不能上线 |
+
+### 7.3 MCP
 
 当前项目**没有集成 MCP（Model Context Protocol）**，因此不存在任何运行时 MCP Client、MCP Server、MCP Tool、MCP Resource 或 MCP Prompt 调用。
 
@@ -544,7 +556,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | Agent 编排 | 固定 LangGraph 六节点图 | 安全、可测试、可观测 | 自由 ReAct、动态多 Agent 协商 |
 | 状态 | 单一 `AgentState` | 当前流程短且线性 | 独立 TaskState、持久化执行状态 |
 | 路由 | 规则驱动条件边 | 高风险业务需要可解释性 | LLM Selector |
-| 工具 | ToolRegistry + Mock Adapter | Schema、RBAC、超时、审计 | Agent 直接调用外部服务 |
+| 工具 | ToolRegistry + Mock Adapter + ToolAction | Schema、RBAC、持久化审计与高风险审批状态机 | Agent 直接调用外部服务 |
 | 协议 | 本地工具协议 | 本地可复现、依赖少 | MCP（当前未集成） |
 | 检索 | ChromaDB Hybrid RAG | 兼顾语义与精确词，适合 Demo | 纯向量、生产搜索集群 |
 | 记忆 | SQL 持久化 + 可选 Redis | Redis 故障不阻断流程 | Redis 强依赖、向量长期记忆 |

@@ -16,7 +16,8 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | Agent Workflow | Analyzer、Tooling、Retriever、Resolver、QA、Escalation；Tool/RAG 并行执行 |
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
-| Tool Calling | CRM、OMS、Ticket Mock Adapter；ToolRegistry、Schema、RBAC、风险控制 |
+| Tool Calling | 5 个 CRM / OMS / Ticket Mock Tool；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
+| Tool Governance | 高风险写 Action 状态机、参数加密/HMAC、职责分离审批与乐观版本防重放 |
 | Safety | 多层 Prompt Injection 规则、Qwen3Guard Adapter、Risk Engine、PII/泄露过滤 |
 | HITL | 高风险、低置信度、低 QA、投诉与退款场景审批 |
 | Observability | OpenTelemetry 统一采集，Collector 导出 LangSmith Trace 和 Prometheus Metrics |

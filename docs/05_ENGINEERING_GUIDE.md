@@ -298,5 +298,7 @@ docker compose -f deployment/docker-compose.yml up --build
 - Pydantic Schema 应提供合理默认值和字段描述。
 - 数据库使用 `AsyncSession`，明确事务边界。
 - 新 Tool 必须注册到 ToolRegistry，配置 Schema、permission、risk level 和审计字段。
+- 高风险 `WRITE` Tool 不得加入 Agent 自动路由；必须使用 `/tool-actions` 提议，由不同 manager/admin 审批，再携带 expected version 执行。
+- `TOOL_ACTION_ENCRYPTION_KEY` 生产必须使用独立 Fernet Key；审计表只保存 payload HMAC、字段名和脱敏结果，不得新增原始参数或异常正文字段。
 - 改动 Agent 节点时同步 State、Trace、Metrics、确定性测试和 Baseline 评测。
 - 不得提交 `.env`、API Key、业务评测报告或训练候选数据。

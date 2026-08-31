@@ -206,3 +206,112 @@ class FeedbackEvent(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     agent_run = relationship("AgentRun", back_populates="feedback_events")
+
+
+class ToolAction(Base):
+    """持久化高风险 Tool 的提议、审批和执行状态。"""
+
+    __tablename__ = "tool_actions"
+
+    id = Column(String(36), primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False, index=True)
+    tool_name = Column(String(160), nullable=False, index=True)
+    tool_version = Column(String(50), nullable=False)
+    intent = Column(String(80), nullable=False)
+    risk_level = Column(String(30), nullable=False)
+    operation_type = Column(String(20), nullable=False)
+    status = Column(String(40), nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    policy_version = Column(String(100), nullable=False)
+    payload_encrypted = Column(Text, nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    payload_summary = Column(JSON, nullable=False, default=dict)
+    result_summary = Column(JSON, nullable=True)
+    error_type = Column(String(80), nullable=True)
+    failure_reason = Column(String(255), nullable=True)
+    request_id = Column(String(128), nullable=False, index=True)
+    trace_id = Column(String(32), nullable=True, index=True)
+    proposed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    proposed_by_role = Column(String(50), nullable=False)
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_by_role = Column(String(50), nullable=True)
+    executed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    review_comment = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime, default=datetime.datetime.utcnow, nullable=False, index=True
+    )
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+    reviewed_at = Column(DateTime, nullable=True)
+    execution_started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    events = relationship(
+        "ToolActionEvent",
+        back_populates="tool_action",
+        cascade="all, delete-orphan",
+        order_by="ToolActionEvent.sequence",
+    )
+
+
+class ToolActionEvent(Base):
+    """以 Append-only 方式保存 Tool Action 的每次合法迁移。"""
+
+    __tablename__ = "tool_action_events"
+    __table_args__ = (
+        UniqueConstraint("tool_action_id", "sequence", name="uq_tool_action_event"),
+    )
+
+    id = Column(String(36), primary_key=True)
+    tool_action_id = Column(
+        String(36), ForeignKey("tool_actions.id"), nullable=False, index=True
+    )
+    sequence = Column(Integer, nullable=False)
+    action = Column(String(60), nullable=False)
+    from_status = Column(String(40), nullable=True)
+    to_status = Column(String(40), nullable=False)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_role = Column(String(50), nullable=True)
+    request_id = Column(String(128), nullable=False, index=True)
+    trace_id = Column(String(32), nullable=True, index=True)
+    details = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    tool_action = relationship("ToolAction", back_populates="events")
+
+
+class ToolInvocationAudit(Base):
+    """持久化 ToolRegistry 每次允许、拒绝或执行的脱敏审计摘要。"""
+
+    __tablename__ = "tool_invocation_audits"
+
+    id = Column(String(36), primary_key=True)
+    tool_action_id = Column(
+        String(36), ForeignKey("tool_actions.id"), nullable=True, index=True
+    )
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=True, index=True)
+    request_id = Column(String(128), nullable=False, index=True)
+    trace_id = Column(String(32), nullable=True, index=True)
+    tool_name = Column(String(160), nullable=False, index=True)
+    tool_version = Column(String(50), nullable=False)
+    operation_type = Column(String(20), nullable=False)
+    risk_level = Column(String(30), nullable=False)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_role = Column(String(50), nullable=False)
+    allowed = Column(Boolean, nullable=False)
+    status = Column(String(60), nullable=False, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    latency_ms = Column(Float, nullable=False, default=0.0)
+    mocked = Column(Boolean, nullable=False, default=False)
+    error_type = Column(String(80), nullable=True)
+    payload_hash = Column(String(64), nullable=False)
+    payload_keys = Column(JSON, nullable=False, default=list)
+    result_summary = Column(JSON, nullable=True)
+    policy_version = Column(String(100), nullable=False)
+    created_at = Column(
+        DateTime, default=datetime.datetime.utcnow, nullable=False, index=True
+    )

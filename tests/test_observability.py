@@ -16,6 +16,7 @@ from src.observability.metrics import (
     LLM_TOKENS_TOTAL,
     SEMANTIC_GUARD_CHECKS_TOTAL,
     SEMANTIC_GUARD_DURATION_SECONDS,
+    TOOL_ACTION_TRANSITIONS_TOTAL,
     TOOL_CALLS_TOTAL,
     TRAINING_CANDIDATES_TOTAL,
 )
@@ -99,6 +100,7 @@ def test_otel_metric_instruments_record_natively():
     assert instrument_name(AGENT_REQUESTS_TOTAL) == "agent_requests"
     assert instrument_name(AGENT_NODE_DURATION_SECONDS) == "agent_node_duration_seconds"
     assert instrument_name(TOOL_CALLS_TOTAL) == "agent_tool_calls"
+    assert instrument_name(TOOL_ACTION_TRANSITIONS_TOTAL) == "tool_action_transitions"
     assert instrument_name(HUMAN_APPROVALS_TOTAL) == "human_approvals"
     assert instrument_name(FEEDBACK_EVENTS_TOTAL) == "feedback_events"
     assert instrument_name(TRAINING_CANDIDATES_TOTAL) == "training_candidates"

@@ -32,6 +32,7 @@
 - [x] 建立真实 LLM Release Quality Gate：显式付费确认、调用预算、行为/延迟/Token/LLM Calls 阈值与 Actions Artifact。
 - [x] 建立门禁后 CD：仅对通过 Release Gate 的同一 Git SHA 构建镜像，发布 GHCR 不可变 SHA Tag 并生成 Provenance Attestation。
 - [x] 完成 Resilience V1：LLM/RAG/Tool 统一故障分类、超时、有界 Retry、进程内 Circuit Breaker、Fallback、AgentState/Risk/OTel 联动与高风险禁重试。
+- [x] 完成 Tool Governance V2.1：Tool 调用脱敏持久化审计，高风险写 Action 加密/HMAC、职责分离审批、乐观版本和 Append-only 状态事件。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -42,10 +43,10 @@
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
 - [ ] 增加 Prompt Registry、内容快照、灰度和回滚门禁。
 - [x] 基于首次真实 100 条 Baseline 完成归因修复，Case Pass 由 `0.54` 提升到 `0.99`，固化 Release Gate 阈值与已知失败 Case 白名单。
-- [ ] 增加 Tool Calling 完整持久化审计与 `ticket_status_events`。
+- [ ] 增加 `ticket_status_events`；Tool Calling 持久化审计已在 V2.1 完成。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。
-- [ ] 建设 Resilience V2：分布式 Circuit Breaker、故障注入/混沌测试、写 Tool 幂等键与结果对账，并评估 Queue / DLQ。
+- [ ] 建设 Resilience / Tool Governance V2.2：分布式 Circuit Breaker、故障注入/混沌测试、写 Tool 业务幂等键、Outbox 与 `unknown` 结果自动对账，并评估 Queue / DLQ。
 
 ## P2
 

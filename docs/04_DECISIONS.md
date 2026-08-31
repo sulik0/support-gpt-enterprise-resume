@@ -228,7 +228,7 @@ Agent 工作流涉及异步数据库访问、可选 Redis、外部 LLM 和检索
 
 ### 工程权衡
 
-当前 Registry 审计仍在进程内，尚未持久化；工具是本地 Mock Adapter，不能被表述为真实企业系统集成。
+当前调用审计已持久化，高风险写 Tool 已强制独立审批 Action；但工具仍是本地 Mock Adapter，不能被表述为真实企业系统集成。真实写入仍需幂等键、Outbox 与结果对账。
 
 ## 决策 8：暂不采用 MCP
 
@@ -670,7 +670,7 @@ Agent 系统既需要运营指标，也需要排查“哪一步慢、哪一步�
 
 ### 工程权衡
 
-统一 Collector 降低应用侧多套 SDK 的维护和脱敏成本，但 Collector 成为需要监控与容量规划的基础设施；工具审计仍尚未持久化。
+统一 Collector 降低应用侧多套 SDK 的维护和脱敏成本，但 Collector 成为需要监控与容量规划的基础设施；Tool 业务审计另行持久化到 SQL，不依赖 Trace 后端作为唯一证据。
 
 ## 决策 21：采用 Docker Compose、分层依赖和 Python 3.11 CI
 
@@ -809,13 +809,38 @@ CD 只监听成功的 `Release Quality Gate`，使用该 Workflow 的 `head_sha`
 
 当前没有具体生产集群与凭据，因此 CD 终止于受控镜像交付，不伪造自动部署。未来接入集群后，应使用不可变 SHA Tag 或 Digest 部署，并增加灰度健康检查与自动回滚。
 
+## 决策 26：高风险写 Tool 采用持久化 Action 状态机
+
+### 问题背景
+
+退款等写操作具有业务副作用，仅依赖 Prompt、RBAC 或一个布尔审批字段，无法防止 LLM 误调、自批、并发重放和参数篡改。
+
+### 候选方案
+
+- 仅使用 RBAC 限制 manager
+- 复用回复审批表
+- 应用内确定性 Action 状态机
+- 直接引入 Temporal / Camunda 等外部 Workflow Engine
+
+### 最终方案
+
+新建 `ToolAction`、Append-only `ToolActionEvent` 和 `ToolInvocationAudit`。高风险写 Tool 只能按 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` 迁移；执行前校验角色、intent、Ticket 归属、payload HMAC、审批授权和 expected version。
+
+### 为什么选择
+
+当前只有少量高风险动作，应用内状态机可以用较小依赖建立不可绕过的安全边界，并与现有 FastAPI、SQLAlchemy、RBAC 和 OTel 直接集成。
+
+### 工程权衡
+
+Action 参数使用 Fernet 加密，HMAC 用于执行前完整性校验，审计表不保存原始参数和异常正文。状态机已为不确定写结果保留 `unknown/reconciling`，但 V2.1 没有自动 Reconciliation Worker、Outbox、分布式锁或业务幂等键；新表仍依赖 `create_all`，生产需补 Alembic Migration。
+
 ## 决策总览
 
 | 领域 | 最终决策 | 当前边界 |
 |---|---|---|
 | Agent 编排 | LangGraph 固定六节点图 | 无动态 Planner / 自治协商 |
 | 状态 | 单一 AgentState | 无 TaskState / Checkpoint |
-| 工具 | ToolRegistry + Mock Adapter | 无 MCP、审计未持久化 |
+| 工具 | ToolRegistry + Mock Adapter + 持久化 ToolAction | 无 MCP；写 Tool 仍为 Mock，无幂等/Outbox/自动对账 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |
 | 安全 | 用户 / Tool / RAG 规则 + Qwen3Guard + Risk Engine，输出 Filter + QA | 语义安全默认关闭，尚无真实业务攻击集校准与生产可用性数据 |
 | RAG | ChromaDB Hybrid RAG | 无 pgvector、无生产搜索后端 |

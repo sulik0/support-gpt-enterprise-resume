@@ -63,6 +63,12 @@ from src.models.schemas import (
     TicketSentimentResponse,
     TicketSummaryResponse,
     Token,
+    ToolActionCreateRequest,
+    ToolActionDecisionRequest,
+    ToolActionExecuteRequest,
+    ToolActionPageResponse,
+    ToolActionResponse,
+    ToolInvocationAuditPageResponse,
     UserCreate,
     UserFeedbackRequest,
     UserResponse,
@@ -83,11 +89,44 @@ from src.observability.tracing import (
 )
 from src.tickets.state_machine import TicketAction, ticket_state_machine
 from src.tools.crm import crm_tool
+from src.tools.audit import tool_audit_repository
+from src.tools.audit_context import begin_tool_audit_scope, finish_tool_audit_scope
+from src.tools.governance import tool_governance_service
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
 
 tracer = get_tracer(__name__)
 logger = logging.getLogger("supportgpt.main")
+
+
+async def _run_workflow_with_tool_audit(
+    db: AsyncSession, initial_state: dict
+) -> dict:
+    """并行 Tool 只收集审计，由主请求会话统一持久化。"""
+    token = begin_tool_audit_scope()
+    workflow_error: Exception | None = None
+    output: dict = {}
+    try:
+        output = await run_agent_workflow(initial_state)
+    except Exception as exc:
+        workflow_error = exc
+    finally:
+        audit_records = finish_tool_audit_scope(token)
+
+    try:
+        await tool_audit_repository.persist_many(db, audit_records)
+        if audit_records:
+            await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Unable to persist required Tool audit: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Tool audit could not be persisted.",
+        ) from exc
+    if workflow_error:
+        raise workflow_error
+    return output
 
 
 async def _record_agent_run_fail_open(
@@ -190,14 +229,15 @@ async def _process_ticket_with_agent(
     require_persisted_result: bool = False,
 ) -> tuple[dict, int | None, AgentRun | None]:
     """执行并持久化工单 Workflow，供创建工单和对话入口复用。"""
-    agent_output = await run_agent_workflow(
+    agent_output = await _run_workflow_with_tool_audit(
+        db,
         {
             "ticket_id": ticket.id,
             "customer_id": ticket.customer_id,
             "subject": ticket.subject,
             "description": ticket.description,
             "kb_version": kb_version,
-        }
+        },
     )
     ticket.sentiment = agent_output.get("sentiment")
     ticket.priority = agent_output.get("priority")
@@ -564,7 +604,7 @@ async def summarize_ticket(
         "description": ticket.description,
         "kb_version": req.kb_version,
     }
-    agent_output = await run_agent_workflow(initial_state)
+    agent_output = await _run_workflow_with_tool_audit(db, initial_state)
 
     summary = f"The customer is reporting an issue regarding '{ticket.subject}'. Category: {agent_output.get('department')}."
     key_issues = [ticket.subject, f"Detected Intent: {agent_output.get('intent')}"]
@@ -596,7 +636,7 @@ async def suggest_response(
         "description": ticket.description,
         "kb_version": req.kb_version,
     }
-    agent_output = await run_agent_workflow(initial_state)
+    agent_output = await _run_workflow_with_tool_audit(db, initial_state)
 
     # 先结束读取事务，再使用隔离事务写入反馈域。
     await db.commit()
@@ -656,7 +696,7 @@ async def analyze_sentiment(
         "description": ticket.description,
         "kb_version": req.kb_version,
     }
-    agent_output = await run_agent_workflow(initial_state)
+    agent_output = await _run_workflow_with_tool_audit(db, initial_state)
 
     return TicketSentimentResponse(
         ticket_id=ticket.id,
@@ -684,7 +724,7 @@ async def recommend_escalation(
         "description": ticket.description,
         "kb_version": req.kb_version,
     }
-    agent_output = await run_agent_workflow(initial_state)
+    agent_output = await _run_workflow_with_tool_audit(db, initial_state)
 
     return TicketEscalationResponse(
         ticket_id=ticket.id,
@@ -854,6 +894,122 @@ async def process_approval(
         final_response=record.modified_response or record.drafted_response,
         latency_seconds=record.latency_seconds or 0.0,
         approved_at=datetime.datetime.utcnow(),
+    )
+
+
+# --- HIGH-RISK TOOL GOVERNANCE APIS ---
+@app.post(
+    "/tool-actions",
+    response_model=ToolActionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_tool_action(
+    req: ToolActionCreateRequest,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
+    """只创建待审批 Action，此接口绝不执行高风险 Tool。"""
+    action = await tool_governance_service.propose(
+        db,
+        ticket_id=req.ticket_id,
+        tool_name=req.tool_name,
+        payload=req.payload,
+        intent=req.intent,
+        proposer=current_user,
+    )
+    await db.commit()
+    return await tool_governance_service.get(db, action.id)
+
+
+@app.get("/tool-actions", response_model=ToolActionPageResponse)
+async def list_tool_actions(
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    action_status: str | None = Query(default=None, alias="status"),
+    tool_name: str | None = Query(default=None),
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """供主管查询高风险动作队列与完整状态。"""
+    actions, total = await tool_governance_service.list_actions(
+        db,
+        limit=limit,
+        offset=offset,
+        action_status=action_status,
+        tool_name=tool_name,
+    )
+    return ToolActionPageResponse(
+        items=actions, total=total, limit=limit, offset=offset
+    )
+
+
+@app.get("/tool-actions/{action_id}", response_model=ToolActionResponse)
+async def get_tool_action(
+    action_id: str,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取 Action 脱敏视图与 Append-only 事件。"""
+    return await tool_governance_service.get(db, action_id)
+
+
+@app.post("/tool-actions/{action_id}/decision", response_model=ToolActionResponse)
+async def decide_tool_action(
+    action_id: str,
+    req: ToolActionDecisionRequest,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """审批人必须为 manager/admin，且不能批准自己的提议。"""
+    action = await tool_governance_service.decide(
+        db,
+        action_id=action_id,
+        decision=req.decision,
+        expected_version=req.expected_version,
+        reviewer=current_user,
+        comment=req.comment,
+    )
+    await db.commit()
+    return await tool_governance_service.get(db, action.id)
+
+
+@app.post("/tool-actions/{action_id}/execute", response_model=ToolActionResponse)
+async def execute_tool_action(
+    action_id: str,
+    req: ToolActionExecuteRequest,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """仅执行已批准且版本匹配的 Action，重复请求会被状态机拒绝。"""
+    return await tool_governance_service.execute(
+        db,
+        action_id=action_id,
+        expected_version=req.expected_version,
+        executor=current_user,
+    )
+
+
+@app.get("/tool-audits", response_model=ToolInvocationAuditPageResponse)
+async def list_tool_audits(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tool_name: str | None = Query(default=None),
+    audit_status: str | None = Query(default=None, alias="status"),
+    action_id: str | None = Query(default=None),
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """供主管按 Tool、状态或 Action 查询持久化审计。"""
+    records, total = await tool_audit_repository.list_records(
+        db,
+        limit=limit,
+        offset=offset,
+        tool_name=tool_name,
+        status=audit_status,
+        action_id=action_id,
+    )
+    return ToolInvocationAuditPageResponse(
+        items=records, total=total, limit=limit, offset=offset
     )
 
 

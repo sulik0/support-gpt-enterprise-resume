@@ -179,7 +179,8 @@ resolved / closed --reopen--> in_progress
 | API 入口 | `src/main.py` | FastAPI 应用、鉴权、聊天、工单、审批、评测、Metrics 与 HTTP Trace |
 | Agent Graph | `src/agents/graph.py` | `AgentState`、节点编排、安全条件路由、token/成本/延迟汇总 |
 | Agent 节点 | `src/agents/` | Analyzer、Tooling、Retriever、Resolver、QA、Escalation |
-| Tool Registry | `src/tools/registry.py` | 工具注册、Schema、RBAC、超时、内存审计和 Trace |
+| Tool Registry | `src/tools/registry.py` | 工具注册、Schema、RBAC、风险策略、执行和 Trace |
+| Tool Governance | `src/tools/governance.py` | 高风险写 Action 的加密提议、职责分离审批、状态机和持久化审计 |
 | Mock Adapter | `src/tools/crm.py`、`order_mgmt.py`、`ticketing.py` | 模拟 CRM、OMS 和历史工单系统 |
 | LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure，并支持 Analyzer/QA 独立 Fast Model 路由 |
 | Guardrails | `src/guardrails/` | PII 脱敏、Prompt Injection、Jailbreak 和 Response Filter |
@@ -188,7 +189,7 @@ resolved / closed --reopen--> in_progress
 | 记忆 | `src/memory/redis_memory.py` | Redis 可选会话历史存储与降级 |
 | 审批 | `src/approval/workflows.py` | 创建待审批记录，处理通过、修改、拒绝和审批延迟 |
 | 工单状态机 | `src/tickets/state_machine.py` | 工单合法状态与动作约束 |
-| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval 和 API Schema |
+| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval、AgentRun、Feedback 与 Tool Action/Audit |
 | 评测 | `src/evaluation/` | RAGAS / DeepEval Adapter、本地指标与统一评测入口 |
 | 可观测 | `src/observability/` | Prometheus Metrics、token/成本估算和 OpenTelemetry Trace |
 | 部署 | `deployment/`、`monitoring/` | Docker、Docker Compose、Kubernetes、Prometheus 和 Grafana 模板 |
@@ -314,7 +315,9 @@ resolved / closed --reopen--> in_progress
 - FastAPI 后端 API、JWT 鉴权和基础 RBAC。
 - LangGraph 六节点 Agent 工作流和安全条件路由。
 - Prompt Injection、Jailbreak、PII 脱敏和 Response Filter。
-- ToolRegistry、三类读工具、manager 级退款初筛、Schema、权限、超时和内存审计。
+- ToolRegistry、4 个读 Tool 与 1 个高风险 Mock 写 Tool，具备 Schema、RBAC、风险策略和超时边界。
+- Tool Governance V2.1：高风险写操作必须经过 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` 状态机；提议人不能批准自己的 Action，且 Agent Workflow 不会自动路由该写 Tool。
+- Tool 调用已持久化到 `tool_invocation_audits`，只保存 HMAC、字段名、脱敏结果、执行状态、身份与 Request/Trace 关联；Action 迁移以 Append-only Event 保存。
 - ChromaDB、知识库版本/类别过滤、Hybrid Retrieval、轻量 rerank 和 citation。
 - Mock / OpenAI / Azure OpenAI LLM Provider 适配。
 - SQLAlchemy 持久化模型、Redis 可选会话存储与 SQL 降级。
@@ -337,7 +340,7 @@ resolved / closed --reopen--> in_progress
 ### 部分完成
 
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
-- **工具审计**：调用记录已生成并可通过 API 返回，但 Registry 审计日志仍保存在进程内，尚未持久化。
+- **Tool Governance**：V2.1 已实现持久化审计与高风险 Action 状态机；当前写 Tool 仍是 Mock，尚无跨服务幂等键、Outbox、自动 Reconciliation Worker 和生产 Alembic Migration。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口、统一报告与两级 Quality Gate。2026-08-30 同一固定 Dataset 的 DeepSeek + Qwen 真实复测将 Case Pass Rate 从 `0.54` 提升到 `0.99`，平均耗时约 `1.62s`、P95 约 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。PR Gate 要求 Mock 确定性回放 100% 通过，Release Gate 固化当前真实模型质量和性能阈值；语义回答质量与人工标注仍是后续评测范围。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
@@ -385,7 +388,7 @@ resolved / closed --reopen--> in_progress
 ### P1：审计与可观测增强
 
 - 新增 `ticket_status_events` 持久化状态流转历史。
-- 持久化 Tool Calling 审计记录。
+- 为真实写 Tool 增加业务幂等键、Outbox 与 Unknown 结果自动对账。
 - 根据部署需要为 Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样与告警策略。
 
 ### P2：用户通知与异步处理

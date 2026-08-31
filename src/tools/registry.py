@@ -4,10 +4,14 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.intents import IntentType, normalize_intent
+from src.tools.audit import tool_audit_repository
+from src.tools.contracts import ApprovedToolExecution
 from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
+from src.tools.payload_security import tool_payload_security
 from src.tools.ticketing import ticketing_tool
 from src.observability.tracing import (
     get_tracer,
@@ -43,6 +47,14 @@ class RefundEligibilityInput(BaseModel):
     order_id: str = Field(..., min_length=1)
 
 
+class RefundRequestInput(BaseModel):
+    """定义创建退款请求所需的最小参数。"""
+
+    customer_id: str = Field(..., min_length=1)
+    order_id: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=2, max_length=500)
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """描述 Tool 的协议、权限、风险、适用意图和执行入口。"""
@@ -58,17 +70,17 @@ class ToolDefinition:
     risk_level: str = "low"
     allowed_intents: Optional[frozenset[IntentType]] = None
     operation_type: OperationType = OperationType.READ
+    version: str = "v1"
 
 
 class ToolRegistry:
     """统一注册和治理 Agent 可调用的业务工具。
 
-    每次调用执行 Schema、RBAC、超时控制并生成审计记录。
+    每次调用执行 Schema、RBAC、策略门禁并持久化脱敏审计。
     """
 
     def __init__(self) -> None:
         self._tools: Dict[str, ToolDefinition] = {}
-        self._audit_log: List[Dict[str, Any]] = []
 
     def register(self, definition: ToolDefinition) -> None:
         self._tools[definition.name] = definition
@@ -90,12 +102,13 @@ class ToolRegistry:
                     if tool.allowed_intents is not None
                     else None
                 ),
+                "version": tool.version,
             }
             for tool in self._tools.values()
         ]
 
-    def get_audit_log(self) -> List[Dict[str, Any]]:
-        return list(self._audit_log)
+    def get_definition(self, name: str) -> Optional[ToolDefinition]:
+        return self._tools.get(name)
 
     async def call_tool(
         self,
@@ -106,6 +119,10 @@ class ToolRegistry:
         intent: Any = None,
         request_risk_level: Optional[str] = None,
         forbidden_tools: Optional[set[str] | frozenset[str]] = None,
+        actor_user_id: Optional[int] = None,
+        audit_db: Optional[AsyncSession] = None,
+        action_id: Optional[str] = None,
+        execution_grant: Optional[ApprovedToolExecution] = None,
     ) -> Dict[str, Any]:
         with observed_span(
             tracer,
@@ -130,7 +147,32 @@ class ToolRegistry:
                 intent=intent,
                 request_risk_level=request_risk_level,
                 forbidden_tools=forbidden_tools or frozenset(),
+                action_id=action_id,
+                execution_grant=execution_grant,
             )
+            definition = self.get_definition(name)
+            audit_record = tool_audit_repository.build_record(
+                tool_name=name,
+                tool_version=definition.version if definition else "unknown",
+                operation_type=(
+                    definition.operation_type.value if definition else "unknown"
+                ),
+                risk_level=definition.risk_level if definition else "unknown",
+                payload=payload,
+                role=role,
+                allowed=bool(result.get("allowed")),
+                status=str(result.get("status") or "unknown"),
+                attempts=int(result.get("attempts") or 0),
+                latency_ms=float(result.get("latency_ms") or 0.0),
+                mocked=bool(result.get("mocked")),
+                ticket_id=ticket_id,
+                actor_user_id=actor_user_id,
+                action_id=action_id,
+                error_type=result.get("error_type"),
+                result=result.get("result"),
+            )
+            await tool_audit_repository.record(audit_record, db=audit_db)
+            result["audit_id"] = audit_record["id"]
             set_span_attributes(
                 span,
                 {
@@ -139,6 +181,8 @@ class ToolRegistry:
                     "tool.mocked": result.get("mocked"),
                     "tool.latency_ms": result.get("latency_ms"),
                     "tool.has_error": bool(result.get("error")),
+                    "tool.audit_id": audit_record["id"],
+                    "tool.action_id": action_id,
                 },
             )
             return result
@@ -153,6 +197,8 @@ class ToolRegistry:
         intent: Any,
         request_risk_level: Optional[str],
         forbidden_tools: set[str] | frozenset[str],
+        action_id: Optional[str],
+        execution_grant: Optional[ApprovedToolExecution],
     ) -> Dict[str, Any]:
         started = time.time()
         definition = self._tools.get(name)
@@ -177,25 +223,32 @@ class ToolRegistry:
                 status="permission_denied",
                 started=started,
                 mocked=definition.mocked,
-                error=f"Role '{role}' cannot call tool '{name}'. Required role: {definition.min_role}.",
+                error=(
+                    f"Role '{role}' cannot call tool '{name}'. "
+                    f"Required role: {definition.min_role}."
+                ),
             )
 
         policy_error = self._policy_error(
             definition,
+            payload=payload,
             intent=intent,
             request_risk_level=request_risk_level,
             forbidden_tools=forbidden_tools,
+            action_id=action_id,
+            execution_grant=execution_grant,
         )
         if policy_error:
+            policy_status, policy_message = policy_error
             return self._record_call(
                 name=name,
                 role=role,
                 ticket_id=ticket_id,
                 allowed=False,
-                status="policy_denied",
+                status=policy_status,
                 started=started,
                 mocked=definition.mocked,
-                error=policy_error,
+                error=policy_message,
             )
 
         try:
@@ -262,26 +315,49 @@ class ToolRegistry:
     def _policy_error(
         definition: ToolDefinition,
         *,
+        payload: Dict[str, Any],
         intent: Any,
         request_risk_level: Optional[str],
         forbidden_tools: set[str] | frozenset[str],
-    ) -> Optional[str]:
+        action_id: Optional[str],
+        execution_grant: Optional[ApprovedToolExecution],
+    ) -> Optional[tuple[str, str]]:
         """在 Handler 之前独立校验 forbidden tool、意图边界和高风险语义。"""
         if definition.name in forbidden_tools:
-            return f"Tool '{definition.name}' is forbidden by the current request policy."
+            return (
+                "policy_denied",
+                f"Tool '{definition.name}' is forbidden by the current request policy.",
+            )
         if intent is not None and definition.allowed_intents is not None:
             normalized_intent = normalize_intent(intent)
             if normalized_intent not in definition.allowed_intents:
                 return (
+                    "policy_denied",
                     f"Intent '{normalized_intent}' cannot call tool "
-                    f"'{definition.name}'."
+                    f"'{definition.name}'.",
                 )
         if definition.risk_level == "high":
             if str(request_risk_level or "").lower() not in {"high", "critical"}:
                 return (
+                    "policy_denied",
                     f"High-risk tool '{definition.name}' requires a high-risk "
-                    "business request and human authorization."
+                    "business request.",
                 )
+            if definition.operation_type is OperationType.WRITE:
+                expected_hash = tool_payload_security.payload_hash(payload)
+                if (
+                    execution_grant is None
+                    or action_id is None
+                    or execution_grant.action_id != action_id
+                    or execution_grant.tool_name != definition.name
+                    or execution_grant.payload_hash != expected_hash
+                    or not execution_grant.approved_by_user_id
+                ):
+                    return (
+                        "approval_required",
+                        f"High-risk write tool '{definition.name}' requires an "
+                        "approved Tool Action execution grant.",
+                    )
         return None
 
     def _record_call(
@@ -312,7 +388,6 @@ class ToolRegistry:
             "error_type": error_type,
             "degradation_level": degradation_level,
         }
-        self._audit_log.append(record)
         try:
             TOOL_CALLS_TOTAL.add(1, {"tool_name": name, "status": status})
             TOOL_CALL_DURATION_SECONDS.record(
@@ -342,6 +417,45 @@ tool_registry.register(
         mocked=True,
         handler=crm_tool.get_customer_profile,
         allowed_intents=frozenset(IntentType),
+    )
+)
+
+
+def mock_create_refund_request(
+    customer_id: str, order_id: str, reason: str
+) -> Dict[str, Any]:
+    """仅模拟 OMS 写操作，真实接入时必须增加幂等键。"""
+    reference = tool_payload_security.payload_hash(
+        {"customer_id": customer_id, "order_id": order_id, "reason": reason}
+    )[:12]
+    return {
+        "refund_request_id": f"REF-{reference.upper()}",
+        "status": "submitted",
+        "message": "Mock refund request submitted for downstream processing.",
+    }
+
+
+tool_registry.register(
+    ToolDefinition(
+        name="orders.create_refund_request",
+        description=(
+            "创建退款处理请求；必须经过独立人工审批，"
+            "不允许 Agent 自动执行。"
+        ),
+        input_schema=RefundRequestInput,
+        output_schema={
+            "refund_request_id": "str",
+            "status": "str",
+            "message": "str",
+        },
+        min_role="manager",
+        timeout_seconds=2.0,
+        mocked=True,
+        handler=mock_create_refund_request,
+        risk_level="high",
+        allowed_intents=frozenset({IntentType.BILLING_DISPUTE}),
+        operation_type=OperationType.WRITE,
+        version="v2.1",
     )
 )
 

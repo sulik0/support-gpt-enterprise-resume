@@ -319,6 +319,138 @@ class ResponseApprovalResponse(BaseModel):
     approved_at: datetime
 
 
+# --- TOOL GOVERNANCE SCHEMAS ---
+class ToolActionCreateRequest(BaseModel):
+    """提交高风险 Tool Action，参数将在服务端加密。"""
+
+    ticket_id: int = Field(..., ge=1)
+    tool_name: str = Field(..., min_length=1, max_length=160)
+    payload: Dict[str, Any]
+    intent: str = Field(..., min_length=1, max_length=80)
+
+
+class ToolActionDecisionRequest(BaseModel):
+    """定义审批人对高风险动作的决策。"""
+
+    decision: str = Field(..., pattern="^(approved|rejected)$")
+    expected_version: int = Field(..., ge=1)
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ToolActionExecuteRequest(BaseModel):
+    """通过版本号防止并发重复执行。"""
+
+    expected_version: int = Field(..., ge=1)
+
+
+class ToolActionEventResponse(BaseModel):
+    """返回 Append-only 状态迁移事件。"""
+
+    id: str
+    sequence: int
+    action: str
+    from_status: Optional[str]
+    to_status: str
+    actor_user_id: Optional[int]
+    actor_role: Optional[str]
+    request_id: str
+    trace_id: Optional[str]
+    details: Dict[str, Any]
+    created_at: datetime
+
+    class Config:
+        """允许从 ORM 事件读取字段。"""
+
+        from_attributes = True
+
+
+class ToolActionResponse(BaseModel):
+    """返回不含密文和完整 HMAC 的高风险动作视图。"""
+
+    id: str
+    ticket_id: int
+    tool_name: str
+    tool_version: str
+    intent: str
+    risk_level: str
+    operation_type: str
+    status: str
+    version: int
+    policy_version: str
+    payload_summary: Dict[str, Any]
+    result_summary: Optional[Dict[str, Any]]
+    error_type: Optional[str]
+    failure_reason: Optional[str]
+    request_id: str
+    trace_id: Optional[str]
+    proposed_by_user_id: int
+    proposed_by_role: str
+    reviewed_by_user_id: Optional[int]
+    reviewed_by_role: Optional[str]
+    executed_by_user_id: Optional[int]
+    review_comment: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    reviewed_at: Optional[datetime]
+    execution_started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    events: List[ToolActionEventResponse] = Field(default_factory=list)
+
+    class Config:
+        """允许从 ORM Action 读取字段。"""
+
+        from_attributes = True
+
+
+class ToolActionPageResponse(BaseModel):
+    """返回高风险 Tool Action 分页。"""
+
+    items: List[ToolActionResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class ToolInvocationAuditResponse(BaseModel):
+    """返回不包含原始参数和原始异常的审计摘要。"""
+
+    id: str
+    tool_action_id: Optional[str]
+    ticket_id: Optional[int]
+    request_id: str
+    trace_id: Optional[str]
+    tool_name: str
+    tool_version: str
+    operation_type: str
+    risk_level: str
+    actor_user_id: Optional[int]
+    actor_role: str
+    allowed: bool
+    status: str
+    attempts: int
+    latency_ms: float
+    mocked: bool
+    error_type: Optional[str]
+    payload_keys: List[str]
+    result_summary: Optional[Any]
+    policy_version: str
+    created_at: datetime
+
+    class Config:
+        """允许从 ORM 审计对象读取字段。"""
+
+        from_attributes = True
+
+
+class ToolInvocationAuditPageResponse(BaseModel):
+    """返回 Tool 审计分页。"""
+
+    items: List[ToolInvocationAuditResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 # --- FEEDBACK PIPELINE SCHEMAS ---
 class UserFeedbackRequest(BaseModel):
     """定义用户针对一次 Agent Run 提交的评分和文字评价。"""
