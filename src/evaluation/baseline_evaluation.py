@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections import Counter
@@ -844,8 +845,10 @@ def _build_experiment_config(
     qa_model = (
         settings.LLM_QA_MODEL_NAME or settings.LLM_FAST_MODEL_NAME or resolver_model
     )
-    return sanitize_value(
-        {
+    source_revision = _source_revision()
+    if not re.fullmatch(r"(?:[0-9a-fA-F]{7,40}|unknown)", source_revision):
+        source_revision = "unknown"
+    config = {
             "dataset": {
                 "dataset_name": dataset_payload.get("name"),
                 "version": dataset_payload.get("version"),
@@ -866,7 +869,7 @@ def _build_experiment_config(
             "workflow": {
                 "version": settings.AGENT_WORKFLOW_VERSION,
                 "prompt_version": settings.PROMPT_VERSION,
-                "source_revision": _source_revision(),
+                "source_revision": source_revision,
             },
             "models": {
                 "provider": provider,
@@ -899,7 +902,10 @@ def _build_experiment_config(
             },
             "execution": dict(execution_metadata),
         }
-    )
+    sanitized = sanitize_value(config)
+    # Git SHA 是复现实验的非敏感标识，避免被电话号规则误脱敏。
+    sanitized["workflow"]["source_revision"] = source_revision
+    return sanitized
 
 
 def _next_snapshot_stem(

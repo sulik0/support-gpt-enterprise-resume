@@ -5,6 +5,7 @@ import pytest
 
 from src.evaluation.baseline_evaluation import (
     BaselineExpectations,
+    _build_experiment_config,
     _replace_latest_copy,
     aggregate_behavior,
     build_metric_failure_index,
@@ -248,6 +249,18 @@ def test_latest_report_replaces_existing_symlink_with_regular_file(tmp_path):
 
     assert latest.is_symlink() is False
     assert latest.read_text(encoding="utf-8") == "# report\n"
+
+
+def test_experiment_config_preserves_valid_git_revision(monkeypatch):
+    """Git SHA 不得被 PII 电话号规则误脱敏。"""
+    revision = "5302a47e910ecd66ca799350d806004675bd53b5"
+    monkeypatch.setattr(
+        "src.evaluation.baseline_evaluation._source_revision", lambda: revision
+    )
+
+    config = _build_experiment_config(BASELINE_PATH, {})
+
+    assert config["workflow"]["source_revision"] == revision
 
 
 @pytest.mark.asyncio
