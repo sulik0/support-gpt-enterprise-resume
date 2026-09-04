@@ -93,15 +93,15 @@ Analyzer（包含 Input Guard 与分类）
 
 ### 12. 每个节点之间传递什么 State？
 
-State 包含：工单与客户标识、主题与描述、知识库版本；情绪、优先级、部门和意图；操作角色、Tool Context 与 Tool Calls；citation 与回复草稿；QA 分数、幻觉标记、升级原因、是否审批；以及 token、成本、延迟和错误列表。
+State 包含：工单与客户标识、主题与描述、知识库版本；情绪、优先级、部门和意图；操作角色、Tool Context 与 Tool Calls；citation 与回复草稿；QA 分数、幻觉标记、升级原因、是否审批；Checkpoint Thread、执行/审批状态和人工决策；以及 token、成本、延迟和错误列表。
 
 节点只补充或更新自己负责的字段，后续节点消费已产生的信息。
 
 ### 13. State 怎么设计？
 
-当前使用 `AgentState`，而不是示例中的独立 `TicketState` 或 `TaskState`。设计上按六类字段组织：输入标识、分类结果、工具上下文、RAG 结果、质量与风险、可观测元数据。
+当前使用 AgentState，而不是示例中的独立 TicketState 或 TaskState。设计上按输入标识、分类结果、工具上下文、RAG 结果、质量与风险、持久执行和可观测元数据组织。
 
-选择单一 State 是因为当前流程短且大部分路径固定。并行 Context Enrichment 通过显式合并函数保证 Tooling 与 Retriever 的风险、token 和错误不会相互覆盖；若以后加入动态子任务或 Checkpoint，应拆分 `TaskState` 与执行状态，而不是继续无限加字段。
+选择单一 State 是因为当前路径固定。并行 Context Enrichment 通过显式合并函数保证 Tooling 与 Retriever 的风险、token 和错误不会相互覆盖；AgentState 已由 Checkpointer 持久化，动态 Planner 或多子任务出现后才需要拆分独立 TaskState。
 
 ### 14. 为什么不用多个自治 Agent，而采用 Workflow？
 
@@ -491,6 +491,8 @@ QA Score 是对当前回复草稿可信度和质量的 0 到 1 风险信号，�
 
 它是风险控制机制，不是简单的前端按钮。
 
+HITL 也是 Graph 内的 Durable Execution 关卡：需要审批时 Approval Gate 持久化 State 并暂停，人工决策后用原 thread_id 恢复，因此不必重跑前面的模型、检索和工具节点。
+
 ### 76. 哪些情况触发人工审批？
 
 当前触发条件是：安全违规、urgent、negative + high、QA 分数低于 0.8、检测到幻觉，或工作流最终建议升级。
@@ -527,7 +529,7 @@ API 返回审批状态和最终选定内容。当前没有单独的“已发送�
 
 按 session_id 保存 user 与 assistant 消息。Redis 只保留最近 12 条，TTL 为 24 小时；SQL 保存持久化 conversation_history。
 
-当前不保存 Planner 状态、Checkpoint、工具结果摘要或向量化长期记忆。
+当前不保存 Planner 状态、工具结果摘要或向量化长期记忆。Checkpoint 另由 LangGraph Saver 保存，它属于执行恢复状态，不属于用户 Memory。
 
 ### 82. Redis 如何保存会话？
 
@@ -659,7 +661,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 ### 102. 最后为什么选择 LangGraph？
 
-因为当前不是单次 RAG 问答，而是一个有 State、固定阶段和安全条件边的工作流。LangGraph 能清晰表达六节点主链和安全短路，并方便节点级测试与 Trace。
+因为当前不是单次 RAG 问答，而是一个有 State、固定阶段、安全条件边和人工暂停/恢复的工作流。LangGraph 能清晰表达六个业务节点、Approval Gate、安全短路及 Checkpoint Resume，并方便节点级测试与 Trace。
 
 我选择它不是为了追求“多 Agent”标签，而是因为它与受控客服流程匹配；如果只有一次检索和一次生成，普通函数或 Chain 就足够。
 
@@ -722,6 +724,6 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 - 只引用 `03_INTERVIEW_CANON.md` 中可证实的事实。
 - CRM、OMS、历史工单、退款初筛和默认 LLM 必须明确为 Mock。
 - 当前是 6 个逻辑 Agent 节点、5 个注册 Tool、0 个 MCP。
-- 当前没有 TaskState、Checkpoint、动态 Planner、自动 Reflection、分布式 Circuit Breaker / Queue / DLQ、pgvector、Milvus 或生产级搜索后端。
+- 当前没有独立 TaskState、动态 Planner、自动 Reflection、分布式 Circuit Breaker / Queue / DLQ、pgvector、Milvus 或生产级搜索后端。Checkpoint 已覆盖审批暂停与恢复，但尚无 TTL、旧 Graph 多版本恢复或通用后台调度。
 - 当前没有真实上线指标、P95/QPS 基准、真实客户数据或业务提升百分比。
 - 个人职责和是否独立开发必须按本人真实经历回答，不能根据仓库推断。

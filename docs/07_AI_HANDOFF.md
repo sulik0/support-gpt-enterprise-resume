@@ -17,8 +17,9 @@
 ## 当前系统快照
 
 - 后端：FastAPI + SQLAlchemy Async + JWT/RBAC。
-- Agent：LangGraph StateGraph，节点为 Analyzer、Tooling、Retriever、Resolver、QA 和 Escalation。
-- 执行：Analyzer 后 Tooling/Retriever 并行，安全强命中直接短路；之后 Resolver、QA、Escalation。
+- Agent：LangGraph StateGraph，包含 Analyzer、Tooling、Retriever、Resolver、QA、Escalation 六个逻辑 Agent 节点及一个不调用 LLM 的 Approval Gate。
+- 执行：Analyzer 后 Tooling/Retriever 并行，安全强命中直接短路；之后 Resolver、QA、Escalation、Approval Gate。高风险路径 interrupt，人工决策后从原 Checkpoint Thread 恢复。
+- Durable Execution：本地 AsyncSqliteSaver、PostgreSQL AsyncPostgresSaver；AgentExecution 关联工单/审批/Run/Trace，数据库恢复租约防重复，启动扫描补偿已决策但未完成的续跑。
 - LLM：默认 Mock，保留 `mock/openai/azure`；`openai` 为通用 OpenAI-compatible Provider。
 - 优化：Analyzer 规则优先，Analyzer/QA 可使用小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
 - RAG：ChromaDB + 关键词/向量 Hybrid Search + 轻量 rerank + version/category filter + citation。
@@ -44,6 +45,7 @@
 9. LLM 默认使用用户当前输入语言回复，除非用户明确要求切换。
 10. Evaluation 必须真实 Replay 当前 Workflow，报告保留实验配置与 Trace ID；不得通过降低 Dataset 期望来伪造通过率。
 11. 打开工单详情不得触发新 Workflow，只加载已保存 AgentRun 和 Approval。
+12. 需要审批的 Workflow 必须在 Approval Gate 暂停并使用原 thread_id 恢复；不得通过从头重跑模拟恢复。
 
 ## 代码定位
 
@@ -52,6 +54,7 @@
 | FastAPI 路由与启动 | `src/main.py` |
 | 环境配置 | `src/config.py` |
 | LangGraph Workflow / AgentState | `src/agents/graph.py` |
+| Checkpoint / Durable Execution | `src/agents/checkpointing.py`、`src/agents/durable_execution.py` |
 | 意图枚举 | `src/models/intents.py` |
 | LLM Provider 与 Prompt | `src/llm/provider.py` |
 | Tool Registry / Adapter | `src/tools/` |
@@ -85,6 +88,7 @@
 - Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
 - Docker Compose/Kubernetes 是可复现模板，不代表生产上线。
 - Resilience 当前是单进程 V1，Tool Governance 为 V2.1；没有分布式 Breaker、Queue / DLQ、Outbox 和写 Tool 幂等/自动对账。
+- Checkpoint 已覆盖审批暂停和跨重启恢复，但没有 TTL/归档、旧 Graph 多版本恢复或通用后台任务队列；相关 DDL 仍需纳入 Migration。
 - 真实 Baseline V1 在同一固定 100 条 Dataset 上经归因优化后通过率为 0.99，仍不等于生产业务指标。
 
 ## 当前优先级

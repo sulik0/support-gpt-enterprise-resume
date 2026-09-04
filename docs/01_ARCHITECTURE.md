@@ -13,7 +13,7 @@
 - **上下文有据可查**：回复同时使用 RAG citation 和结构化业务上下文，API 返回检索与工具审计信息。
 - **高风险操作受治理**：工具统一经过 ToolRegistry，工单状态统一经过状态机，高风险回复进入 Human-in-the-Loop。
 - **本地可复现、生产可替换**：Mock LLM、SQLite、可选 Redis 和本地 ChromaDB 使 Demo 可离线运行；Provider、Adapter 和部署配置保留替换空间。
-- **避免虚构能力**：当前没有 MCP、动态 Planner、TaskState、Checkpoint、分布式任务队列或持久化 Agent 执行状态。
+- **避免虚构能力**：当前已有 Checkpoint 和审批暂停/恢复，但没有 MCP、动态 Planner、独立 TaskState 或通用分布式任务队列。
 
 ## 2. 整体架构图
 
@@ -40,11 +40,12 @@ flowchart TB
         Resolver[Resolver]
         QA[QA + Response Filter]
         Escalation[Escalation]
+        ApprovalGate[Approval Gate]
         Analyzer -->|normal| Tooling
         Analyzer -->|normal| Retriever
         Tooling --> ContextJoin
         Retriever --> ContextJoin
-        ContextJoin --> Resolver --> QA --> Escalation
+        ContextJoin --> Resolver --> QA --> Escalation --> ApprovalGate
         Analyzer -->|security threat| Escalation
         Tooling -->|infected tool result| Escalation
         Retriever -->|infected RAG document| Escalation
@@ -66,7 +67,9 @@ flowchart TB
     Provider --> OpenAI[OpenAI]
     Provider --> Azure[Azure OpenAI]
 
-    Escalation --> Approval[Human-in-the-Loop]
+    ApprovalGate -->|interrupt| Checkpoint[(LangGraph Checkpoint)]
+    Checkpoint --> Approval[Human-in-the-Loop]
+    Approval -->|Command resume| ApprovalGate
     Approval --> SQL
 
     SQL[(SQLite / PostgreSQL)]
@@ -112,7 +115,11 @@ stateDiagram-v2
     ContextJoin --> Resolver: 上下文安全合并
     Resolver --> QA
     QA --> Escalation
-    Escalation --> [*]
+    Escalation --> ApprovalGate
+    ApprovalGate --> [*]: 无需审批
+    ApprovalGate --> HumanReview: interrupt + Checkpoint
+    HumanReview --> ApprovalGate: Command resume
+    ApprovalGate --> [*]: 已接收人工决策
 ```
 
 ### 3.2 节点编排
@@ -126,6 +133,7 @@ stateDiagram-v2
 | Resolver | 合并检索与业务上下文生成客服草稿 | 工单、Top-2 citation、必要 Tool Context | `suggested_response` | 将业务事实与知识事实统一供给模型 | 模板化回复、全量上下文 | 限制 Context 和 max_tokens，只生成最终客服回复 |
 | QA | 评估回复质量和幻觉风险，过滤内部信息泄露 | 问题、精简 citation、草稿 | score、幻觉和 citation 验证标记 | 生成后再加一道独立风险门 | Resolver 自检、人工全量审核 | 确定性失败优先规则，其余使用可单独配置的轻量 Judge Model |
 | Escalation | 调用 Risk Engine、计算 SLA 并决定是否升级 | 安全、优先级、情绪、意图、置信度、QA、幻觉、错误 | 风险等级/分数/原因、升级结论、SLA | 将风险策略与生成逻辑解耦 | 在 Prompt 内决定、分散 if/else | 独立确定性规则更可审计、可测试并可统一调阈值 |
+| Approval Gate | 对需审批回复执行 interrupt，接收人工决策后续跑 | 风险、QA、升级结论或 Command resume payload | 暂停的 Checkpoint，或带人工决策的终态 State | 把人工审批变成 Graph 内不可绕过的关卡 | Graph 外另建审批记录、从头重跑 | 保留已完成节点结果并支持跨重启恢复；代价是状态兼容、租约和清理治理 |
 
 ### 3.3 设计原因
 
@@ -146,6 +154,7 @@ stateDiagram-v2
 | RAG 结果 | citation | Retriever | Resolver、QA、API | 让回答、质量判断和人工核验使用同一依据 |
 | 生成与质量 | 回复草稿、QA 分数、幻觉标记 | Resolver、QA | Escalation、Approval、API | 将内容生成和风险判断分离 |
 | 决策结果 | 升级结论、升级原因、是否审批 | Escalation | Approval、API | 支持 Human-in-the-Loop 与业务闭环 |
+| 持久执行 | Thread ID、逻辑 Namespace、执行状态、审批状态和人工决策 | API、Approval Gate | Checkpointer、恢复服务、API | 让同一 Graph 可以跨请求、跨重启继续 |
 | 可观测数据 | token、成本、延迟、错误列表 | 各节点 | Metrics、Trace、API | 支持成本控制、排障和安全短路 |
 
 `AgentState.intent` 使用统一 `IntentType`，规则表、OpenAI-compatible/Azure Prompt、Mock Provider、Tooling、Risk Engine 和 Agent Evaluation 共用同一套 8 个枚举值。Provider 不遵守约束时，未知值会归一化为 `information_request`，同时将分类置信度上限降至 `0.5`，使 Risk Engine 触发受控人工处理。
@@ -159,7 +168,7 @@ stateDiagram-v2
 **采用原因**：TypedDict 结构轻量，适合 LangGraph 的显式状态更新模型。
 
 **可替代方案**：Pydantic State、dataclass、事件流或持久化状态存储。Pydantic 可提供更强校验，但会增加节点更新时的序列化与兼容复杂度。
-**工程权衡**：当前 State 在进程内运行，未做跨请求持久化、版本迁移或恢复机制。
+**工程权衡**：State 已由 LangGraph Checkpointer 跨请求持久化，并可在审批后恢复；当前仍缺少 Checkpoint TTL/归档、历史 Graph 版本兼容和 Alembic 管理的业务表迁移。
 
 ### 4.2 TaskState
 
@@ -169,9 +178,9 @@ stateDiagram-v2
 |---|---|
 | 职责 | 不适用；没有单独的任务计划或子任务状态对象 |
 | 输入/输出 | 不适用；由 `AgentState` 统一承载 |
-| 未采用原因 | 当前客服流程为固定六节点图，没有动态拆分子任务、并发子任务或长时任务恢复需求 |
+| 未采用原因 | 当前客服流程为固定图；持久恢复只需要保存单一 AgentState，不需要动态子任务计划对象 |
 | 可替代方案 | 将工单任务、子任务、计划版本、重试计数和执行状态拆为 `TaskState` |
-| 工程权衡 | 独立 `TaskState` 更适合复杂 Planner、长时工作流和 Checkpoint；当前引入会增加持久化、幂等和状态迁移成本 |
+| 工程权衡 | 独立 TaskState 更适合动态 Planner 和多子任务编排；当前引入会增加状态同步、Schema 演进和恢复兼容成本 |
 
 如果未来引入动态 Planner、多步骤调查或异步任务队列，再将 `AgentState` 拆分为 `TaskState + ExecutionState`。在此之前，不得在 API、文档或简历中声称已有 `TaskState`。
 
@@ -179,7 +188,7 @@ stateDiagram-v2
 
 ### 5.1 Agent 编排
 
-当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Tooling/Retriever 并行 → Context Enrichment 合并 → Resolver → QA → Escalation；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，直接路由到 Escalation。
+当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Tooling/Retriever 并行 → Context Enrichment 合并 → Resolver → QA → Escalation → Approval Gate；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，直接路由到 Escalation，再由 Approval Gate 强制暂停等待人工处理。
 
 **职责**：控制节点顺序与唯一条件分支。
 
@@ -335,15 +344,20 @@ Tool Calling 通过 ToolRegistry 实现，所有业务工具都必须从该入�
 
 ### 8.2 Checkpoint
 
-当前项目**没有 LangGraph Checkpoint、任务恢复点或持久化工作流执行状态**。
+当前项目已经使用 LangGraph Checkpointer 和业务侧 AgentExecution 实现第一版 Durable Execution。FastAPI 启动时初始化 Saver：本地使用独立 AsyncSqliteSaver，PostgreSQL 环境默认复用 DATABASE_URL 并使用 AsyncPostgresSaver；测试或显式关闭时使用 MemorySaver。
 
-| 维度 | 当前结论 |
+| 维度 | 当前设计 |
 |---|---|
-| 职责 | 不适用；一次工作流在单个请求内完成 |
-| 未采用原因 | 当前流程短、无异步长任务、无人工中断后恢复同一 Graph 的需求 |
-| 当前替代机制 | Ticket、ResponseApproval 和 SessionMemory 持久化业务结果；它们不是 Agent Checkpoint |
-| 可替代方案 | LangGraph Checkpointer、PostgreSQL Checkpoint、Redis Checkpoint、消息队列工作流引擎 |
-| 工程权衡 | Checkpoint 支持恢复、人工中断和长流程，但需要 thread 标识、状态版本、幂等副作用控制和数据清理策略 |
+| 职责 | 在节点边界保存 AgentState；在 Approval Gate 暂停并在人工决策后从原 Thread 恢复 |
+| 输入 | 稳定 UUID thread_id、根 Graph 空 checkpoint namespace、当前 State 或 Command(resume) 人工决策 |
+| 输出 | LangGraph Checkpoint、StateSnapshot、暂停节点、Checkpoint ID 和恢复后的终态 State |
+| 业务关联 | AgentExecution 关联 Ticket、ResponseApproval、AgentRun、Request ID、初始/恢复 Trace ID 和 Workflow Version |
+| 防重复恢复 | 数据库原子 UPDATE 抢占有时限的恢复租约；已完成执行再次调用时直接返回，不重复运行 |
+| 重启恢复 | 启动扫描“人工已决策但 Graph 未完成”的记录；主管也可调用恢复 API 重试 |
+| 设计原因 | 人工审批可能跨分钟或跨进程，不能占用 HTTP 请求，也不能在审批后重新调用前置 LLM、RAG 和 Tool |
+| 可替代方案 | Redis Saver、从头重跑、Celery/消息队列、Temporal/Camunda |
+| 最终取舍 | 使用官方 SQLite/PostgreSQL Saver 保持本地可复现与生产耐久性；业务表只保存关联、状态和租约，不复制 Checkpoint 正文 |
+| 工程权衡 | 已覆盖审批等待和幂等恢复，但尚无 TTL/归档、旧 Graph 版本兼容、通用任务队列和全节点自动续跑；AgentExecution 及 Saver DDL 仍未纳入 Alembic |
 
 ## 9. RAG、Hybrid Search 与向量数据库
 
@@ -544,7 +558,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | 多租户 RAG | 在文档与向量 metadata 中加入 `tenant_id`，查询强制 `tenant_id + version` | 避免跨租户知识泄露 | 鉴权上下文传播、索引迁移、越权测试 |
 | 生产检索 | 抽象 `SearchBackend`，支持 Chroma 与 OpenSearch | 支撑更大语料和真正的 BM25 | 双后端一致性、索引运维、压测 |
 | 持久化审计 | 保存 Tool Calls 与 `ticket_status_events` | 满足合规、排障与运营分析 | 表设计、事件幂等、数据保留策略 |
-| Checkpoint | 引入持久化 Graph State | 支持长流程、中断恢复和异步处理 | 状态版本、幂等副作用、清理策略 |
+| Checkpoint 生命周期 | 增加 TTL/归档、旧 Graph 版本兼容与 Checkpoint 清理任务 | 控制持久化数据规模并保证跨版本恢复 | 迁移策略、兼容测试、合规保留周期 |
 | MCP | 将外部业务能力封装为 MCP Server，但保留本地治理层 | 标准化工具发现和跨宿主集成 | 鉴权、协议治理、可观测与安全隔离 |
 | Planner / Reflection | 在 Golden Set 和预算控制基础上增加受限计划与限次重写 | 处理更复杂的调查型工单 | 质量比较、循环控制、成本和审批边界 |
 | Prompt 治理 | Prompt Registry、版本记录、A/B 与灰度 | 支持可重复的质量回归 | 评测集、指标归因、发布流程 |
@@ -553,15 +567,15 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 
 | 决策 | 最终采用方案 | 核心原因 | 明确不采用或暂缓的方案 |
 |---|---|---|---|
-| Agent 编排 | 固定 LangGraph 六节点图 | 安全、可测试、可观测 | 自由 ReAct、动态多 Agent 协商 |
-| 状态 | 单一 `AgentState` | 当前流程短且线性 | 独立 TaskState、持久化执行状态 |
+| Agent 编排 | 固定 LangGraph 工作流 + Approval Gate | 安全、可测试、可观测且审批不可绕过 | 自由 ReAct、动态多 Agent 协商 |
+| 状态 | 单一 AgentState + 持久化 Checkpoint + AgentExecution | 支持审批暂停、跨重启恢复和业务关联 | 独立 TaskState、通用工作流引擎 |
 | 路由 | 规则驱动条件边 | 高风险业务需要可解释性 | LLM Selector |
 | 工具 | ToolRegistry + Mock Adapter + ToolAction | Schema、RBAC、持久化审计与高风险审批状态机 | Agent 直接调用外部服务 |
 | 协议 | 本地工具协议 | 本地可复现、依赖少 | MCP（当前未集成） |
 | 检索 | ChromaDB Hybrid RAG | 兼顾语义与精确词，适合 Demo | 纯向量、生产搜索集群 |
 | 记忆 | SQL 持久化 + 可选 Redis | Redis 故障不阻断流程 | Redis 强依赖、向量长期记忆 |
 | 质量保障 | QA + Response Filter + HITL | 高风险回答优先保守处理 | 自动 Reflection 循环、全自动闭环 |
-| 恢复 | 统一故障分类 + 有界 Retry + 进程内 Circuit Breaker + Fallback + HITL | 恢复瞬时故障且避免重复副作用 | 无分布式 Breaker、Queue / DLQ 与写操作对账 |
+| 恢复 | 有界 Retry/Circuit Breaker/Fallback + Checkpoint/HITL Durable Execution | 恢复瞬时故障，并让审批后续跑不重复前置节点 | 无分布式 Breaker、通用 Queue / DLQ、旧 Graph 兼容与写操作对账 |
 | 可观测 | OpenTelemetry + OTLP Collector | 统一采集 Trace / Metrics，转发 LangSmith 与 Prometheus | 应用直连多个后端会形成双轨并增加数据治理成本 |
 | 发布 | PR Mock Gate + 真实 LLM Release Gate + GHCR CD | 兼顾每次变更的确定性保护与发布前真实模型验证 | 不在每个 PR 调用付费模型，当前 CD 只发布镜像而不部署生产集群 |
 

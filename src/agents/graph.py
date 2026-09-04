@@ -1,11 +1,15 @@
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
+from langgraph.types import Command, interrupt
 
 from src.agents.analyzer import ticket_analyzer_agent
+from src.agents.checkpointing import checkpoint_manager
 from src.agents.escalation import escalation_agent
 from src.agents.quality_assurance import quality_assurance_agent
 from src.agents.resolver import resolution_agent
@@ -18,6 +22,9 @@ from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
     AGENT_NODE_EXECUTIONS_TOTAL,
     AGENT_REQUESTS_TOTAL,
+    AGENT_WORKFLOW_INTERRUPTS_TOTAL,
+    AGENT_WORKFLOW_RESUME_DURATION_SECONDS,
+    AGENT_WORKFLOW_RESUMES_TOTAL,
     DEGRADED_AGENT_REQUESTS_TOTAL,
     LLM_COST_TOTAL,
 )
@@ -46,6 +53,12 @@ class AgentState(TypedDict):
     """
 
     request_id: str
+    checkpoint_thread_id: str
+    checkpoint_namespace: str
+    durable_execution_enabled: bool
+    execution_status: str
+    approval_status: Optional[str]
+    human_decision: Optional[str]
     ticket_id: int
     customer_id: str
     subject: str
@@ -419,6 +432,7 @@ async def escalate_node(state: AgentState) -> Dict[str, Any]:
         tracer, "agent.escalation", _trace_attrs(state, node="escalation")
     ):
         result = await _run_node("escalation", escalation_agent.evaluate, state)
+        result["approval_required"] = _requires_approval(result)
         logger.info(
             "escalation decided",
             extra={
@@ -429,6 +443,55 @@ async def escalate_node(state: AgentState) -> Dict[str, Any]:
             },
         )
         return result
+
+
+def _requires_approval(state: Dict[str, Any]) -> bool:
+    """使审批规则在暂停前确定，不依赖 LLM 自行决策。"""
+    return bool(
+        state.get("escalation_recommended")
+        or float(state.get("qa_score", 1.0)) < settings.RISK_QA_SCORE_THRESHOLD
+        or state.get("risk_requires_human", False)
+    )
+
+
+async def approval_gate_node(state: AgentState) -> Dict[str, Any]:
+    """高风险回复在此暂停，人工决策后从同一 Checkpoint 续跑。"""
+    approval_required = _requires_approval(state)
+    if not approval_required or not state.get("durable_execution_enabled", False):
+        return {
+            **state,
+            "approval_required": approval_required,
+            "execution_status": "completed",
+            "workflow_path": state.get("workflow_path", []),
+        }
+
+    decision = interrupt(
+        {
+            "type": "response_approval",
+            "ticket_id": state.get("ticket_id"),
+            "risk_level": state.get("risk_level", "low"),
+            "risk_score": state.get("risk_score", 0.0),
+            "qa_score": state.get("qa_score", 0.0),
+        }
+    )
+    if not isinstance(decision, dict):
+        raise ValueError("Approval resume payload must be an object.")
+    status_value = str(decision.get("status", ""))
+    if status_value not in {"approved", "modified", "rejected"}:
+        raise ValueError("Approval resume status is invalid.")
+    final_response = str(decision.get("final_response") or "")
+    suggested_response = state.get("suggested_response", "")
+    if status_value in {"approved", "modified"} and final_response:
+        suggested_response = final_response
+    return {
+        **state,
+        "suggested_response": suggested_response,
+        "approval_required": True,
+        "approval_status": status_value,
+        "human_decision": status_value,
+        "execution_status": "completed",
+        "workflow_path": [*state.get("workflow_path", []), "human_approval"],
+    }
 
 
 def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
@@ -487,7 +550,9 @@ def route_after_context_enrichment(state: AgentState) -> str:
     return "resolver"
 
 
-def create_agent_graph() -> StateGraph:
+def create_agent_graph(
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> Any:
     """Build and compile the LangGraph workflow."""
     workflow = StateGraph(AgentState)
 
@@ -497,6 +562,7 @@ def create_agent_graph() -> StateGraph:
     workflow.add_node("resolver", resolve_node)
     workflow.add_node("qa", qa_node)
     workflow.add_node("escalation", escalate_node)
+    workflow.add_node("approval_gate", approval_gate_node)
 
     # Establish Transitions
     workflow.set_entry_point("analyzer")
@@ -518,12 +584,27 @@ def create_agent_graph() -> StateGraph:
     )
     workflow.add_edge("resolver", "qa")
     workflow.add_edge("qa", "escalation")
-    workflow.add_edge("escalation", END)
+    workflow.add_edge("escalation", "approval_gate")
+    workflow.add_edge("approval_gate", END)
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=checkpointer)
 
 
-compiled_graph = create_agent_graph()
+compiled_graph = create_agent_graph(checkpoint_manager.saver)
+
+
+async def initialize_agent_checkpointing() -> None:
+    """在 FastAPI 启动时切换到持久化 Checkpointer。"""
+    global compiled_graph
+    saver = await checkpoint_manager.start()
+    compiled_graph = create_agent_graph(saver)
+
+
+async def shutdown_agent_checkpointing() -> None:
+    """在应用退出时释放 Checkpointer 连接。"""
+    global compiled_graph
+    await checkpoint_manager.stop()
+    compiled_graph = create_agent_graph(checkpoint_manager.saver)
 
 
 def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
@@ -532,6 +613,16 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "request_id": initial_state.get("request_id")
         or get_request_id()
         or "background",
+        "checkpoint_thread_id": initial_state.get("checkpoint_thread_id")
+        or str(uuid.uuid4()),
+        "checkpoint_namespace": initial_state.get("checkpoint_namespace")
+        or settings.LANGGRAPH_CHECKPOINT_NAMESPACE,
+        "durable_execution_enabled": bool(
+            initial_state.get("durable_execution_enabled", False)
+        ),
+        "execution_status": "running",
+        "approval_status": None,
+        "human_decision": None,
         "ticket_id": initial_state.get("ticket_id", 0),
         "customer_id": initial_state.get("customer_id", ""),
         "subject": initial_state.get("subject", ""),
@@ -592,6 +683,7 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     start_time = time.time()
     state_input = build_ticket_state(initial_state)
+    graph_config = _graph_config(state_input)
 
     logger.info(f"Invoking LangGraph flow for ticket ID {state_input['ticket_id']}")
     try:
@@ -609,11 +701,21 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
                 },
                 root=True,
             ):
-                final_output = await compiled_graph.ainvoke(state_input)
+                final_output = await compiled_graph.ainvoke(
+                    state_input, config=graph_config
+                )
+                final_output = await _annotate_checkpoint_state(
+                    final_output, graph_config
+                )
                 final_output["trace_id"] = get_current_trace_id()
                 set_agent_trace_id(final_output["trace_id"])
         try:
-            AGENT_REQUESTS_TOTAL.add(1, {"status": "success"})
+            request_status = (
+                "interrupted"
+                if final_output.get("workflow_interrupted")
+                else "success"
+            )
+            AGENT_REQUESTS_TOTAL.add(1, {"status": request_status})
         except Exception:
             logger.debug("Unable to record successful Agent request metric")
     except BaseException:
@@ -682,4 +784,112 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(
         f"LangGraph completed in {final_output['latency_seconds']}s. Cost: ${final_output['cost_usd']}."
     )
+    if final_output.get("workflow_interrupted"):
+        try:
+            AGENT_WORKFLOW_INTERRUPTS_TOTAL.add(
+                1, {"type": "response_approval"}
+            )
+        except Exception:
+            logger.debug("Unable to record workflow interrupt metric")
     return final_output
+
+
+def _graph_config(state: Dict[str, Any]) -> Dict[str, Any]:
+    """生成稳定 Thread 配置，恢复时必须使用完全相同的值。"""
+    return {
+        "configurable": {
+            "thread_id": state["checkpoint_thread_id"],
+            # 根 Graph 的 checkpoint_ns 必须为空；业务版本另存于 State。
+            "checkpoint_ns": "",
+        }
+    }
+
+
+async def _annotate_checkpoint_state(
+    output: Dict[str, Any], graph_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """从 StateSnapshot 识别 interrupt，并返回可持久化的恢复元数据。"""
+    snapshot = await compiled_graph.aget_state(graph_config)
+    configurable = (snapshot.config or graph_config).get("configurable", {})
+    interrupt_payload = None
+    for task in snapshot.tasks:
+        if task.interrupts:
+            interrupt_payload = task.interrupts[0].value
+            break
+    interrupted = bool(snapshot.next)
+    return {
+        **output,
+        "workflow_interrupted": interrupted,
+        "execution_status": "interrupted" if interrupted else "completed",
+        "checkpoint_id": configurable.get("checkpoint_id"),
+        "checkpoint_next_nodes": list(snapshot.next),
+        "interrupt_payload": interrupt_payload,
+    }
+
+
+async def resume_agent_workflow(
+    *,
+    checkpoint_thread_id: str,
+    checkpoint_namespace: str,
+    decision: Dict[str, Any],
+) -> Dict[str, Any]:
+    """使用人工决策恢复已暂停的 Workflow，不重跑已完成节点。"""
+    if not checkpoint_namespace:
+        raise ValueError("Checkpoint namespace is required for workflow resume.")
+    started = time.time()
+    graph_config = {
+        "configurable": {
+            "thread_id": checkpoint_thread_id,
+            "checkpoint_ns": "",
+        }
+    }
+    status = "success"
+    try:
+        with langsmith_agent_trace_context():
+            with observed_span(
+                tracer,
+                "supportgpt.langgraph.resume",
+                {
+                    **langsmith_span_attributes(
+                        "chain",
+                        trace_name="SupportGPT Agent Workflow Resume",
+                        force=True,
+                    ),
+                    "checkpoint.thread_id": checkpoint_thread_id,
+                    "workflow.namespace": checkpoint_namespace,
+                },
+                root=True,
+            ):
+                output = await compiled_graph.ainvoke(
+                    Command(resume=decision), config=graph_config
+                )
+                output = await _annotate_checkpoint_state(output, graph_config)
+                output["resume_trace_id"] = get_current_trace_id()
+                set_agent_trace_id(output["resume_trace_id"])
+    except BaseException:
+        status = "error"
+        raise
+    finally:
+        duration = time.time() - started
+        try:
+            AGENT_WORKFLOW_RESUMES_TOTAL.add(1, {"status": status})
+            AGENT_WORKFLOW_RESUME_DURATION_SECONDS.record(duration)
+        except Exception:
+            logger.debug("Unable to record workflow resume metrics")
+    if output.get("workflow_interrupted"):
+        raise RuntimeError("Workflow remained interrupted after approval resume.")
+    output["resume_latency_seconds"] = round(time.time() - started, 4)
+    output["cost_usd"] = calculate_llm_cost(
+        _configured_llm_model_name(),
+        int(output.get("tokens_input", 0)),
+        int(output.get("tokens_output", 0)),
+    )
+    logger.info(
+        "LangGraph workflow resumed",
+        extra={
+            "ticket_id": output.get("ticket_id"),
+            "checkpoint_thread_id": checkpoint_thread_id,
+            "decision": output.get("human_decision"),
+        },
+    )
+    return output

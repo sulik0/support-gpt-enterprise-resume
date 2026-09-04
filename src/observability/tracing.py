@@ -24,7 +24,7 @@ _request_id_context: ContextVar[Optional[str]] = ContextVar(
 _langsmith_agent_context: ContextVar[bool] = ContextVar(
     "supportgpt_langsmith_agent_context", default=False
 )
-_agent_trace_id_context: ContextVar[Optional[str]] = ContextVar(
+_agent_trace_id_context: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
     "supportgpt_agent_trace_id", default=None
 )
 _trace_performance_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
@@ -163,15 +163,21 @@ def _capture_llm_call(
 
 def bind_agent_trace_id() -> Token:
     """为当前请求初始化 Agent Trace ID 上下文。"""
-    return _agent_trace_id_context.set(None)
+    # Starlette 会在子 Task 中执行端点，共享可变 Holder 才能回传给中间件。
+    return _agent_trace_id_context.set({"trace_id": None})
 
 
 def set_agent_trace_id(trace_id: Optional[str]) -> None:
-    _agent_trace_id_context.set(trace_id)
+    holder = _agent_trace_id_context.get()
+    if holder is None:
+        _agent_trace_id_context.set({"trace_id": trace_id})
+    else:
+        holder["trace_id"] = trace_id
 
 
 def get_agent_trace_id() -> Optional[str]:
-    return _agent_trace_id_context.get()
+    holder = _agent_trace_id_context.get()
+    return holder.get("trace_id") if holder else None
 
 
 def reset_agent_trace_id(token: Token) -> None:

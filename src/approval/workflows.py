@@ -23,9 +23,14 @@ class HumanInTheLoopService:
     """
 
     async def create_pending_approval(
-        self, db: AsyncSession, ticket_id: int, drafted_response: str
+        self,
+        db: AsyncSession,
+        ticket_id: int,
+        drafted_response: str,
+        *,
+        commit: bool = True,
     ) -> ResponseApproval:
-        """Create a pending response approval ticket."""
+        """创建待审批记录；调用方可选择与其他领域状态原子提交。"""
         with observed_span(tracer, "approval.create_pending") as span:
             set_span_attributes(
                 span,
@@ -36,7 +41,7 @@ class HumanInTheLoopService:
                 },
             )
             approval = await self._create_pending_approval_impl(
-                db, ticket_id, drafted_response
+                db, ticket_id, drafted_response, commit=commit
             )
             set_span_attributes(span, {"approval.id": approval.id})
             return approval
@@ -46,6 +51,8 @@ class HumanInTheLoopService:
         db: AsyncSession,
         ticket_id: int,
         drafted_response: str,
+        *,
+        commit: bool,
     ) -> ResponseApproval:
         ticket_result = await db.execute(select(Ticket).filter(Ticket.id == ticket_id))
         ticket = ticket_result.scalars().first()
@@ -64,8 +71,11 @@ class HumanInTheLoopService:
             created_at=datetime.datetime.utcnow(),
         )
         db.add(approval)
-        await db.commit()
-        await db.refresh(approval)
+        if commit:
+            await db.commit()
+            await db.refresh(approval)
+        else:
+            await db.flush()
         try:
             HUMAN_APPROVALS_TOTAL.add(1, {"status": "created"})
         except Exception:

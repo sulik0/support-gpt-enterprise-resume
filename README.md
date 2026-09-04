@@ -13,13 +13,14 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 
 | 领域 | 当前能力 |
 |---|---|
-| Agent Workflow | Analyzer、Tooling、Retriever、Resolver、QA、Escalation；Tool/RAG 并行执行 |
+| Agent Workflow | 六个业务节点 + Approval Gate；Tool/RAG 并行执行 |
+| Durable Execution | SQLite/PostgreSQL Checkpoint、interrupt/resume、AgentExecution、恢复租约与重启扫描 |
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
 | Tool Calling | 5 个 CRM / OMS / Ticket Mock Tool；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
 | Tool Governance | 高风险写 Action 状态机、参数加密/HMAC、职责分离审批与乐观版本防重放 |
 | Safety | 多层 Prompt Injection 规则、Qwen3Guard Adapter、Risk Engine、PII/泄露过滤 |
-| HITL | 高风险、低置信度、低 QA、投诉与退款场景审批 |
+| HITL | 高风险、低置信度、低 QA、投诉与退款场景在 Graph 内暂停审批，完成后从原 Thread 恢复 |
 | Observability | OpenTelemetry 统一采集，Collector 导出 LangSmith Trace 和 Prometheus Metrics |
 | Evaluation | Ragas、DeepEval、确定性 Agent/Security Evaluator、100 条 Baseline Workflow Replay |
 | Feedback | AgentRun + FeedbackEvent + Trace 关联，脱敏 SFT/DPO 候选导出 |
@@ -43,6 +44,7 @@ uvicorn src.main:app --reload
 - Swagger：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 默认使用 Mock LLM、SQLite 和本地 ChromaDB，Redis 未启动时可正常降级。
+LangGraph Checkpoint 默认启用：本地写入独立的 `.runtime/langgraph-checkpoints.sqlite`；使用 PostgreSQL DATABASE_URL 时自动切换到官方 PostgreSQL Saver。高风险请求返回审批草稿后 Workflow 保持暂停，人工审批会恢复原执行而不是重跑前置节点。
 
 ### 前端
 

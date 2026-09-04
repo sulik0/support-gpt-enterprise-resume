@@ -185,6 +185,8 @@ class TicketAgentResultResponse(BaseModel):
     approval_required: bool = False
     approval_id: Optional[int] = None
     approval_status: Optional[str] = None
+    workflow_execution_id: Optional[str] = None
+    workflow_execution_status: Optional[str] = None
     cost_metadata: CostMetadata
     created_at: datetime
 
@@ -317,6 +319,34 @@ class ResponseApprovalResponse(BaseModel):
     final_response: str
     latency_seconds: float
     approved_at: datetime
+    workflow_execution_status: Optional[str] = None
+
+
+class AgentExecutionResponse(BaseModel):
+    """返回 Durable Execution 的脱敏状态与 Trace 关联。"""
+
+    id: str
+    ticket_id: int
+    approval_id: Optional[int]
+    agent_run_id: Optional[str]
+    status: str
+    checkpoint_backend: str
+    workflow_version: str
+    lock_version: int
+    resume_attempts: int
+    initial_trace_id: Optional[str]
+    resume_trace_id: Optional[str]
+    last_error_type: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    interrupted_at: Optional[datetime]
+    resumed_at: Optional[datetime]
+    completed_at: Optional[datetime]
+
+    class Config:
+        """允许直接从 SQLAlchemy 对象返回安全字段。"""
+
+        from_attributes = True
 
 
 # --- TOOL GOVERNANCE SCHEMAS ---

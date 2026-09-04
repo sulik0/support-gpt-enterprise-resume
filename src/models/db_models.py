@@ -153,6 +153,53 @@ class AgentRun(Base):
     )
 
 
+class AgentExecution(Base):
+    """记录可暂停、可恢复的 LangGraph 执行元数据。
+
+    Checkpoint 正文由 LangGraph Saver 管理，本表只保存业务关联与恢复租约。
+    """
+
+    __tablename__ = "agent_executions"
+    __table_args__ = (
+        UniqueConstraint("approval_id", name="uq_agent_execution_approval"),
+    )
+
+    id = Column(String(36), primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False, index=True)
+    approval_id = Column(
+        Integer, ForeignKey("response_approvals.id"), nullable=True, index=True
+    )
+    agent_run_id = Column(
+        String(36), ForeignKey("agent_runs.id"), nullable=True, index=True
+    )
+    request_id = Column(String(128), nullable=False, index=True)
+    checkpoint_namespace = Column(String(100), nullable=False)
+    checkpoint_id = Column(String(100), nullable=True)
+    checkpoint_backend = Column(String(30), nullable=False)
+    workflow_version = Column(String(100), nullable=False)
+    status = Column(String(40), nullable=False, index=True)
+    interrupt_type = Column(String(80), nullable=True)
+    interrupt_payload = Column(JSON, nullable=True)
+    lock_version = Column(Integer, nullable=False, default=1)
+    resume_attempts = Column(Integer, nullable=False, default=0)
+    lease_owner = Column(String(36), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    initial_trace_id = Column(String(32), nullable=True, index=True)
+    resume_trace_id = Column(String(32), nullable=True, index=True)
+    last_error_type = Column(String(100), nullable=True)
+    last_error_message = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+    interrupted_at = Column(DateTime, nullable=True)
+    resumed_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
 class AgentRunLink(Base):
     """关联 Agent Run 与审批等业务实体，避免修改既有业务表结构。"""
 

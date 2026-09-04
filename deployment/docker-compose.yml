@@ -7,6 +7,9 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/supportgpt
+      - LANGGRAPH_CHECKPOINT_ENABLED=true
+      - LANGGRAPH_CHECKPOINT_NAMESPACE=${LANGGRAPH_CHECKPOINT_NAMESPACE:-supportgpt-workflow-v1}
+      - LANGGRAPH_RESUME_LEASE_SECONDS=${LANGGRAPH_RESUME_LEASE_SECONDS:-60}
       - REDIS_URL=redis://cache:6379/0
       - LLM_PROVIDER=${LLM_PROVIDER:-mock}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-mock-support-v1}

@@ -53,6 +53,20 @@ npm run dev
 - 客服后台：只处理异常、待审批和需要人工修改的工单。
 - Agent 可观测页：仅 `manager/admin` 可访问 Agent Run 摘要并跳转 LangSmith Project。
 
+## LangGraph Checkpoint 配置
+
+Durable Execution 默认启用。本地使用独立 SQLite 文件；当 DATABASE_URL 为 PostgreSQL 时，默认使用同一个 PostgreSQL 实例中的 LangGraph 官方 Checkpoint 表：
+
+```dotenv
+LANGGRAPH_CHECKPOINT_ENABLED=true
+LANGGRAPH_CHECKPOINT_DATABASE_URL=
+LANGGRAPH_CHECKPOINT_SQLITE_PATH=./.runtime/langgraph-checkpoints.sqlite
+LANGGRAPH_CHECKPOINT_NAMESPACE=supportgpt-workflow-v1
+LANGGRAPH_RESUME_LEASE_SECONDS=60
+```
+
+LANGGRAPH_CHECKPOINT_DATABASE_URL 可显式覆盖 Saver 数据库。高风险请求在 Approval Gate 暂停；人工审批后使用原 execution ID 恢复。应用启动会扫描人工已决策但未完成的执行，恢复失败则保留 resume_pending，可由主管重试。不要手工删除正在等待审批的 Checkpoint 文件或表。
+
 ## LLM Provider 配置
 
 默认 Provider 为 `mock`。`openai` 是通用 OpenAI-compatible 实现，可接 OpenAI、DeepSeek、Qwen 和 vLLM：
@@ -121,6 +135,8 @@ QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
 | `GET /staff/review-queue` | 待审批工单 | 客服员工 |
 | `GET /approvals/pending` | 待审批记录 | 客服员工 |
 | `POST /approvals/{approval_id}` | 通过、修改或拒绝草稿 | 客服员工 |
+| `GET /agent-executions/{execution_id}` | 查看暂停/恢复状态及 Trace 关联 | 客服员工 |
+| `POST /agent-executions/{execution_id}/resume` | 重试已持久化人工决策的 Workflow | `manager/admin` |
 | `POST /feedback/user` | 提交一次性用户评价 | `agent_run_id + feedback_token` |
 | `GET /feedback/runs/{agent_run_id}` | 查看 Run 与反馈关联 | `manager/admin` |
 | `GET /observability/runs` | 分页查询 Agent Run 摘要 | `manager/admin` |
@@ -130,10 +146,11 @@ Swagger 是最新 Schema 的最终参考；修改 API 时必须同步 Pydantic M
 
 ## 数据库与缓存
 
-- PostgreSQL/开发 SQLite 持久化 User、Ticket、Approval、AgentRun、AgentRunLink 和 FeedbackEvent。
+- PostgreSQL/开发 SQLite 持久化 User、Ticket、Approval、AgentRun、AgentRunLink、AgentExecution 和 FeedbackEvent。
+- LangGraph Saver 保存 Graph State 正文；AgentExecution 只保存业务关联、执行状态、恢复租约和 Trace ID。
 - Redis 保存短期会话和最近消息；不可用时回退数据库。
 - ChromaDB 保存 Embedding 与文档 metadata，支持 `kb_version` 和 category filter。
-- 当前新表依赖 SQLAlchemy `create_all`；生产上线前必须增加 Alembic migration。
+- 当前 AgentExecution 等业务新表及 LangGraph Saver 表由启动期 setup/create_all 创建；生产上线前必须统一纳入受控 Alembic/DDL Migration。
 
 ## OpenTelemetry 与 LangSmith
 

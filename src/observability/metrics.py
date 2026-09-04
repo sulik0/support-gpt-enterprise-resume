@@ -38,6 +38,17 @@ AGENT_NODE_DURATION_SECONDS = meter.create_histogram(
     unit="s",
     description="Agent node execution duration",
 )
+AGENT_WORKFLOW_INTERRUPTS_TOTAL = meter.create_counter(
+    "agent_workflow_interrupts", description="Total durable workflow interrupts"
+)
+AGENT_WORKFLOW_RESUMES_TOTAL = meter.create_counter(
+    "agent_workflow_resumes", description="Total durable workflow resume attempts"
+)
+AGENT_WORKFLOW_RESUME_DURATION_SECONDS = meter.create_histogram(
+    "agent_workflow_resume_duration_seconds",
+    unit="s",
+    description="Durable workflow resume duration",
+)
 TOOL_CALLS_TOTAL = meter.create_counter(
     "agent_tool_calls", description="Total ToolRegistry calls"
 )

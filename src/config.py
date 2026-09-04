@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(default="sqlite+aiosqlite:///./supportgpt.db")
     REDIS_URL: Optional[str] = Field(default=None)
 
+    # LangGraph Checkpoint 本地使用独立 SQLite，生产默认复用 PostgreSQL。
+    LANGGRAPH_CHECKPOINT_ENABLED: bool = Field(default=True)
+    LANGGRAPH_CHECKPOINT_DATABASE_URL: Optional[str] = Field(default=None)
+    LANGGRAPH_CHECKPOINT_SQLITE_PATH: str = Field(
+        default="./.runtime/langgraph-checkpoints.sqlite"
+    )
+    LANGGRAPH_CHECKPOINT_NAMESPACE: str = Field(
+        default="supportgpt-workflow-v1", min_length=1, max_length=100
+    )
+    LANGGRAPH_RESUME_LEASE_SECONDS: int = Field(default=60, ge=10, le=600)
+
     # LLM Configuration
     LLM_PROVIDER: str = Field(default="mock")  # mock, openai, azure
     LLM_MODEL_NAME: Optional[str] = Field(default=None)

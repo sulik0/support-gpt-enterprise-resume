@@ -19,6 +19,9 @@ langchain==0.2.17
 langchain-core==0.2.43
 langgraph==0.2.76
 langgraph-checkpoint==2.1.2
+langgraph-checkpoint-sqlite==2.0.11
+langgraph-checkpoint-postgres==2.0.25
+psycopg[binary]>=3.2.0,<4.0.0
 tiktoken>=0.7.0,<1.0.0
 openai>=1.14.0,<2.0.0
 opentelemetry-api>=1.23.0,<2.0.0
@@ -30,4 +33,5 @@ opentelemetry-instrumentation-redis>=0.44b0,<1.0.0
 opentelemetry-instrumentation-sqlalchemy>=0.44b0,<1.0.0
 python-multipart>=0.0.9,<1.0.0
 python-dotenv==1.0.1
-aiosqlite>=0.20.0,<1.0.0
+# Checkpoint SQLite 2.x 依赖 Connection.is_alive，aiosqlite 0.22 已移除该 API。
+aiosqlite>=0.20.0,<0.22.0

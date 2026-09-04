@@ -15,7 +15,17 @@ from src.observability.logging_config import configure_logging
 
 configure_logging(settings.LOG_LEVEL)
 
-from src.agents.graph import run_agent_workflow
+from src.agents.checkpointing import checkpoint_manager
+from src.agents.durable_execution import (
+    AgentExecutionStatus,
+    durable_execution_service,
+)
+from src.agents.graph import (
+    initialize_agent_checkpointing,
+    resume_agent_workflow,
+    run_agent_workflow,
+    shutdown_agent_checkpointing,
+)
 from src.approval.workflows import human_it_loop_service
 from src.auth.jwt import create_access_token, get_password_hash, verify_password
 from src.auth.rbac import (
@@ -25,11 +35,12 @@ from src.auth.rbac import (
     require_agent,
     require_manager,
 )
-from src.database import engine, get_db, init_db
+from src.database import AsyncSessionLocal, engine, get_db, init_db
 from src.evaluation.framework import run_deeval_evaluation
 from src.feedback.service import feedback_service
 from src.memory.redis_memory import redis_memory
 from src.models.db_models import (
+    AgentExecution,
     AgentRun,
     ResponseApproval,
     SessionMemory,
@@ -37,6 +48,7 @@ from src.models.db_models import (
     User,
 )
 from src.models.schemas import (
+    AgentExecutionResponse,
     AgentRunPageResponse,
     AgentRunResponse,
     ChatRequest,
@@ -80,6 +92,7 @@ from src.observability.tracing import (
     bind_request_id,
     get_agent_trace_id,
     get_current_trace_id,
+    get_request_id,
     get_tracer,
     init_tracing,
     observed_span,
@@ -229,16 +242,31 @@ async def _process_ticket_with_agent(
     require_persisted_result: bool = False,
 ) -> tuple[dict, int | None, AgentRun | None]:
     """执行并持久化工单 Workflow，供创建工单和对话入口复用。"""
-    agent_output = await _run_workflow_with_tool_audit(
+    execution = await durable_execution_service.create(
         db,
-        {
-            "ticket_id": ticket.id,
-            "customer_id": ticket.customer_id,
-            "subject": ticket.subject,
-            "description": ticket.description,
-            "kb_version": kb_version,
-        },
+        ticket_id=ticket.id,
+        request_id=get_request_id() or "background",
+        checkpoint_backend=checkpoint_manager.backend,
     )
+    await db.commit()
+    try:
+        agent_output = await _run_workflow_with_tool_audit(
+            db,
+            {
+                "ticket_id": ticket.id,
+                "customer_id": ticket.customer_id,
+                "subject": ticket.subject,
+                "description": ticket.description,
+                "kb_version": kb_version,
+                "checkpoint_thread_id": execution.id,
+                "checkpoint_namespace": execution.checkpoint_namespace,
+                "durable_execution_enabled": True,
+            },
+        )
+    except Exception as exc:
+        await durable_execution_service.mark_failed(db, execution, exc)
+        await db.commit()
+        raise
     ticket.sentiment = agent_output.get("sentiment")
     ticket.priority = agent_output.get("priority")
     ticket.department = agent_output.get("department")
@@ -250,8 +278,30 @@ async def _process_ticket_with_agent(
             db=db,
             ticket_id=ticket.id,
             drafted_response=agent_output.get("suggested_response", ""),
+            commit=False,
         )
         approval_id = approval.id
+    if agent_output.get("workflow_interrupted") and approval_id is None:
+        exc = RuntimeError("Interrupted workflow did not create an approval record.")
+        await durable_execution_service.mark_failed(db, execution, exc)
+        await db.commit()
+        raise exc
+    if agent_output.get("workflow_interrupted") and approval_id:
+        await durable_execution_service.mark_interrupted(
+            db,
+            execution=execution,
+            approval_id=approval_id,
+            checkpoint_id=agent_output.get("checkpoint_id"),
+            interrupt_payload=agent_output.get("interrupt_payload"),
+            trace_id=agent_output.get("trace_id"),
+        )
+    else:
+        await durable_execution_service.mark_initial_completed(
+            db,
+            execution=execution,
+            checkpoint_id=agent_output.get("checkpoint_id"),
+            trace_id=agent_output.get("trace_id"),
+        )
     await db.commit()
 
     if require_persisted_result:
@@ -273,7 +323,79 @@ async def _process_ticket_with_agent(
         )
         if agent_run and approval_id:
             await _link_approval_fail_open(db, agent_run.id, approval_id)
+    if agent_run:
+        await durable_execution_service.attach_agent_run(db, execution, agent_run.id)
+        await db.commit()
     return agent_output, approval_id, agent_run
+
+
+async def _resume_approval_execution(
+    db: AsyncSession, approval: ResponseApproval
+) -> AgentExecution | None:
+    """将已持久化的人工决策送回原 LangGraph Thread。"""
+    execution = await durable_execution_service.get_by_approval(db, approval.id)
+    if execution is None or execution.status == AgentExecutionStatus.COMPLETED:
+        return execution
+    await durable_execution_service.queue_resume(db, execution)
+    await db.commit()
+    lease_owner = await durable_execution_service.acquire_resume_lease(
+        db, execution.id
+    )
+    if lease_owner is None:
+        await db.refresh(execution)
+        return execution
+
+    try:
+        final_response = approval.modified_response or approval.drafted_response
+        output = await resume_agent_workflow(
+            checkpoint_thread_id=execution.id,
+            checkpoint_namespace=execution.checkpoint_namespace,
+            decision={
+                "status": approval.status,
+                "final_response": final_response,
+                "approval_id": approval.id,
+            },
+        )
+        if execution.agent_run_id:
+            run_result = await db.execute(
+                select(AgentRun).where(AgentRun.id == execution.agent_run_id)
+            )
+            agent_run = run_result.scalars().first()
+            if agent_run:
+                # AgentRun 保留模型原始草稿，人工最终版本由 Approval/Feedback 保存。
+                agent_run.workflow_path = output.get(
+                    "workflow_path", agent_run.workflow_path
+                )
+        completed = await durable_execution_service.mark_resume_completed(
+            db,
+            execution_id=execution.id,
+            lease_owner=lease_owner,
+            checkpoint_id=output.get("checkpoint_id"),
+            resume_trace_id=output.get("resume_trace_id"),
+        )
+        if not completed:
+            raise RuntimeError("Durable execution lease was lost during resume.")
+    except Exception as exc:
+        await durable_execution_service.mark_resume_pending(
+            db,
+            execution_id=execution.id,
+            lease_owner=lease_owner,
+            exc=exc,
+        )
+        logger.exception(
+            "Unable to resume durable Agent workflow",
+            extra={"execution_id": execution.id, "approval_id": approval.id},
+        )
+    await db.refresh(execution)
+    return execution
+
+
+async def _recover_resumable_workflows() -> None:
+    """应用重启后自动续跑已决策但未完成的审批 Thread。"""
+    async with AsyncSessionLocal() as db:
+        recoverable = await durable_execution_service.list_recoverable(db)
+        for _, approval in recoverable:
+            await _resume_approval_execution(db, approval)
 
 
 async def _record_evaluation_fail_open(
@@ -335,7 +457,12 @@ async def lifespan(app: FastAPI):
     init_tracing()
     # Create DB schemas (SQLite or PostgreSQL)
     await init_db()
-    yield
+    await initialize_agent_checkpointing()
+    await _recover_resumable_workflows()
+    try:
+        yield
+    finally:
+        await shutdown_agent_checkpointing()
 
 
 app = FastAPI(
@@ -886,6 +1013,7 @@ async def process_approval(
     record = await human_it_loop_service.process_agent_approval(
         db=db, approval_id=approval_id, agent_id=current_user.id, req=req
     )
+    execution = await _resume_approval_execution(db, record)
 
     return ResponseApprovalResponse(
         id=record.id,
@@ -894,7 +1022,56 @@ async def process_approval(
         final_response=record.modified_response or record.drafted_response,
         latency_seconds=record.latency_seconds or 0.0,
         approved_at=datetime.datetime.utcnow(),
+        workflow_execution_status=execution.status if execution else None,
     )
+
+
+@app.get(
+    "/agent-executions/{execution_id}", response_model=AgentExecutionResponse
+)
+async def get_agent_execution(
+    execution_id: str,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
+    """供客服查看 Workflow 暂停、恢复和 Trace 关联状态。"""
+    execution = await durable_execution_service.get(db, execution_id)
+    if execution is None:
+        raise HTTPException(status_code=404, detail="Agent execution not found.")
+    return execution
+
+
+@app.post(
+    "/agent-executions/{execution_id}/resume",
+    response_model=AgentExecutionResponse,
+)
+async def retry_agent_execution_resume(
+    execution_id: str,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """供主管重试因进程退出或短暂故障未完成的续跑。"""
+    execution = await durable_execution_service.get(db, execution_id)
+    if execution is None:
+        raise HTTPException(status_code=404, detail="Agent execution not found.")
+    if execution.approval_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Execution has no persisted approval decision to resume.",
+        )
+    approval_result = await db.execute(
+        select(ResponseApproval).where(ResponseApproval.id == execution.approval_id)
+    )
+    approval = approval_result.scalars().first()
+    if approval is None or approval.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Human approval must be completed before workflow resume.",
+        )
+    resumed = await _resume_approval_execution(db, approval)
+    if resumed is None:
+        raise HTTPException(status_code=404, detail="Agent execution not found.")
+    return resumed
 
 
 # --- HIGH-RISK TOOL GOVERNANCE APIS ---
@@ -1127,6 +1304,13 @@ async def get_ticket_agent_result(
         .limit(1)
     )
     approval = approval_result.scalars().first()
+    execution_result = await db.execute(
+        select(AgentExecution)
+        .where(AgentExecution.ticket_id == ticket_id)
+        .order_by(AgentExecution.created_at.desc(), AgentExecution.id.desc())
+        .limit(1)
+    )
+    execution = execution_result.scalars().first()
     response_text = (
         approval.modified_response
         if approval and approval.modified_response
@@ -1153,6 +1337,8 @@ async def get_ticket_agent_result(
         approval_required=approval_required,
         approval_id=approval.id if approval_required else None,
         approval_status=approval.status if approval else None,
+        workflow_execution_id=execution.id if execution else None,
+        workflow_execution_status=execution.status if execution else None,
         cost_metadata=CostMetadata(
             tokens_input=agent_run.tokens_input,
             tokens_output=agent_run.tokens_output,

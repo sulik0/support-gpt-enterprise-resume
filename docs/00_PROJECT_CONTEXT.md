@@ -23,6 +23,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 ### 工程目标
 
 - 使用 LangGraph 将 Agent 流程拆分为职责清晰、可独立观测的节点。
+- 使用 LangGraph Checkpoint 持久化 Graph State，让高风险回复可在人工审批前暂停，并在进程重启后从原 Thread 恢复。
 - 通过 ToolRegistry 统一工具协议，实现 Schema 校验、RBAC、超时和调用审计。
 - 使用 Hybrid RAG 兼顾语义检索与政策编号、产品名、时间窗口等精确词匹配。
 - 保持默认 Mock LLM、可选 Redis 和 SQLite 本地配置，使项目在无企业凭据、无外部 LLM 和无 Redis 时仍可复现。
@@ -42,13 +43,14 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 10. **分层记忆**：SQL `SessionMemory` 保存持久化对话历史，Redis 作为可选短期快速存储，不可用时回退到 SQL。
 11. **可观测性**：使用 OpenTelemetry 统一采集 Trace 与 Metrics；Collector 将 Trace 转发 LangSmith，并通过 Prometheus exporter 提供指标，由 Grafana 展示。
 12. **离线评测适配**：提供 RAGAS、DeepEval 和本地确定性指标的统一评测入口。
+13. **Durable Execution**：使用 SQLite / PostgreSQL Checkpointer、稳定 `thread_id`、`AgentExecution` 业务元数据和数据库恢复租约，支持 `interrupt` / `Command(resume=...)`、重启恢复和幂等重试。
 
 ## 技术栈
 
 | 层级 | 技术 | 当前用途 |
 |---|---|---|
 | API | Python、FastAPI、Pydantic | 异步 API、请求/响应 Schema与健康检查 |
-| Agent 编排 | LangGraph | 编排 Analyzer、Tooling、Retriever、Resolver、QA 和 Escalation |
+| Agent 编排 | LangGraph、LangGraph Checkpoint | 编排 Analyzer、Tooling、Retriever、Resolver、QA、Escalation 和 Approval Gate，持久化暂停/恢复状态 |
 | LLM | Mock LLM、OpenAI、Azure OpenAI | 默认 Mock 保证离线可复现；通过 `BaseLLMProvider` 适配外部模型 |
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
 | 短期记忆 | Redis | 可选的会话历史快速存储，失败时不影响 SQL 持久化 |
@@ -76,14 +78,17 @@ FastAPI
   |      |-- Retriever --> ChromaDB Hybrid RAG
   |      |-- Resolver --> BaseLLMProvider --> Mock / OpenAI / Azure OpenAI
   |      |-- QA --> LLM QA + Response Filter
-  |      `-- Risk Engine --> Escalation --> Human-in-the-Loop
+  |      `-- Risk Engine --> Escalation --> Approval Gate
+  |                                      |-- 普通请求 --> END
+  |                                      `-- 高风险 --> Checkpoint / interrupt --> Human-in-the-Loop --> resume
   |
   +--> SQLAlchemy Async --> SQLite / PostgreSQL
   |      |-- User
   |      |-- Ticket
   |      |-- SessionMemory
   |      |-- KnowledgeDoc
-  |      `-- ResponseApproval
+  |      |-- ResponseApproval
+  |      `-- AgentExecution + LangGraph Checkpoint
   |
   `--> Redis（可选短期记忆）
 
@@ -102,7 +107,7 @@ Observability
 
 LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为：
 
-- 请求标识：`ticket_id`、`customer_id`、`subject`、`description`、`kb_version`。
+- 请求标识：`ticket_id`、`customer_id`、`subject`、`description`、`kb_version`、`checkpoint_thread_id`。
 - 分析结果：`sentiment`、`priority`、`intent`、`department`、`analyzer_confidence`。`intent` 必须来自统一 `IntentType`：`billing_dispute`、`outage_report`、`order_cancellation`、`order_status`、`account_support`、`warranty_claim`、`feedback`、`information_request`；最后一项是唯一兜底值。
 - 权限与工具：`operator_role`、`tool_context`、`tool_calls`。
 - RAG 与回复：`context_citations`、`suggested_response`。
@@ -110,23 +115,28 @@ LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为�
 - 质量结果：`qa_score`、`hallucination_detected`、`citation_verified`、`errors`。
 - 性能策略：`analyzer_strategy`、`qa_strategy`，用于区分规则短路与 LLM 评估。
 - 闭环决策：`escalation_recommended`、`escalation_reason`、`approval_required`。
+- 持久执行：`checkpoint_namespace`、`durable_execution_enabled`、`execution_status`、`approval_status`、`human_decision`。
 - 成本与延迟：`tokens_input`、`tokens_output`、`cost_usd`、`latency_seconds`。
 
-当前项目使用 `AgentState`，没有另外定义 `TaskState`、Checkpoint 或持久化 LangGraph State。不要在未实现前将这些能力写成现状。
+当前项目没有另外定义 `TaskState`，仍由单一 `AgentState` 承载固定 Workflow 的上下文；但 Graph State 已通过 LangGraph Checkpointer 持久化。本地默认使用独立 SQLite Saver，PostgreSQL 环境默认使用 AsyncPostgresSaver。
 
 ### 路由
 
 ```text
 analyzer
   |-- 命中 Prompt Injection / Jailbreak
-  |      `--> escalation --> END
+  |      `--> escalation --> approval_gate
   |
   `-- 正常请求
          `--> context_enrichment
                 |-- tooling（并行）
                 `-- retriever（并行）
-                      |-- 任一上下文命中注入 --> escalation --> END
-                      `-- 合并安全结果与上下文 --> resolver --> qa --> escalation --> END
+                      |-- 任一上下文命中注入 --> escalation --> approval_gate
+                      `-- 合并安全结果与上下文 --> resolver --> qa --> escalation --> approval_gate
+
+approval_gate
+  |-- 无需审批 --> END
+  `-- 需审批 --> interrupt + Checkpoint --> 人工决策 --> Command(resume) --> END
 ```
 
 ### 节点职责
@@ -157,7 +167,10 @@ analyzer
    - 按优先级计算 SLA：urgent `2h`、high `12h`、medium `24h`、low `48h`。
    - 调用独立 Risk Engine 综合安全威胁、优先级、情绪、业务意图、Analyzer 置信度、QA、幻觉和 Workflow 错误。
    - 默认风险等级阈值为 `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；`high` / `critical` 要求人工处理。
-   - 工作流结束后，建议升级、`qa_score < 0.8` 或 `risk_requires_human = true` 任一命中，就设置 `approval_required = true`。
+   - 建议升级、`qa_score < 0.8` 或 `risk_requires_human = true` 任一命中，就设置 `approval_required = true`。
+7. **Approval Gate**
+   - 无需审批时直接结束；需审批时调用 LangGraph `interrupt()` 暂停并保存 Checkpoint。
+   - 人工通过、修改或拒绝后，API 使用原 `thread_id` 和 `Command(resume=...)` 续跑，不重跑 Analyzer、Tool、RAG、Resolver 和 QA。
 
 ### 工单状态闭环
 
@@ -178,6 +191,8 @@ resolved / closed --reopen--> in_progress
 |---|---|---|
 | API 入口 | `src/main.py` | FastAPI 应用、鉴权、聊天、工单、审批、评测、Metrics 与 HTTP Trace |
 | Agent Graph | `src/agents/graph.py` | `AgentState`、节点编排、安全条件路由、token/成本/延迟汇总 |
+| Checkpoint | `src/agents/checkpointing.py` | 根据环境管理 Memory / SQLite / PostgreSQL Saver 及其连接生命周期 |
+| Durable Execution | `src/agents/durable_execution.py` | 管理 Thread 业务关联、执行状态、恢复租约、重启扫描和幂等续跑 |
 | Agent 节点 | `src/agents/` | Analyzer、Tooling、Retriever、Resolver、QA、Escalation |
 | Tool Registry | `src/tools/registry.py` | 工具注册、Schema、RBAC、风险策略、执行和 Trace |
 | Tool Governance | `src/tools/governance.py` | 高风险写 Action 的加密提议、职责分离审批、状态机和持久化审计 |
@@ -189,7 +204,7 @@ resolved / closed --reopen--> in_progress
 | 记忆 | `src/memory/redis_memory.py` | Redis 可选会话历史存储与降级 |
 | 审批 | `src/approval/workflows.py` | 创建待审批记录，处理通过、修改、拒绝和审批延迟 |
 | 工单状态机 | `src/tickets/state_machine.py` | 工单合法状态与动作约束 |
-| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval、AgentRun、Feedback 与 Tool Action/Audit |
+| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval、AgentRun、AgentExecution、Feedback 与 Tool Action/Audit |
 | 评测 | `src/evaluation/` | RAGAS / DeepEval Adapter、本地指标与统一评测入口 |
 | 可观测 | `src/observability/` | Prometheus Metrics、token/成本估算和 OpenTelemetry Trace |
 | 部署 | `deployment/`、`monitoring/` | Docker、Docker Compose、Kubernetes、Prometheus 和 Grafana 模板 |
@@ -217,8 +232,9 @@ resolved / closed --reopen--> in_progress
 8. Resolver 合并 Knowledge Base Context 和 Structured Tool Context 生成回复草稿。
 9. QA 校验草稿，Risk Engine 更新输出风险，Escalation 计算 SLA 并决定是否升级。
 10. API 回写工单的情绪、优先级、部门和 SLA。
-11. 如果 `approval_required = true`，创建 `ResponseApproval(status="pending")`，并通过状态机将工单转为 `pending_approval`。
-12. API 将当前用户消息和 AI 回复写入 SQL 与可选 Redis，然后返回回复、`tool_context`、`tool_calls`、`citations`、升级原因、审批 ID 和成本元数据。
+11. Approval Gate 对普通请求直接结束；如果 `approval_required = true`，则在持久化 Checkpoint 后 `interrupt`。
+12. API 创建 `ResponseApproval(status="pending")` 和 `AgentExecution(status="interrupted")`，并通过状态机将工单转为 `pending_approval`。
+13. API 将当前用户消息和 AI 草稿写入 SQL 与可选 Redis，然后返回回复、`tool_context`、`tool_calls`、`citations`、升级原因、审批 ID 和成本元数据。
 
 **当前限制**：`/chat` 已读取并持久化多轮会话历史，但当前 `AgentState` 没有 `conversation_history` 字段，历史尚未注入 Analyzer 或 Resolver Prompt。因此只能表述为“实现会话历史存储与 Redis 降级”，不能表述为“已完成基于多轮历史的回复生成”。
 
@@ -226,9 +242,10 @@ resolved / closed --reopen--> in_progress
 
 1. 客服通过 `GET /approvals/pending` 查询待审批草稿。
 2. 客服通过 `POST /approvals/{approval_id}` 提交 `approved`、`modified` 或 `rejected`。
-3. 系统记录审批人、最终回复和从草稿创建到人工处理的延迟。
-4. 状态机将通过/修改的工单转为 `resolved`，将拒绝的工单转回 `in_progress`。
-5. 只有 `resolved` 工单可以通过关闭动作转为 `closed`。
+3. 系统记录审批人、最终回复和从草稿创建到人工处理的延迟，再原子抢占数据库恢复租约。
+4. 续跑使用原 Checkpoint Thread，只重新进入 Approval Gate；成功后更新 AgentRun 的 Workflow Path 和 AgentExecution。AgentRun 保留原始 AI 草稿，人工最终回复保存在 ResponseApproval / Feedback，供 DPO 数据正确区分 rejected 与 chosen。
+5. 状态机将通过/修改的工单转为 `resolved`，将拒绝的工单转回 `in_progress`。恢复失败时状态保留为 `resume_pending`，可在重启扫描或主管 API 中重试。
+6. 只有 `resolved` 工单可以通过关闭动作转为 `closed`。
 
 ### 知识库链路
 
@@ -313,7 +330,8 @@ resolved / closed --reopen--> in_progress
 ### 已完成
 
 - FastAPI 后端 API、JWT 鉴权和基础 RBAC。
-- LangGraph 六节点 Agent 工作流和安全条件路由。
+- LangGraph 六个业务节点 + Approval Gate 工作流和安全条件路由。
+- LangGraph Checkpoint + Durable Execution：本地 SQLite / 生产 PostgreSQL Saver、`interrupt` / `Command(resume)`、`AgentExecution` 状态、数据库恢复租约、启动恢复和主管手动重试。
 - Prompt Injection、Jailbreak、PII 脱敏和 Response Filter。
 - ToolRegistry、4 个读 Tool 与 1 个高风险 Mock 写 Tool，具备 Schema、RBAC、风险策略和超时边界。
 - Tool Governance V2.1：高风险写操作必须经过 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` 状态机；提议人不能批准自己的 Action，且 Agent Workflow 不会自动路由该写 Tool。
@@ -348,12 +366,13 @@ resolved / closed --reopen--> in_progress
 - **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。
 - **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
 - **故障治理**：已完成单进程第一版；尚无分布式 Circuit Breaker、Queue / DLQ、跨服务幂等键、写操作结果对账与故障注入压测。
+- **Durable Execution**：已覆盖人工审批等待与重启续跑；尚无 Checkpoint TTL/归档清理、多 Workflow 版本兼容执行器、通用后台任务队列和全节点失败的自动续跑策略。
 
 ### 已知环境限制
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；2026-08-27 在 Python 3.12 与关闭外部 OTel exporter 的测试隔离配置下全量测试 `146 passed`，CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；2026-09-04 当前环境全量测试 200 passed，包含 Checkpoint 跨 Saver 重启恢复、审批续跑幂等与 Feedback 兼容回归；CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划

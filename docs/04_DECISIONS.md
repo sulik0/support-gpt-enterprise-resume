@@ -58,7 +58,7 @@ Agent 工作流涉及异步数据库访问、可选 Redis、外部 LLM 和检索
 
 ### 最终方案
 
-采用 LangGraph 固定六节点 Workflow。
+采用 LangGraph 固定 Workflow：六个业务节点后增加 Approval Gate，形成可暂停、可恢复的七节点图。
 
 ### 为什么选择
 
@@ -502,17 +502,18 @@ Redis 保存最近 12 条消息并设置 24 小时 TTL；SQL `SessionMemory` 保
 
 当前会话历史尚未注入 Agent Prompt，因此这是存储与回退能力，不是完整的多轮推理记忆。
 
-## 决策 16：暂不引入 Checkpoint
+## 决策 16：采用 LangGraph Checkpoint + Durable Execution
 
 ### 问题背景
 
-LangGraph Checkpoint 可以保存执行中状态，用于长流程恢复、中断后继续和人工暂停。
+人工审批会跨越原 HTTP 请求甚至应用重启。如果只保存 ResponseApproval 而不保存 Graph State，审批后只能结束在 Graph 外或从 Analyzer 重新执行，既浪费 LLM/RAG/Tool 成本，也可能产生重复副作用。
 
 ### 候选方案
 
 - 无 Checkpoint，单请求内执行完 Workflow
+- MemorySaver（仅进程内）
+- SQLite / PostgreSQL 官方 Checkpointer
 - Redis Checkpoint
-- PostgreSQL Checkpoint
 - 专用工作流引擎
 
 ### 优点与缺点
@@ -520,21 +521,22 @@ LangGraph Checkpoint 可以保存执行中状态，用于长流程恢复、中�
 | 方案 | 优点 | 缺点 |
 |---|---|---|
 | 无 Checkpoint | 链路简单、无状态迁移负担 | 请求中断后不能恢复 Graph |
+| MemorySaver | 接入简单，适合单元测试 | 进程退出即丢失 |
+| SQLite / PostgreSQL Checkpointer | 官方集成、本地可复现、生产可耐久恢复 | 需要状态兼容、DDL、租约和清理治理 |
 | Redis Checkpoint | 访问快 | 耐久性和清理策略需额外设计 |
-| PostgreSQL Checkpoint | 可持久恢复、审计性好 | 状态版本、幂等和迁移复杂 |
 | 工作流引擎 | 支持长事务与重试 | 基础设施与学习成本高 |
 
 ### 最终方案
 
-当前不采用 Checkpoint。
+使用官方 AsyncSqliteSaver / AsyncPostgresSaver 保存 LangGraph Checkpoint；本地默认独立 SQLite，PostgreSQL 部署默认复用业务数据库。每次业务执行使用稳定 UUID thread_id，并以 AgentExecution 关联 Ticket、ResponseApproval、AgentRun、Trace 和恢复状态。
 
 ### 为什么选择
 
-当前流程短、同步完成，人工审批通过领域记录而不是恢复同一 Graph 来处理。
+Approval Gate 使用 interrupt 强制暂停，人工决策持久化后再以 Command(resume) 恢复原 Thread。这样审批是 Graph 内不可绕过的控制点，Analyzer、Tool、RAG、Resolver、QA 和 Escalation 不会重复执行。数据库恢复租约防止多个 Worker 重复续跑，启动扫描和主管恢复 API 处理决策已提交但续跑未完成的情况。
 
 ### 工程权衡
 
-系统失去长任务恢复能力；未来若有异步调查、人工中断后继续或跨服务编排，再评估持久化 Checkpoint。
+方案增加了 Checkpoint 表、AgentExecution 状态机、Graph 版本兼容和清理责任。当前仅对 Human-in-the-Loop 等待实现自动 Durable Resume，不等同于通用异步任务平台；尚无 Checkpoint TTL/归档、旧 Graph 多版本恢复、Queue/DLQ，新增业务表和 Saver DDL 也仍需纳入 Alembic。
 
 ## 决策 17：采用 Review Agent 与 Response Filter，不采用自动 Reflection Loop
 
@@ -838,8 +840,8 @@ Action 参数使用 Fernet 加密，HMAC 用于执行前完整性校验，审计
 
 | 领域 | 最终决策 | 当前边界 |
 |---|---|---|
-| Agent 编排 | LangGraph 固定六节点图 | 无动态 Planner / 自治协商 |
-| 状态 | 单一 AgentState | 无 TaskState / Checkpoint |
+| Agent 编排 | LangGraph 固定工作流 + Approval Gate | 无动态 Planner / 自治协商 |
+| 状态 | 单一 AgentState + SQLite/PostgreSQL Checkpoint + AgentExecution | 无独立 TaskState；无 TTL/旧 Graph 兼容 |
 | 工具 | ToolRegistry + Mock Adapter + 持久化 ToolAction | 无 MCP；写 Tool 仍为 Mock，无幂等/Outbox/自动对账 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |
 | 安全 | 用户 / Tool / RAG 规则 + Qwen3Guard + Risk Engine，输出 Filter + QA | 语义安全默认关闭，尚无真实业务攻击集校准与生产可用性数据 |
@@ -847,7 +849,7 @@ Action 参数使用 Fernet 加密，HMAC 用于执行前完整性校验，审计
 | 数据 | SQLite 本地、PostgreSQL Compose | 无迁移、读写分离、多租户 |
 | 记忆 | Redis 可选 + SQL 兜底 | 历史未注入生成 Prompt |
 | 审批 | 独立 Risk Engine + HITL + 状态机 | 阈值可配置但未用生产数据校准，状态事件未持久化 |
-| 恢复 | LLM/RAG/Tool 有界 Retry + 进程内 Circuit Breaker + Fallback + 人工接管 | 无分布式 Breaker、Queue / DLQ 和写操作对账 |
+| 恢复 | LLM/RAG/Tool 有界 Retry + Checkpoint/HITL Durable Resume + 数据库恢复租约 | 无分布式 Breaker、通用 Queue / DLQ、Checkpoint 清理和写操作对账 |
 | 观测 | OpenTelemetry + OTLP Collector + LangSmith / Prometheus | Collector 尚未高可用，未接 Jaeger / Tempo |
 | 评测 | Adapter + 本地降级 + 固定 100 条 Baseline | 无人工标注生产 Ground Truth 和真实线上基线 |
 | 发布治理 | PR Mock 100 Case Gate + Real-LLM Release Gate | V1 只以六项确定性行为指标决定 Case Pass，语义质量尚未纳入门禁 |

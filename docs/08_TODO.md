@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-08-31。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-09-04。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -33,6 +33,7 @@
 - [x] 建立门禁后 CD：仅对通过 Release Gate 的同一 Git SHA 构建镜像，发布 GHCR 不可变 SHA Tag 并生成 Provenance Attestation。
 - [x] 完成 Resilience V1：LLM/RAG/Tool 统一故障分类、超时、有界 Retry、进程内 Circuit Breaker、Fallback、AgentState/Risk/OTel 联动与高风险禁重试。
 - [x] 完成 Tool Governance V2.1：Tool 调用脱敏持久化审计，高风险写 Action 加密/HMAC、职责分离审批、乐观版本和 Append-only 状态事件。
+- [x] 完成 LangGraph Checkpoint + Durable Execution V1：SQLite/PostgreSQL Saver、Approval Gate interrupt/resume、AgentExecution、数据库恢复租约、启动扫描和主管重试 API。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -57,9 +58,10 @@
 
 ## 已知问题与风险
 
-- [x] 2026-08-27 在 Python 3.12 与关闭外部 OTel exporter 的隔离配置下完成 146 条全量测试；CI / Docker 使用 Python 3.11。
+- [x] 2026-09-04 完成 200 条全量测试，覆盖 Checkpoint 跨重启恢复、审批续跑幂等、Trace 与 Feedback 兼容；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
+- [ ] Checkpoint 尚无 TTL/归档、旧 Graph 多版本恢复与定期清理；AgentExecution 和 Saver DDL 尚未纳入 Alembic/受控 Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
 - [ ] 反馈 Token 目前随 Agent 响应返回，前端仍需安全保存并只在评价提交时使用。
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。

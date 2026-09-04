@@ -79,14 +79,14 @@ LangGraph Agent Workflow
 Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 ```
 
-正常请求的固定顺序为：Analyzer → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Context Enrichment 直接进入 Escalation，不调用后续 Resolver / QA。
+正常请求的固定顺序为：Analyzer → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation → Approval Gate。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Context Enrichment 直接进入 Escalation，不调用后续 Resolver / QA。所有路径最终经过 Approval Gate：普通请求结束，高风险请求持久化 Checkpoint 并暂停等待人工决策。
 
 ## 7. 技术栈
 
 | 领域 | 当前技术 |
 |---|---|
 | 后端与 API | Python、FastAPI、Pydantic |
-| Agent 编排 | LangGraph |
+| Agent 编排 | LangGraph、LangGraph Checkpoint（SQLite / PostgreSQL Saver） |
 | 数据访问 | SQLAlchemy Async |
 | 本地数据库 | SQLite |
 | 容器化数据库 | PostgreSQL |
@@ -99,11 +99,11 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | 可观测 | OpenTelemetry、LangSmith、Prometheus、Grafana |
 | 部署与验证 | Docker、Docker Compose、Kubernetes manifests、pytest、GitHub Actions |
 
-未使用或未实现的技术包括：MCP、pgvector、独立 TaskState、LangGraph Checkpoint、动态 Planner、自动 Reflection Loop、多租户知识隔离、生产搜索后端、Prompt 版本灰度。
+未使用或未实现的技术包括：MCP、pgvector、独立 TaskState、动态 Planner、自动 Reflection Loop、多租户知识隔离、生产搜索后端、Prompt 版本灰度、通用分布式任务队列和旧 Graph 多版本恢复。
 
 ## 8. Agent 数量与职责
 
-当前存在 **6 个逻辑 Agent 节点**。它们是单个 LangGraph Workflow 中职责分离的节点，不代表 6 个独立部署的模型服务。
+当前存在 **6 个逻辑 Agent 节点 + 1 个确定性 Approval Gate 控制节点**。六个 Agent 节点是单个 LangGraph Workflow 中的职责分工，不代表 6 个独立部署的模型服务；Approval Gate 不调用 LLM，不计为 Agent。
 
 | Agent | 职责 |
 |---|---|
@@ -113,6 +113,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
 | QA | 评估质量与幻觉风险，并执行输出泄露过滤 |
 | Escalation | 调用 Risk Engine 生成最终风险结论，计算 SLA，判断升级与人工审批需求 |
+| Approval Gate（控制节点） | 无需审批时结束；需要审批时 interrupt，人工决策后从原 Checkpoint Thread 恢复 |
 
 当前没有独立 Planner、Selector、Reviewer 以外的 Agent、Validator Agent 或 Reflection Agent。QA 承担 Review 职责；安全、工具和状态验证由分层规则完成。
 
@@ -147,6 +148,8 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 当前也没有独立 Planner 或动态任务分解。系统采用固定 Workflow，并根据安全结果、部门、意图和优先级做有限的规则路由。当前唯一的受限重新规划是：类别检索无结果时，保留知识库版本并放宽类别进行一次回退检索。
 
 不得表述为：系统具备动态 Planner、子任务拆分、自动 Plan Revision、任务队列或自主多 Agent 协商。
+
+系统已经实现 LangGraph Checkpoint + Durable Execution：本地使用 AsyncSqliteSaver，PostgreSQL 部署使用 AsyncPostgresSaver；高风险回复在 Approval Gate 调用 interrupt，人工决策后用相同 thread_id 和 Command(resume) 续跑。AgentExecution 持久化工单、审批、Agent Run、Trace、状态和恢复租约，应用启动时会扫描并续跑“决策已提交但 Graph 未完成”的执行。该能力只覆盖当前审批等待场景，不等同于通用异步任务队列。
 
 ## 12. Memory
 
@@ -205,7 +208,7 @@ Prompt Injection 不再只是英文关键词检测，当前实现为确定性多
 | 本地默认 | SQLite | 降低启动门槛，支持无额外服务运行 |
 | Docker Compose | PostgreSQL | 提供更接近生产的并发与连接池环境 |
 
-持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、`AgentRun`、`AgentRunLink`、`FeedbackEvent`、`ToolAction`、`ToolActionEvent` 和 `ToolInvocationAudit`。当前没有数据库迁移工具、读写分离、分库分表、`ticket_status_events` 审计表或多租户数据隔离。
+持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、AgentRun、AgentRunLink、AgentExecution、FeedbackEvent、ToolAction、ToolActionEvent 和 ToolInvocationAudit。AgentExecution 只保存业务关联、状态、租约和 Trace ID；Graph State 正文由 LangGraph Saver 的官方表保存。当前没有数据库迁移工具、读写分离、分库分表、ticket_status_events 审计表或多租户数据隔离。
 
 ## 16. Redis
 
@@ -323,7 +326,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
-| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；2026-08-27 在 Python 3.12 隔离配置下 146 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
+| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 曾混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；2026-09-04 当前环境 200 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
@@ -358,7 +361,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 1. 已实现、部分实现、规划中和未知信息必须明确区分。
 2. 所有 CRM、OMS、Ticketing、退款初筛和默认 LLM 均为 Mock，除非代码与凭据明确变为真实集成。
 3. Agent 数量固定表述为 6 个逻辑节点；Tool 数量固定表述为 5 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
-4. MCP 数量为 0；独立 TaskState、Checkpoint、动态 Planner、自动 Reflection 和 pgvector 均未采用，直至代码发生变化。
+4. MCP 数量为 0；独立 TaskState、动态 Planner、自动 Reflection 和 pgvector 均未采用。Checkpoint 已实现，但只覆盖固定 Workflow 的审批暂停与恢复。
 5. Redis 是可选短期缓存，SQL 是持久化兜底；会话历史尚未注入 Agent 推理。
 6. ChromaDB 是当前向量数据库；Hybrid RAG 是当前检索方案。
 7. 项目没有真实生产上线数据、线上 KPI 或真实客户业务数据。
