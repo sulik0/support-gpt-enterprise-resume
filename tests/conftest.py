@@ -15,23 +15,28 @@ os.environ["LLM_FAST_BASE_URL"] = ""
 os.environ["LLM_FAST_API_KEY"] = ""
 os.environ["LLM_ANALYZER_MODEL_NAME"] = ""
 os.environ["LLM_QA_MODEL_NAME"] = ""
+os.environ["TOOL_OUTBOX_WORKER_ENABLED"] = "false"
+os.environ["TOOL_RECONCILIATION_DELAY_SECONDS"] = "0"
+os.environ["TOOL_POLICY_VERSION"] = "tool-policy-v2.2-test"
+os.environ["OTEL_ENABLED"] = "false"
 
 from src.database import Base, get_db
 from src.main import app
 from src.rag.vector_store import vector_store
+from src.tools.refund_gateway import refund_gateway
 
 # Configure isolated testing engine
 test_engine = create_async_engine(
-    "sqlite+aiosqlite:///:memory:",
-    connect_args={"check_same_thread": False}
+    "sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}
 )
 TestSessionLocal = async_sessionmaker(
     bind=test_engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
-    autoflush=False
+    autoflush=False,
 )
+
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -43,6 +48,7 @@ def event_loop():
     yield loop
     loop.close()
 
+
 @pytest.fixture(autouse=True)
 async def init_test_db():
     """Create a fresh database structure for each test run."""
@@ -53,6 +59,8 @@ async def init_test_db():
         await conn.run_sync(Base.metadata.drop_all)
     # Clear memory vector store collection
     vector_store.clear_database()
+    refund_gateway.reset()
+
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -60,9 +68,17 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with TestSessionLocal() as session:
         yield session
 
+
+@pytest.fixture
+def outbox_session_factory():
+    """允许测试显式推进异步 Outbox Worker。"""
+    return TestSessionLocal
+
+
 @pytest.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Provide an HTTPX AsyncClient bound to the FastAPI application with mock DB dependency overrides."""
+
     async def override_get_db():
         try:
             yield db_session
@@ -74,11 +90,11 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             await db_session.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
-        
+
     app.dependency_overrides.clear()
 
 

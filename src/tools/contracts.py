@@ -11,3 +11,5 @@ class ApprovedToolExecution:
     tool_name: str
     payload_hash: str
     approved_by_user_id: int
+    idempotency_key: str
+    policy_version: str

@@ -123,7 +123,7 @@ State 包含：工单与客户标识、主题与描述、知识库版本；情�
 
 ### 17. 如何保证退款流程一定经过审批？
 
-必须先澄清：当前项目能保证退款资格初筛工具只有 Manager 及以上角色可调用，且真实退款动作并不存在；但当前 Escalation 规则没有单独写死“所有 refund intent 必须审批”。Mock 分类通常会把退款识别为 negative + high，从而触发审批，但这不是对所有 Provider 的绝对保证。
+必须先澄清：当前项目能保证退款资格初筛只有 Manager 及以上角色可调用，创建退款请求的 Mock 写 Tool 必须走独立 Action 审批与 Outbox，且 Agent Workflow 不会自动调用；这仍不是真实资金操作。回复审批由 Risk Engine 决定，写操作审批则由 Tool 状态机硬性保证，两者不能混为一谈。
 
 如果业务要求“任何退款都必须审批”，正确做法是在确定性策略层增加 `refund intent → approval_required` 的硬规则，并让真实退款执行只能在 approved 状态后由幂等、高权限工具完成。不能只靠 Prompt 或模型分类保证。
 
@@ -239,19 +239,19 @@ Tool 能访问客户、订单和工单事实，未来还可能产生退款、取
 
 退款涉及资金、政策适用性和客户权益，模型可能因分类错误、幻觉或攻击输入做出错误承诺。真实退款还需要幂等、审批、审计和财务系统确认。
 
-当前项目只有 Manager 级 Mock 资格初筛，没有真实退款执行。正确边界是 AI 提供上下文和草稿，人类批准后才可能由受控系统执行真实动作。
+当前项目同时有 Manager 级 Mock 资格初筛和一个 Mock 创建退款请求写 Tool，但后者只能由工作人员提议、不同 manager/admin 审批，再通过 Transactional Outbox 异步执行。它验证治理协议，不代表真实退款执行。
 
 ### 36. 如何限制高风险工具？
 
-通过最低角色、输入 Schema、显式注册、超时、持久化审计和不在主 Workflow 自动调用来限制。高风险写 Tool 还必须先创建加密 Action，由不同 manager/admin 审批，执行时校验 payload HMAC 与 expected version。当前尚缺业务幂等键、Outbox、金额限制和自动结果对账。
+通过最低角色、输入 Schema、显式注册、超时、持久化审计和不在主 Workflow 自动调用来限制。高风险写 Tool 还必须先创建加密 Action，由不同 manager/admin 审批，执行时校验 payload/Policy HMAC 与 expected version。V2.2 还增加业务幂等键、Transactional Outbox、自动对账、Retry/DLQ 和补偿；当前仍缺真实 OMS 集成与金额级 Policy。
 
 项目当前只实现前一组基础治理，没有真实资金工具。
 
 ### 37. 工具调用超时怎么办？
 
-每个当前工具的超时为 1 秒。超时后停止等待，记录 `timeout`、耗时和错误，不把它伪装成成功。
+读 Tool 的默认超时为 1 秒，Mock 创建退款请求的超时为 2 秒。超时后停止等待，记录 `timeout`、耗时和错误，不把它伪装成成功。
 
-当前低风险读 Tool 对 Timeout、Connection 和 Server Error 做默认一次有界 Retry，并通过进程内 Circuit Breaker 快速隔离持续故障。高风险或非幂等写 Tool 不自动重试；超时后结果不确定必须转人工对账。
+当前低风险读 Tool 对 Timeout、Connection 和 Server Error 做默认一次有界 Retry，并通过进程内 Circuit Breaker 快速隔离持续故障。高风险写 Tool 不自动重试；超时后进入 `unknown`，Reconciliation Worker 按业务幂等键查询 OMS，查询耗尽才转人工。
 
 ### 38. 外部系统失败怎么办？
 
@@ -669,7 +669,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 最大问题是缺少能量化质量的 Golden Set 和真实业务数据。现有 RAGAS/DeepEval Adapter 与本地启发式指标能跑通管道，但无法证明真实召回、Faithfulness 或业务收益。
 
-其次是业务系统仍为 Mock、会话历史未注入推理、无多租户隔离和生产 Trace 后端。Tool 审计已持久化，但真实写 Tool 仍缺业务幂等、Outbox 和自动对账。
+其次是业务系统仍为 Mock、会话历史未注入推理、无多租户隔离和自建生产 Trace 存储。Tool Governance V2.2 已实现业务幂等、Outbox 和自动对账协议，但尚未通过真实 OMS 验证。
 
 ### 104. 如果用户问一个知识库没有的问题怎么办？
 
@@ -687,13 +687,13 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 当前工具选择是确定性规则，不由 LLM自由规划；Registry 还会检查注册白名单、参数和角色。误调用会留下工具名、角色、状态和耗时审计。
 
-当前工具主要是读操作且为 Mock。真实写工具上线前需要审批 Token、幂等键、最小权限、操作前确认和补偿流程。
+当前工具主要是读操作且均为 Mock。唯一高风险写 Tool 已具备职责分离审批、业务幂等键、最小权限、Outbox、对账和补偿状态机；真实上线仍需接入 OMS 并验证契约。
 
 ### 107. 如果工具调用失败怎么办？
 
 失败会被记录为 validation_error、permission_denied、timeout 或 error，不会伪装成成功。Tooling 可在无业务上下文的情况下继续到 RAG，QA 再根据依据决定是否转人工。
 
-当前低风险读 Tool 会对可重试的瞬时故障做有界 Retry，连续失败会打开进程内 Circuit Breaker。失败结果、尝试次数和降级等级进入审计、AgentState、Risk Engine、Trace 和 Metrics；上下文不足时保守回复或转人工。写 Tool 仍必须先完成幂等键和结果对账。
+当前低风险读 Tool 会对可重试的瞬时故障做有界 Retry，连续失败会打开进程内 Circuit Breaker。失败结果、尝试次数和降级等级进入审计、AgentState、Risk Engine、Trace 和 Metrics；上下文不足时保守回复或转人工。高风险写 Tool 通过 Outbox 单次投递，超时后只重试幂等结果查询，耗尽进入 DLQ。
 
 ### 108. 如果 RAG 检索到了错误文档怎么办？
 
@@ -724,6 +724,6 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 - 只引用 `03_INTERVIEW_CANON.md` 中可证实的事实。
 - CRM、OMS、历史工单、退款初筛和默认 LLM 必须明确为 Mock。
 - 当前是 6 个逻辑 Agent 节点、5 个注册 Tool、0 个 MCP。
-- 当前没有独立 TaskState、动态 Planner、自动 Reflection、分布式 Circuit Breaker / Queue / DLQ、pgvector、Milvus 或生产级搜索后端。Checkpoint 已覆盖审批暂停与恢复，但尚无 TTL、旧 Graph 多版本恢复或通用后台调度。
+- 当前没有独立 TaskState、动态 Planner、自动 Reflection、分布式 Circuit Breaker、通用 Queue/DLQ、pgvector、Milvus 或生产级搜索后端。Tool Governance 有专用数据库 Outbox Retry/DLQ；Checkpoint 已覆盖审批暂停与恢复，但尚无 TTL、旧 Graph 多版本恢复或通用后台调度。
 - 当前没有真实上线指标、P95/QPS 基准、真实客户数据或业务提升百分比。
 - 个人职责和是否独立开发必须按本人真实经历回答，不能根据仓库推断。

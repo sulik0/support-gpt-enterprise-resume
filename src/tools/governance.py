@@ -1,7 +1,9 @@
 """高风险 Tool Action 的提议、审批、执行与查询服务。"""
 
+import asyncio
 import datetime
 import uuid
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from fastapi import HTTPException, status
@@ -11,9 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.config import settings
-from src.models.db_models import Ticket, ToolAction, ToolActionEvent, User
+from src.models.db_models import (
+    Ticket,
+    ToolAction,
+    ToolActionControl,
+    ToolActionEvent,
+    ToolOutboxEvent,
+    User,
+)
 from src.models.intents import normalize_intent
-from src.observability.metrics import TOOL_ACTION_TRANSITIONS_TOTAL
+from src.observability.metrics import (
+    TOOL_ACTION_TRANSITIONS_TOTAL,
+    TOOL_RECONCILIATIONS_TOTAL,
+)
 from src.observability.sanitization import redact_text, sanitize_value
 from src.observability.tracing import (
     get_current_trace_id,
@@ -29,7 +41,9 @@ from src.tools.action_state_machine import (
     tool_action_state_machine,
 )
 from src.tools.contracts import ApprovedToolExecution
+from src.tools.outbox import OutboxEventType, tool_outbox_service
 from src.tools.payload_security import tool_payload_security
+from src.tools.policy import tool_policy_service
 from src.tools.registry import ROLE_RANK, ToolDefinition, tool_registry
 
 
@@ -42,6 +56,10 @@ TRANSIENT_EXECUTION_ERRORS = {
     "circuit_open",
     "unknown",
 }
+
+
+class ReconciliationPending(RuntimeError):
+    """通知 Outbox 将尚无权威结果的对账任务放入 Retry Queue。"""
 
 
 class ToolGovernanceService:
@@ -79,8 +97,10 @@ class ToolGovernanceService:
             )
 
         now = datetime.datetime.utcnow()
+        action_id = str(uuid.uuid4())
+        policy_snapshot = tool_policy_service.snapshot(definition)
         action = ToolAction(
-            id=str(uuid.uuid4()),
+            id=action_id,
             ticket_id=ticket.id,
             tool_name=definition.name,
             tool_version=definition.version,
@@ -97,6 +117,14 @@ class ToolGovernanceService:
             trace_id=get_current_trace_id(),
             proposed_by_user_id=proposer.id,
             proposed_by_role=proposer.role,
+            created_at=now,
+            updated_at=now,
+        )
+        action.control = ToolActionControl(
+            tool_action_id=action_id,
+            idempotency_key=f"supportgpt:{definition.name}:{uuid.uuid4().hex}",
+            policy_snapshot=policy_snapshot,
+            policy_hash=tool_policy_service.digest(policy_snapshot),
             created_at=now,
             updated_at=now,
         )
@@ -166,6 +194,7 @@ class ToolGovernanceService:
         expected_version: int,
         executor: User,
     ) -> ToolAction:
+        """在同一事务中冻结执行资格并写入 Outbox，不同步触发副作用。"""
         action = await self._load_for_update(db, action_id)
         self._check_version(action, expected_version)
         definition = self._high_risk_write_definition(action.tool_name)
@@ -182,7 +211,6 @@ class ToolGovernanceService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Executor role is not permitted for this Tool.",
             )
-
         payload = self._verified_payload(action, definition)
         ticket = await db.get(Ticket, action.ticket_id)
         if not ticket or payload.get("customer_id") != ticket.customer_id:
@@ -190,20 +218,130 @@ class ToolGovernanceService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Tool Action no longer matches its ticket customer.",
             )
+        replay = tool_policy_service.replay(action)
+        if not replay["passed"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"message": "Tool Policy replay failed.", **replay},
+            )
+        transition = tool_action_state_machine.transition(
+            action, ToolActionCommand.ENQUEUE
+        )
+        action.executed_by_user_id = executor.id
+        self._append_transition(action, transition, executor)
+        tool_outbox_service.enqueue(
+            db,
+            action=action,
+            event_type=OutboxEventType.EXECUTE,
+            actor_user_id=executor.id,
+            actor_role=executor.role,
+            dedupe_key=f"{action.id}:execute",
+        )
+        await db.flush()
+        return action
+
+    async def request_compensation(
+        self,
+        db: AsyncSession,
+        *,
+        action_id: str,
+        expected_version: int,
+        requester: User,
+        reason: str,
+    ) -> ToolAction:
+        """仅为已成功且具备补偿契约的 Action 创建异步补偿任务。"""
+        action = await self._load_for_update(db, action_id)
+        self._check_version(action, expected_version)
+        definition = self._high_risk_write_definition(action.tool_name)
+        if definition.compensation_handler is None:
+            raise HTTPException(
+                status_code=422, detail="Tool does not support compensation."
+            )
+        if ROLE_RANK.get(requester.role, 0) < ROLE_RANK["manager"]:
+            raise HTTPException(status_code=403, detail="Manager role is required.")
+        transition = tool_action_state_machine.transition(
+            action, ToolActionCommand.REQUEST_COMPENSATION
+        )
+        action.control.compensation_key = (
+            f"{action.control.idempotency_key}:compensation"
+        )
+        action.control.compensation_reason = tool_payload_security.summary(
+            {"reason": reason}
+        )["reason"]
+        self._append_transition(action, transition, requester)
+        tool_outbox_service.enqueue(
+            db,
+            action=action,
+            event_type=OutboxEventType.COMPENSATE,
+            actor_user_id=requester.id,
+            actor_role=requester.role,
+            dedupe_key=f"{action.id}:compensate",
+            payload={"reason_supplied": True},
+        )
+        await db.flush()
+        return action
+
+    async def policy_replay(self, db: AsyncSession, action_id: str) -> dict[str, Any]:
+        action = await self.get(db, action_id)
+        return tool_policy_service.replay(action)
+
+    async def dispatch_outbox_event(
+        self, db: AsyncSession, event: ToolOutboxEvent
+    ) -> None:
+        """由 Worker 分发已持久化事件，禁止 API 绕过 Outbox 直接调用。"""
+        if event.event_type == OutboxEventType.EXECUTE:
+            await self._dispatch_execution(db, event)
+        elif event.event_type == OutboxEventType.RECONCILE:
+            await self._dispatch_reconciliation(db, event)
+        elif event.event_type == OutboxEventType.COMPENSATE:
+            await self._dispatch_compensation(db, event)
+        else:
+            raise ValueError(f"Unsupported Tool Outbox event: {event.event_type}")
+
+    async def _dispatch_execution(
+        self, db: AsyncSession, event: ToolOutboxEvent
+    ) -> None:
+        action = await self._load_for_update(db, event.tool_action_id)
+        actor = self._event_actor(event)
+        if action.status in {
+            ToolActionStatus.SUCCEEDED,
+            ToolActionStatus.FAILED,
+            ToolActionStatus.UNKNOWN,
+            ToolActionStatus.RECONCILING,
+            ToolActionStatus.COMPENSATION_PENDING,
+            ToolActionStatus.COMPENSATING,
+            ToolActionStatus.COMPENSATED,
+            ToolActionStatus.COMPENSATION_FAILED,
+            ToolActionStatus.COMPENSATION_UNKNOWN,
+        }:
+            return
+        if action.status == ToolActionStatus.EXECUTING:
+            # 租约过期表示上次写入结果不确定，只允许转对账，禁止再次写入。
+            await self._enter_unknown(
+                db, action, actor, error_type="worker_interrupted"
+            )
+            return
+        if action.status != ToolActionStatus.QUEUED:
+            raise RuntimeError(f"Action cannot execute from status {action.status}.")
+
+        definition = self._high_risk_write_definition(action.tool_name)
         transition = tool_action_state_machine.transition(
             action, ToolActionCommand.START_EXECUTION
         )
-        action.executed_by_user_id = executor.id
         action.execution_started_at = datetime.datetime.utcnow()
-        self._append_transition(action, transition, executor)
-        # 先持久化 executing，再触发外部写操作，避免无记录副作用。
+        self._append_transition(action, transition, actor)
+        # 外部调用前先提交 executing；进程崩溃后只能走对账。
         await db.commit()
 
+        action = await self._load_for_update(db, event.tool_action_id)
+        payload = self._verified_payload(action, definition)
         grant = ApprovedToolExecution(
             action_id=action.id,
             tool_name=action.tool_name,
             payload_hash=action.payload_hash,
             approved_by_user_id=int(action.reviewed_by_user_id or 0),
+            idempotency_key=action.control.idempotency_key,
+            policy_version=action.policy_version,
         )
         with observed_span(
             tracer,
@@ -212,48 +350,69 @@ class ToolGovernanceService:
                 "tool.action_id": action.id,
                 "gen_ai.tool.name": action.tool_name,
                 "ticket.id": action.ticket_id,
+                "tool.outbox_id": event.id,
             },
         ) as span:
             try:
                 result = await tool_registry.call_tool(
                     action.tool_name,
                     payload,
-                    role=executor.role,
+                    role=event.actor_role,
                     ticket_id=action.ticket_id,
                     intent=action.intent,
                     request_risk_level=action.risk_level,
-                    actor_user_id=executor.id,
+                    actor_user_id=event.actor_user_id,
                     audit_db=db,
                     action_id=action.id,
                     execution_grant=grant,
+                    idempotency_key=action.control.idempotency_key,
                 )
                 if result.get("status") == "success":
-                    command = ToolActionCommand.SUCCEED
+                    transition = tool_action_state_machine.transition(
+                        action, ToolActionCommand.SUCCEED
+                    )
                     action.result_summary = tool_payload_security.result_summary(
                         result.get("result")
                     )
+                    raw_result = result.get("result") or {}
+                    action.control.external_reference = raw_result.get(
+                        "refund_request_id"
+                    )
+                    action.error_type = None
+                    action.failure_reason = None
+                    action.completed_at = datetime.datetime.utcnow()
+                    self._append_transition(
+                        action,
+                        transition,
+                        actor,
+                        details={"audit_id": result.get("audit_id")},
+                    )
                 elif result.get("error_type") in TRANSIENT_EXECUTION_ERRORS:
-                    command = ToolActionCommand.MARK_UNKNOWN
-                    action.error_type = result.get("error_type") or "unknown"
-                    action.failure_reason = (
-                        "External write outcome requires reconciliation."
+                    await self._enter_unknown(
+                        db,
+                        action,
+                        actor,
+                        error_type=result.get("error_type") or "unknown",
+                        audit_id=result.get("audit_id"),
+                        commit=False,
                     )
                 else:
-                    command = ToolActionCommand.FAIL
+                    transition = tool_action_state_machine.transition(
+                        action, ToolActionCommand.FAIL
+                    )
                     action.error_type = result.get("error_type") or str(
                         result.get("status") or "failed"
                     )
                     action.failure_reason = (
                         "Tool execution was rejected or failed deterministically."
                     )
-                transition = tool_action_state_machine.transition(action, command)
-                action.completed_at = datetime.datetime.utcnow()
-                self._append_transition(
-                    action,
-                    transition,
-                    executor,
-                    details={"audit_id": result.get("audit_id")},
-                )
+                    action.completed_at = datetime.datetime.utcnow()
+                    self._append_transition(
+                        action,
+                        transition,
+                        actor,
+                        details={"audit_id": result.get("audit_id")},
+                    )
                 set_span_attributes(
                     span,
                     {
@@ -262,22 +421,263 @@ class ToolGovernanceService:
                     },
                 )
                 await db.commit()
-                return await self.get(db, action.id)
-            except HTTPException:
-                await db.rollback()
-                raise
             except Exception as exc:
                 await db.rollback()
-                await self._mark_unknown_after_exception(db, action.id, executor, exc)
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Tool execution outcome is unknown and requires reconciliation.",
-                ) from exc
+                action = await self._load_for_update(db, event.tool_action_id)
+                if action.status == ToolActionStatus.EXECUTING:
+                    await self._enter_unknown(
+                        db,
+                        action,
+                        actor,
+                        error_type=exc.__class__.__name__,
+                    )
+                else:
+                    raise
+
+    async def _enter_unknown(
+        self,
+        db: AsyncSession,
+        action: ToolAction,
+        actor: Any,
+        *,
+        error_type: str,
+        audit_id: Optional[str] = None,
+        commit: bool = True,
+    ) -> None:
+        transition = tool_action_state_machine.transition(
+            action, ToolActionCommand.MARK_UNKNOWN
+        )
+        action.error_type = error_type[:80]
+        action.failure_reason = "External write outcome requires reconciliation."
+        action.completed_at = None
+        self._append_transition(
+            action, transition, actor, details={"audit_id": audit_id}
+        )
+        tool_outbox_service.enqueue(
+            db,
+            action=action,
+            event_type=OutboxEventType.RECONCILE,
+            actor_user_id=getattr(actor, "id", None),
+            actor_role=getattr(actor, "role", "system"),
+            dedupe_key=f"{action.id}:reconcile",
+            delay_seconds=settings.TOOL_RECONCILIATION_DELAY_SECONDS,
+        )
+        if commit:
+            await db.commit()
+
+    async def _dispatch_reconciliation(
+        self, db: AsyncSession, event: ToolOutboxEvent
+    ) -> None:
+        action = await self._load_for_update(db, event.tool_action_id)
+        actor = self._event_actor(event, role="system")
+        if action.status in {
+            ToolActionStatus.SUCCEEDED,
+            ToolActionStatus.FAILED,
+            ToolActionStatus.COMPENSATION_PENDING,
+            ToolActionStatus.COMPENSATING,
+            ToolActionStatus.COMPENSATED,
+            ToolActionStatus.COMPENSATION_FAILED,
+            ToolActionStatus.COMPENSATION_UNKNOWN,
+        }:
+            return
+        if action.status == ToolActionStatus.UNKNOWN:
+            transition = tool_action_state_machine.transition(
+                action, ToolActionCommand.START_RECONCILIATION
+            )
+            action.control.reconciliation_attempts += 1
+            self._append_transition(action, transition, actor)
+            await db.commit()
+            action = await self._load_for_update(db, event.tool_action_id)
+        if action.status != ToolActionStatus.RECONCILING:
+            raise RuntimeError(f"Action cannot reconcile from status {action.status}.")
+
+        definition = self._high_risk_write_definition(action.tool_name)
+        if definition.reconciliation_handler is None:
+            await self._finish_reconciliation_pending(
+                db, action, actor, error_type="handler_missing"
+            )
+            raise ReconciliationPending("Reconciliation handler is not configured.")
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    definition.reconciliation_handler,
+                    idempotency_key=action.control.idempotency_key,
+                ),
+                timeout=definition.timeout_seconds,
+            )
+        except Exception as exc:
+            await self._finish_reconciliation_pending(
+                db, action, actor, error_type=exc.__class__.__name__
+            )
+            self._reconciliation_metric("retry")
+            raise
+
+        outcome = str(result.get("status") or "pending").lower()
+        if outcome == "succeeded":
+            transition = tool_action_state_machine.transition(
+                action, ToolActionCommand.RECONCILE_SUCCESS
+            )
+            actual = result.get("result") or {}
+            action.result_summary = tool_payload_security.result_summary(actual)
+            action.control.external_reference = actual.get("refund_request_id")
+            action.error_type = None
+            action.failure_reason = None
+            action.completed_at = datetime.datetime.utcnow()
+            self._append_transition(
+                action, transition, actor, details={"outcome": outcome}
+            )
+            await db.commit()
+            self._reconciliation_metric("succeeded")
+            return
+        if outcome == "failed":
+            transition = tool_action_state_machine.transition(
+                action, ToolActionCommand.RECONCILE_FAILURE
+            )
+            action.error_type = "reconciled_failure"
+            action.failure_reason = "External system confirmed the write failed."
+            action.completed_at = datetime.datetime.utcnow()
+            self._append_transition(
+                action, transition, actor, details={"outcome": outcome}
+            )
+            await db.commit()
+            self._reconciliation_metric("failed")
+            return
+
+        await self._finish_reconciliation_pending(
+            db, action, actor, error_type="result_pending"
+        )
+        self._reconciliation_metric("retry")
+        raise ReconciliationPending("External system has no final result yet.")
+
+    async def _finish_reconciliation_pending(
+        self,
+        db: AsyncSession,
+        action: ToolAction,
+        actor: Any,
+        *,
+        error_type: str,
+    ) -> None:
+        transition = tool_action_state_machine.transition(
+            action, ToolActionCommand.RECONCILE_PENDING
+        )
+        action.error_type = error_type[:80]
+        action.failure_reason = "Reconciliation is pending; retry is scheduled."
+        self._append_transition(action, transition, actor)
+        await db.commit()
+
+    async def _dispatch_compensation(
+        self, db: AsyncSession, event: ToolOutboxEvent
+    ) -> None:
+        action = await self._load_for_update(db, event.tool_action_id)
+        actor = self._event_actor(event)
+        if action.status in {
+            ToolActionStatus.COMPENSATED,
+            ToolActionStatus.COMPENSATION_FAILED,
+            ToolActionStatus.COMPENSATION_UNKNOWN,
+        }:
+            return
+        if action.status == ToolActionStatus.COMPENSATION_PENDING:
+            transition = tool_action_state_machine.transition(
+                action, ToolActionCommand.START_COMPENSATION
+            )
+            self._append_transition(action, transition, actor)
+            await db.commit()
+            action = await self._load_for_update(db, event.tool_action_id)
+        definition = self._high_risk_write_definition(action.tool_name)
+        if action.status != ToolActionStatus.COMPENSATING:
+            raise RuntimeError(f"Action cannot compensate from status {action.status}.")
+        if definition.compensation_handler is None:
+            raise RuntimeError("Compensation handler is not configured.")
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    definition.compensation_handler,
+                    idempotency_key=action.control.idempotency_key,
+                    compensation_key=action.control.compensation_key,
+                ),
+                timeout=definition.timeout_seconds,
+            )
+            command = (
+                ToolActionCommand.COMPENSATE_SUCCESS
+                if result.get("status") == "compensated"
+                else ToolActionCommand.COMPENSATE_FAILURE
+            )
+            transition = tool_action_state_machine.transition(action, command)
+            action.result_summary = tool_payload_security.result_summary(result)
+            if command == ToolActionCommand.COMPENSATE_SUCCESS:
+                action.error_type = None
+                action.failure_reason = None
+            else:
+                action.error_type = "compensation_failed"
+                action.failure_reason = "External system rejected the compensation."
+            action.completed_at = datetime.datetime.utcnow()
+            self._append_transition(action, transition, actor)
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            action = await self._load_for_update(db, event.tool_action_id)
+            if action.status == ToolActionStatus.COMPENSATING:
+                transition = tool_action_state_machine.transition(
+                    action, ToolActionCommand.MARK_COMPENSATION_UNKNOWN
+                )
+                action.error_type = exc.__class__.__name__[:80]
+                action.failure_reason = (
+                    "Compensation outcome is unknown and requires manual review."
+                )
+                self._append_transition(action, transition, actor)
+                await db.commit()
+
+    @staticmethod
+    def _event_actor(event: ToolOutboxEvent, role: Optional[str] = None) -> Any:
+        return SimpleNamespace(
+            id=None if role == "system" else event.actor_user_id,
+            role=role or event.actor_role,
+        )
+
+    @staticmethod
+    def _reconciliation_metric(outcome: str) -> None:
+        try:
+            TOOL_RECONCILIATIONS_TOTAL.add(1, {"outcome": outcome})
+        except Exception:
+            pass
+
+    async def record_dead_letter(
+        self, db: AsyncSession, event: ToolOutboxEvent
+    ) -> None:
+        """Retry 耗尽时补写同状态审计事件并明确转人工处理。"""
+        action = await self._load_for_update(db, event.tool_action_id)
+        action.failure_reason = "Outbox delivery exhausted; manual review is required."
+        self._append_event(
+            action,
+            command="dead_letter",
+            source=action.status,
+            target=action.status,
+            actor=self._event_actor(event, role="system"),
+            details={
+                "outbox_id": event.id,
+                "event_type": event.event_type,
+                "attempts": event.attempts,
+            },
+        )
+
+    async def record_outbox_retry(
+        self, db: AsyncSession, event: ToolOutboxEvent, actor: User
+    ) -> None:
+        """记录主管对 DLQ 的显式重放，保留完整运维审计链。"""
+        action = await self._load_for_update(db, event.tool_action_id)
+        self._append_event(
+            action,
+            command="retry_dead_letter",
+            source=action.status,
+            target=action.status,
+            actor=actor,
+            details={"outbox_id": event.id, "event_type": event.event_type},
+        )
 
     async def get(self, db: AsyncSession, action_id: str) -> ToolAction:
         query = (
             select(ToolAction)
-            .options(selectinload(ToolAction.events))
+            .options(selectinload(ToolAction.events), selectinload(ToolAction.control))
             .where(ToolAction.id == action_id)
         )
         action = (await db.execute(query)).scalar_one_or_none()
@@ -306,7 +706,7 @@ class ToolGovernanceService:
         )
         query = (
             select(ToolAction)
-            .options(selectinload(ToolAction.events))
+            .options(selectinload(ToolAction.events), selectinload(ToolAction.control))
             .where(*filters)
             .order_by(ToolAction.created_at.desc())
             .limit(limit)
@@ -317,7 +717,7 @@ class ToolGovernanceService:
     async def _load_for_update(self, db: AsyncSession, action_id: str) -> ToolAction:
         query = (
             select(ToolAction)
-            .options(selectinload(ToolAction.events))
+            .options(selectinload(ToolAction.events), selectinload(ToolAction.control))
             .where(ToolAction.id == action_id)
             .with_for_update()
         )
@@ -387,7 +787,7 @@ class ToolGovernanceService:
         self,
         action: ToolAction,
         transition: Any,
-        actor: User,
+        actor: Any,
         details: Optional[dict[str, Any]] = None,
     ) -> None:
         self._append_event(
@@ -417,7 +817,7 @@ class ToolGovernanceService:
         command: str,
         source: Optional[str],
         target: str,
-        actor: User,
+        actor: Any,
         details: Optional[dict[str, Any]] = None,
     ) -> None:
         action.events.append(
@@ -430,29 +830,10 @@ class ToolGovernanceService:
                 actor_user_id=actor.id,
                 actor_role=actor.role,
                 request_id=get_request_id() or action.request_id,
-                trace_id=get_current_trace_id(),
+                trace_id=get_current_trace_id() or action.trace_id,
                 details=sanitize_value(details or {}),
             )
         )
-
-    async def _mark_unknown_after_exception(
-        self,
-        db: AsyncSession,
-        action_id: str,
-        executor: User,
-        exc: Exception,
-    ) -> None:
-        action = await self._load_for_update(db, action_id)
-        if action.status != ToolActionStatus.EXECUTING:
-            return
-        transition = tool_action_state_machine.transition(
-            action, ToolActionCommand.MARK_UNKNOWN
-        )
-        action.error_type = exc.__class__.__name__[:80]
-        action.failure_reason = "Execution interrupted; reconciliation is required."
-        action.completed_at = datetime.datetime.utcnow()
-        self._append_transition(action, transition, executor)
-        await db.commit()
 
 
 tool_governance_service = ToolGovernanceService()

@@ -373,6 +373,13 @@ class ToolActionExecuteRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
 
 
+class ToolActionCompensationRequest(BaseModel):
+    """由主管发起带原因和乐观版本的补偿请求。"""
+
+    expected_version: int = Field(..., ge=1)
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 class ToolActionEventResponse(BaseModel):
     """返回 Append-only 状态迁移事件。"""
 
@@ -407,6 +414,8 @@ class ToolActionResponse(BaseModel):
     status: str
     version: int
     policy_version: str
+    idempotency_key: Optional[str]
+    policy_hash: Optional[str]
     payload_summary: Dict[str, Any]
     result_summary: Optional[Dict[str, Any]]
     error_type: Optional[str]
@@ -436,6 +445,53 @@ class ToolActionPageResponse(BaseModel):
     """返回高风险 Tool Action 分页。"""
 
     items: List[ToolActionResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class ToolPolicyReplayResponse(BaseModel):
+    """返回历史 Policy 快照的确定性审计重放结果。"""
+
+    passed: bool
+    policy_version: Optional[str]
+    policy_hash: Optional[str] = None
+    checks: Dict[str, bool]
+    violations: List[str]
+
+
+class ToolOutboxEventResponse(BaseModel):
+    """返回不含业务原始参数的 Outbox 运维视图。"""
+
+    id: str
+    tool_action_id: str
+    event_type: str
+    status: str
+    attempts: int
+    max_attempts: int
+    version: int
+    actor_role: str
+    request_id: str
+    trace_id: Optional[str]
+    available_at: datetime
+    lease_owner: Optional[str]
+    lease_expires_at: Optional[datetime]
+    last_error_type: Optional[str]
+    last_error_message: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime]
+
+    class Config:
+        """允许从 ORM Outbox Event 读取字段。"""
+
+        from_attributes = True
+
+
+class ToolOutboxPageResponse(BaseModel):
+    """返回 Transactional Outbox、Retry Queue 与 DLQ 分页。"""
+
+    items: List[ToolOutboxEventResponse]
     total: int
     limit: int
     offset: int

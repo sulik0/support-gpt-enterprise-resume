@@ -18,7 +18,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
 | Tool Calling | 5 个 CRM / OMS / Ticket Mock Tool；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
-| Tool Governance | 高风险写 Action 状态机、参数加密/HMAC、职责分离审批与乐观版本防重放 |
+| Tool Governance | V2.2：业务幂等键、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿与 Policy 回放 |
 | Safety | 多层 Prompt Injection 规则、Qwen3Guard Adapter、Risk Engine、PII/泄露过滤 |
 | HITL | 高风险、低置信度、低 QA、投诉与退款场景在 Graph 内暂停审批，完成后从原 Thread 恢复 |
 | Observability | OpenTelemetry 统一采集，Collector 导出 LangSmith Trace 和 Prometheus Metrics |
@@ -45,6 +45,14 @@ uvicorn src.main:app --reload
 
 默认使用 Mock LLM、SQLite 和本地 ChromaDB，Redis 未启动时可正常降级。
 LangGraph Checkpoint 默认启用：本地写入独立的 `.runtime/langgraph-checkpoints.sqlite`；使用 PostgreSQL DATABASE_URL 时自动切换到官方 PostgreSQL Saver。高风险请求返回审批草稿后 Workflow 保持暂停，人工审批会恢复原执行而不是重跑前置节点。
+
+Tool Outbox Worker 默认随 FastAPI 启动，也可独立运行：
+
+```bash
+python scripts/run_tool_outbox_worker.py
+```
+
+高风险写 Action 审批后，`/execute` 只原子写入 `queued + Outbox`，外部写入由 Worker 异步执行。退款超时进入 `unknown`，系统按业务幂等键查询 OMS 权威结果，不会盲目重复退款；对账暂未得到终态时进入 Retry Queue，耗尽后进入 DLQ 并转人工。`/tool-outbox` 可查看队列，`/policy-replay` 可按历史 Policy 快照重放审计。
 
 ### 前端
 
@@ -151,6 +159,7 @@ Collector 未启动时后端会 fail-open，不影响 Agent 主流程。
 ## 实现边界
 
 - CRM、OMS、Ticketing 和默认 LLM 是 Mock Adapter，架构保留替换边界，但不得表述为已接入真实企业系统。
+- V2.2 的退款幂等、对账和补偿由 Mock OMS 账本验证；生产接入仍需由真实 OMS 明确实现相同契约，并补 Alembic Migration。
 - Docker Compose 和 Kubernetes 是可复现部署模板，不代表已生产上线。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未用真实客服数据校准。
 - Feedback Pipeline 当前只导出脱敏训练候选，尚未执行 SFT/DPO 训练和自动发布。

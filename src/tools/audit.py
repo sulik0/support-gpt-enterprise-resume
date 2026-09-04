@@ -35,6 +35,7 @@ class ToolAuditRepository:
         action_id: Optional[str] = None,
         error_type: Optional[str] = None,
         result: Any = None,
+        policy_version: Optional[str] = None,
     ) -> dict[str, Any]:
         """不保存原始参数和原始异常，避免审计表成为敏感数据副本。"""
         return {
@@ -62,7 +63,7 @@ class ToolAuditRepository:
                 if result is not None
                 else None
             ),
-            "policy_version": settings.TOOL_POLICY_VERSION,
+            "policy_version": policy_version or settings.TOOL_POLICY_VERSION,
         }
 
     async def record(

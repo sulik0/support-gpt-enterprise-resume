@@ -301,13 +301,17 @@ Tool Calling 通过 ToolRegistry 实现，所有业务工具都必须从该入�
 
 | 维度 | 当前设计 |
 |---|---|
-| 职责 | 将高风险写 Tool 从 Agent 自动路由中隔离，强制提议、审批、执行和终态审计 |
+| 职责 | 将高风险写 Tool 从 Agent 自动路由中隔离，强制提议、审批、异步执行、结果对账、补偿和终态审计 |
 | 输入 | Ticket、Tool 名、结构化 payload、intent、当前用户与 expected version |
-| 输出 | `ToolAction`、Append-only `ToolActionEvent`、`ToolInvocationAudit` 和脱敏 API 视图 |
+| 输出 | `ToolAction`、`ToolActionControl`、Append-only `ToolActionEvent`、`ToolOutboxEvent`、`ToolInvocationAudit` 和脱敏 API 视图 |
 | 设计原因 | 资金类写操作不能因 LLM 错误路由、重放或审批绕过直接产生副作用 |
 | 可替代方案 | 仅 RBAC、通用审批表、消息队列 Saga、外部 Workflow Engine |
-| 最终选择 | 使用确定性状态机，有效路径为 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` |
-| 工程权衡 | 参数使用 Fernet 加密与 HMAC 防篡改，审计只存脱敏摘要；为了职责分离，提议人不能自批。当前没有业务幂等键、Outbox 和自动对账 Worker，因此真实写 Tool 仍不能上线 |
+| 最终选择 | V2.2 使用确定性状态机与 Transactional Outbox；主路径为 `proposed -> pending_approval -> approved -> queued -> executing -> succeeded/failed/unknown`，`unknown` 只能进入 `reconciling`，已成功动作可显式进入补偿状态机 |
+| 工程权衡 | 参数使用 Fernet 加密，payload 与 Policy 快照使用 HMAC 防篡改；每个写 Action 生成业务幂等键。API 事务原子写入 `queued + Outbox`，Worker 用租约和 `version` 条件更新竞争消费。Retry Queue 与 DLQ 复用 Outbox 状态，减少组件数量；当前 OMS 仍为 Mock，DDL 仍依赖 `create_all`，不等同于真实跨系统 exactly-once |
+
+V2.2 把“命令投递成功”和“外部业务执行成功”明确分开。Worker 在调用外部系统前先持久化 `executing`；若调用超时或 Worker 中断，Action 进入 `unknown`，后续只调用 `reconciliation_handler(idempotency_key)` 查询权威结果。对账确认成功或失败后补写状态事件；结果仍未确定时对账事件指数退避，达到上限进入 DLQ 并标记人工处理。补偿由主管显式发起，使用独立 `compensation_key`，同样不允许绕过状态机。
+
+Policy 在 Action 创建时冻结版本、Tool 版本、角色、风险、允许意图、审批与幂等约束，并保存 HMAC。审计回放读取历史快照进行 deterministic 校验，不使用当前配置重写历史结论。
 
 ### 7.3 MCP
 
@@ -451,13 +455,13 @@ Redis 是可选组件，不是启动前提。
 | Qwen3Guard 不可用或输出无法解析 | 输入边界保留确定性规则并标记降级转人工；Tool / RAG 边界隔离未扫描上下文 | 语义安全服务失败不得阻断主请求，也不得默认信任外部内容 | 对所有请求 fail-closed 会导致服务大面积不可用 |
 | Redis 不可用 | 自动读取 SQL 历史，保存 Redis 失败不阻断主流程 | 缓存不能成为业务单点 | 强制 Redis 高可用成本不适合本地 Demo |
 | RAG 单路失败或类别无结果 | 向量路与词法路独立恢复，单路失败仍可用另一路候选；类别零召回时保留版本并放宽类别一次 | 避免 Embedding / Vector DB 成为单点，同时不破坏版本隔离 | 未引入外部搜索集群或持久化召回缓存 |
-| 工具超时或瞬时故障 | 低风险读 Tool 最多有界重试；高风险或非幂等写操作禁止自动重试；结果记录审计和降级状态 | 平衡瞬时恢复与重复副作用风险 | 超时线程不可强制终止，真实写工具仍需幂等键和结果对账 |
+| 工具超时或瞬时故障 | 低风险读 Tool 最多有界重试；高风险写 Tool 由 Outbox 单次投递，使用业务幂等键；超时转 `unknown` 并自动查询外部权威结果 | 平衡瞬时恢复与重复副作用风险 | `asyncio.to_thread` 超时不能强制终止线程，因此结果未知时绝不直接重试写入 |
 | LLM 超时、限流或 5xx | 禁用 SDK 隐式重试，统一有界 Retry；可选切换 `LLM_FALLBACK_*` 备用模型；仍失败时输出同语言安全提示并转人工 | 重试次数、成本和故障分类可观测 | 备用模型需独立配置，不保证不同模型回复完全一致 |
 | QA 错误 | 将回复标记为低分与潜在幻觉 | 失败时采取保守策略，推动审批 | 自动放行会放大未知风险 |
 | 非法状态流转 | 返回 `409 Conflict` 并保持原状态 | 防止审批前关闭等业务错误 | 直接覆盖状态简单但不可审计、不可控 |
-| 数据库异常 | 请求事务回滚并抛出错误 | 保证单次事务一致性 | 当前无 Outbox、Saga 或跨系统补偿事务 |
+| 数据库异常 | 请求事务回滚；高风险执行命令与 Action 状态通过 Transactional Outbox 原子落库 | 避免“状态已批但命令丢失” | 当前仅治理写 Tool 具备 Outbox/补偿契约，不是通用 Saga 平台 |
 
-**Retry 边界**：仅 `timeout / rate_limit / connection / server_error` 可自动重试，默认最多重试一次并指数退避。Auth、Validation、Malformed Response 不重试。高风险 Tool 和非幂等写操作一律单次；审批、数据库事务与消息处理尚未纳入该模块。Circuit Breaker 当前是单进程内状态，不是分布式协调或持久化队列。
+**Retry 边界**：LLM、RAG 和低风险读 Tool 只对 `timeout / rate_limit / connection / server_error` 做有界 Retry。高风险写调用自身始终单次，只有幂等的“结果查询”进入 Outbox Retry Queue；耗尽后进入 DLQ。Outbox Worker 使用数据库租约和乐观 `version` 条件更新支持多实例竞争，但通用 Circuit Breaker 仍是单进程状态。
 
 ## 13. Risk Engine
 
@@ -557,7 +561,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 |---|---|---|---|
 | 多租户 RAG | 在文档与向量 metadata 中加入 `tenant_id`，查询强制 `tenant_id + version` | 避免跨租户知识泄露 | 鉴权上下文传播、索引迁移、越权测试 |
 | 生产检索 | 抽象 `SearchBackend`，支持 Chroma 与 OpenSearch | 支撑更大语料和真正的 BM25 | 双后端一致性、索引运维、压测 |
-| 持久化审计 | 保存 Tool Calls 与 `ticket_status_events` | 满足合规、排障与运营分析 | 表设计、事件幂等、数据保留策略 |
+| 持久化审计 | Tool Calls、Action/Outbox/Policy 回放已持久化；继续补 `ticket_status_events` | 满足合规、排障与运营分析 | 数据保留策略与 Alembic Migration |
 | Checkpoint 生命周期 | 增加 TTL/归档、旧 Graph 版本兼容与 Checkpoint 清理任务 | 控制持久化数据规模并保证跨版本恢复 | 迁移策略、兼容测试、合规保留周期 |
 | MCP | 将外部业务能力封装为 MCP Server，但保留本地治理层 | 标准化工具发现和跨宿主集成 | 鉴权、协议治理、可观测与安全隔离 |
 | Planner / Reflection | 在 Golden Set 和预算控制基础上增加受限计划与限次重写 | 处理更复杂的调查型工单 | 质量比较、循环控制、成本和审批边界 |
@@ -575,7 +579,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | 检索 | ChromaDB Hybrid RAG | 兼顾语义与精确词，适合 Demo | 纯向量、生产搜索集群 |
 | 记忆 | SQL 持久化 + 可选 Redis | Redis 故障不阻断流程 | Redis 强依赖、向量长期记忆 |
 | 质量保障 | QA + Response Filter + HITL | 高风险回答优先保守处理 | 自动 Reflection 循环、全自动闭环 |
-| 恢复 | 有界 Retry/Circuit Breaker/Fallback + Checkpoint/HITL Durable Execution | 恢复瞬时故障，并让审批后续跑不重复前置节点 | 无分布式 Breaker、通用 Queue / DLQ、旧 Graph 兼容与写操作对账 |
+| 恢复 | 有界 Retry/Circuit Breaker/Fallback + Checkpoint/HITL Durable Execution + Tool Outbox/Reconciliation | 恢复瞬时故障、审批断点和不确定写结果 | 无分布式 Breaker、通用任务队列、旧 Graph 兼容；Tool Queue/DLQ 只服务受治理写操作 |
 | 可观测 | OpenTelemetry + OTLP Collector | 统一采集 Trace / Metrics，转发 LangSmith 与 Prometheus | 应用直连多个后端会形成双轨并增加数据治理成本 |
 | 发布 | PR Mock Gate + 真实 LLM Release Gate + GHCR CD | 兼顾每次变更的确定性保护与发布前真实模型验证 | 不在每个 PR 调用付费模型，当前 CD 只发布镜像而不部署生产集群 |
 

@@ -23,8 +23,8 @@
 - LLM：默认 Mock，保留 `mock/openai/azure`；`openai` 为通用 OpenAI-compatible Provider。
 - 优化：Analyzer 规则优先，Analyzer/QA 可使用小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
 - RAG：ChromaDB + 关键词/向量 Hybrid Search + 轻量 rerank + version/category filter + citation。
-- Tool：Mock CRM/OMS/Ticket Adapter 通过 ToolRegistry 暴露，具备 Schema、RBAC、风险和审计边界。
-- 故障治理：LLM/RAG/Tool 统一超时、有界 Retry、进程内 Circuit Breaker 与 Fallback；高风险/非幂等写 Tool 禁止自动重试。
+- Tool：Mock CRM/OMS/Ticket Adapter 通过 ToolRegistry 暴露；V2.2 为高风险写 Action 增加业务幂等、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿和 Policy 回放。
+- 故障治理：LLM/RAG/读 Tool 统一超时、有界 Retry、进程内 Circuit Breaker 与 Fallback；高风险写调用禁止重试，只 Retry 幂等对账查询。
 - 安全：确定性多层规则 + 可选 Qwen3Guard-Gen-0.6B + Risk Engine + 输出过滤 + HITL。
 - Memory：Redis 短期状态，PostgreSQL 长期持久化，Redis 不可用时回退数据库。
 - 可观测：OpenTelemetry 唯一采集，OTLP 统一导出，Collector 分发 LangSmith Trace 和 Prometheus Metrics。
@@ -46,6 +46,7 @@
 10. Evaluation 必须真实 Replay 当前 Workflow，报告保留实验配置与 Trace ID；不得通过降低 Dataset 期望来伪造通过率。
 11. 打开工单详情不得触发新 Workflow，只加载已保存 AgentRun 和 Approval。
 12. 需要审批的 Workflow 必须在 Approval Gate 暂停并使用原 thread_id 恢复；不得通过从头重跑模拟恢复。
+13. 高风险写 Tool 的 HTTP 执行接口只能原子写入 `queued + Outbox`；`unknown` 必须先对账，禁止将超时直接当作失败并重试写入。
 
 ## 代码定位
 
@@ -83,18 +84,18 @@
 
 - 真实 CRM/OMS/Ticketing 尚未接入。
 - 多轮 Memory 已存储，尚未系统性注入 Prompt。
-- Tool 调用已持久化脱敏审计；高风险写 Tool 必须经 `ToolAction` 状态机和职责分离审批，Agent Workflow 不会自动执行。
+- Tool 调用已持久化脱敏审计；高风险写 Tool 必须经 `ToolAction` 状态机、职责分离审批和 Outbox Worker，Agent Workflow 不会自动执行。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未基于真实运营数据校准。
 - Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
 - Docker Compose/Kubernetes 是可复现模板，不代表生产上线。
-- Resilience 当前是单进程 V1，Tool Governance 为 V2.1；没有分布式 Breaker、Queue / DLQ、Outbox 和写 Tool 幂等/自动对账。
+- Resilience 的通用 Circuit Breaker 仍为单进程 V1；Tool Governance V2.2 已有专用数据库 Outbox、Retry/DLQ、业务幂等和自动对账，但没有通用分布式消息平台，OMS 仍为 Mock。
 - Checkpoint 已覆盖审批暂停和跨重启恢复，但没有 TTL/归档、旧 Graph 多版本恢复或通用后台任务队列；相关 DDL 仍需纳入 Migration。
 - 真实 Baseline V1 在同一固定 100 条 Dataset 上经归因优化后通过率为 0.99，仍不等于生产业务指标。
 
 ## 当前优先级
 
 1. 为 Feedback 表引入 Alembic migration。
-2. 为 Resilience V1 增加故障注入、多副本 Breaker，并将 Tool Governance 升级为带幂等键、Outbox 和自动对账的 V2.2。
+2. 为 Resilience V1 增加故障注入、多副本 Breaker，并将 Tool Governance V2.2 的 Mock 契约接入真实 OMS。
 3. 建设 Dataset Registry、人工复核与数据保留策略。
 4. 增加 `ticket_status_events`，Tool 审计不再是待办。
 5. 使用 Shadow Mode 校准 Qwen3Guard 与 Risk Engine。

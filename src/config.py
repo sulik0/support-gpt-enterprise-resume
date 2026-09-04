@@ -68,9 +68,17 @@ class Settings(BaseSettings):
     LLM_FALLBACK_MODEL_NAME: Optional[str] = Field(default=None)
     LLM_FALLBACK_BASE_URL: Optional[str] = Field(default=None)
     LLM_FALLBACK_API_KEY: Optional[str] = Field(default=None)
-    # Tool Governance V2：本地可从 JWT_SECRET 派生，生产应使用独立 Fernet Key。
-    TOOL_POLICY_VERSION: str = Field(default="tool-policy-v2.1")
+    # Tool Governance V2.2：Outbox Worker 统一执行、对账与补偿事件。
+    TOOL_POLICY_VERSION: str = Field(default="tool-policy-v2.2")
     TOOL_ACTION_ENCRYPTION_KEY: Optional[str] = Field(default=None)
+    TOOL_OUTBOX_WORKER_ENABLED: bool = Field(default=True)
+    TOOL_OUTBOX_POLL_INTERVAL_SECONDS: float = Field(default=1.0, ge=0.1, le=60.0)
+    TOOL_OUTBOX_BATCH_SIZE: int = Field(default=20, ge=1, le=200)
+    TOOL_OUTBOX_LEASE_SECONDS: int = Field(default=30, ge=5, le=600)
+    TOOL_OUTBOX_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=20)
+    TOOL_OUTBOX_RETRY_BASE_SECONDS: float = Field(default=1.0, ge=0.0, le=60.0)
+    TOOL_OUTBOX_RETRY_MAX_SECONDS: float = Field(default=60.0, ge=0.0, le=3600.0)
+    TOOL_RECONCILIATION_DELAY_SECONDS: float = Field(default=2.0, ge=0.0, le=300.0)
     PROMPT_VERSION: str = Field(default="support-v1")
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。
@@ -107,9 +115,7 @@ class Settings(BaseSettings):
         default="https://api.smith.langchain.com/otel"
     )
     LANGSMITH_CAPTURE_LLM_CONTENT: bool = Field(default=True)
-    LANGSMITH_LLM_CONTENT_MAX_CHARS: int = Field(
-        default=50000, ge=1000, le=200000
-    )
+    LANGSMITH_LLM_CONTENT_MAX_CHARS: int = Field(default=50000, ge=1000, le=200000)
 
     # Guardrails Settings
     PII_ANONYMIZATION_ENABLED: bool = Field(default=True)
@@ -157,6 +163,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM fallback requires model name, base URL and API key together."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_tool_outbox(self):
+        """避免 Retry 上限小于初始退避，导致无效配置。"""
+        if self.TOOL_OUTBOX_RETRY_MAX_SECONDS < self.TOOL_OUTBOX_RETRY_BASE_SECONDS:
+            raise ValueError("Tool Outbox max retry delay must be >= base delay.")
         return self
 
     # Feedback Pipeline

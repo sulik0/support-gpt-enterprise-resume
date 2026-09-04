@@ -60,6 +60,12 @@ TOOL_CALL_DURATION_SECONDS = meter.create_histogram(
 TOOL_ACTION_TRANSITIONS_TOTAL = meter.create_counter(
     "tool_action_transitions", description="Total governed Tool Action transitions"
 )
+TOOL_OUTBOX_EVENTS_TOTAL = meter.create_counter(
+    "tool_outbox_events", description="Total Tool Outbox delivery outcomes"
+)
+TOOL_RECONCILIATIONS_TOTAL = meter.create_counter(
+    "tool_reconciliations", description="Total governed Tool reconciliation outcomes"
+)
 HUMAN_APPROVALS_TOTAL = meter.create_counter(
     "human_approvals", description="Total human approval workflow events"
 )

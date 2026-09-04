@@ -228,7 +228,7 @@ Agent 工作流涉及异步数据库访问、可选 Redis、外部 LLM 和检索
 
 ### 工程权衡
 
-当前调用审计已持久化，高风险写 Tool 已强制独立审批 Action；但工具仍是本地 Mock Adapter，不能被表述为真实企业系统集成。真实写入仍需幂等键、Outbox 与结果对账。
+当前调用审计已持久化，高风险写 Tool 已强制独立审批 Action，并在 V2.2 增加业务幂等键、Transactional Outbox、自动对账与补偿契约；但工具仍是本地 Mock Adapter，不能被表述为真实企业系统集成。
 
 ## 决策 8：暂不采用 MCP
 
@@ -638,7 +638,7 @@ LLM、RAG 与 Tool 统一经过 Resilience Executor。仅 Timeout、Rate Limit�
 
 ### 工程权衡
 
-当前 Circuit Breaker 为单进程内状态，多副本不共享；没有 Queue、Dead Letter Queue、分布式幂等键或写操作结果对账。`asyncio.to_thread` 超时后不能强制杀死底层线程，真实写 Tool 仍必须使用幂等键与业务对账。
+当前 Circuit Breaker 为单进程内状态，多副本不共享；通用 LLM/RAG/Tool 调度没有消息队列。V2.2 只为受治理写 Tool 增加数据库 Outbox、Retry/DLQ、业务幂等键和结果对账。`asyncio.to_thread` 超时后不能强制杀死底层线程，因此写调用仍不重试，只重试幂等对账查询。
 
 ## 决策 20：采用 Prometheus + OpenTelemetry 双层可观测
 
@@ -811,7 +811,7 @@ CD 只监听成功的 `Release Quality Gate`，使用该 Workflow 的 `head_sha`
 
 当前没有具体生产集群与凭据，因此 CD 终止于受控镜像交付，不伪造自动部署。未来接入集群后，应使用不可变 SHA Tag 或 Digest 部署，并增加灰度健康检查与自动回滚。
 
-## 决策 26：高风险写 Tool 采用持久化 Action 状态机
+## 决策 26：高风险写 Tool 采用 Action 状态机与 Transactional Outbox
 
 ### 问题背景
 
@@ -826,7 +826,9 @@ CD 只监听成功的 `Release Quality Gate`，使用该 Workflow 的 `head_sha`
 
 ### 最终方案
 
-新建 `ToolAction`、Append-only `ToolActionEvent` 和 `ToolInvocationAudit`。高风险写 Tool 只能按 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` 迁移；执行前校验角色、intent、Ticket 归属、payload HMAC、审批授权和 expected version。
+V2.1 新建 `ToolAction`、Append-only `ToolActionEvent` 和 `ToolInvocationAudit`。V2.2 增加 `ToolActionControl` 与 `ToolOutboxEvent`：Action 创建时冻结 Tool Policy 快照/HMAC 并生成业务幂等键；审批后的 API 事务只写入 `queued + Outbox`，Worker 再按数据库租约和乐观版本执行。主路径为 `proposed -> pending_approval -> approved/rejected -> queued -> executing -> succeeded/failed/unknown`。
+
+`unknown` 只能通过查询相同幂等键的外部结果进入 `reconciling`，对账成功/失败后补写状态事件；暂时无结果的查询进入指数退避 Retry Queue，耗尽进入 DLQ 和人工处理。已成功 Action 可由主管显式发起独立幂等补偿。Policy 回放只读取历史快照，确定性验证版本、意图、职责分离、payload HMAC 与幂等键，不调用外部系统。
 
 ### 为什么选择
 
@@ -834,7 +836,7 @@ CD 只监听成功的 `Release Quality Gate`，使用该 Workflow 的 `head_sha`
 
 ### 工程权衡
 
-Action 参数使用 Fernet 加密，HMAC 用于执行前完整性校验，审计表不保存原始参数和异常正文。状态机已为不确定写结果保留 `unknown/reconciling`，但 V2.1 没有自动 Reconciliation Worker、Outbox、分布式锁或业务幂等键；新表仍依赖 `create_all`，生产需补 Alembic Migration。
+Action 参数使用 Fernet 加密，HMAC 用于 payload 与 Policy 快照完整性校验，审计与 Outbox 不保存原始参数。数据库租约 + `version` Compare-and-Set 支持多 Worker 竞争，不额外引入 Redis 分布式锁；Retry/DLQ 复用 Outbox 表以降低基础设施成本。该设计提供 at-least-once 投递与业务幂等，不宣称跨系统 exactly-once。当前 OMS 是进程内 Mock，新表仍依赖 `create_all`，生产需补 Alembic Migration、真实 OMS 契约测试和数据保留策略。
 
 ## 决策总览
 
@@ -842,14 +844,14 @@ Action 参数使用 Fernet 加密，HMAC 用于执行前完整性校验，审计
 |---|---|---|
 | Agent 编排 | LangGraph 固定工作流 + Approval Gate | 无动态 Planner / 自治协商 |
 | 状态 | 单一 AgentState + SQLite/PostgreSQL Checkpoint + AgentExecution | 无独立 TaskState；无 TTL/旧 Graph 兼容 |
-| 工具 | ToolRegistry + Mock Adapter + 持久化 ToolAction | 无 MCP；写 Tool 仍为 Mock，无幂等/Outbox/自动对账 |
+| 工具 | ToolRegistry + Mock Adapter + Tool Governance V2.2 | 无 MCP；写 Tool 仍为 Mock，但已有业务幂等、Outbox、自动对账、Retry/DLQ、补偿与 Policy 回放契约 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |
 | 安全 | 用户 / Tool / RAG 规则 + Qwen3Guard + Risk Engine，输出 Filter + QA | 语义安全默认关闭，尚无真实业务攻击集校准与生产可用性数据 |
 | RAG | ChromaDB Hybrid RAG | 无 pgvector、无生产搜索后端 |
 | 数据 | SQLite 本地、PostgreSQL Compose | 无迁移、读写分离、多租户 |
 | 记忆 | Redis 可选 + SQL 兜底 | 历史未注入生成 Prompt |
 | 审批 | 独立 Risk Engine + HITL + 状态机 | 阈值可配置但未用生产数据校准，状态事件未持久化 |
-| 恢复 | LLM/RAG/Tool 有界 Retry + Checkpoint/HITL Durable Resume + 数据库恢复租约 | 无分布式 Breaker、通用 Queue / DLQ、Checkpoint 清理和写操作对账 |
+| 恢复 | LLM/RAG/Tool 有界 Retry + Checkpoint/HITL Durable Resume + Tool Outbox/Reconciliation | 无分布式 Breaker、通用 Queue/DLQ 和 Checkpoint 清理；专用 Tool Queue/DLQ 已实现 |
 | 观测 | OpenTelemetry + OTLP Collector + LangSmith / Prometheus | Collector 尚未高可用，未接 Jaeger / Tempo |
 | 评测 | Adapter + 本地降级 + 固定 100 条 Baseline | 无人工标注生产 Ground Truth 和真实线上基线 |
 | 发布治理 | PR Mock 100 Case Gate + Real-LLM Release Gate | V1 只以六项确定性行为指标决定 Case Pass，语义质量尚未纳入门禁 |

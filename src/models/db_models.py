@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -303,6 +304,88 @@ class ToolAction(Base):
         cascade="all, delete-orphan",
         order_by="ToolActionEvent.sequence",
     )
+    control = relationship(
+        "ToolActionControl",
+        back_populates="tool_action",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    outbox_events = relationship(
+        "ToolOutboxEvent",
+        back_populates="tool_action",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def idempotency_key(self):
+        """向 API 暴露控制记录中的业务幂等键。"""
+        return self.control.idempotency_key if self.control else None
+
+    @property
+    def policy_hash(self):
+        return self.control.policy_hash if self.control else None
+
+
+class ToolActionControl(Base):
+    """保存 V2.2 幂等、Policy 快照和跨系统执行控制信息。"""
+
+    __tablename__ = "tool_action_controls"
+
+    tool_action_id = Column(String(36), ForeignKey("tool_actions.id"), primary_key=True)
+    idempotency_key = Column(String(160), unique=True, nullable=False, index=True)
+    policy_snapshot = Column(JSON, nullable=False, default=dict)
+    policy_hash = Column(String(64), nullable=False)
+    external_reference = Column(String(160), nullable=True, index=True)
+    reconciliation_attempts = Column(Integer, nullable=False, default=0)
+    compensation_key = Column(String(180), unique=True, nullable=True)
+    compensation_reason = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    tool_action = relationship("ToolAction", back_populates="control")
+
+
+class ToolOutboxEvent(Base):
+    """以事务 Outbox 承载执行、对账和补偿投递及 Retry/DLQ。"""
+
+    __tablename__ = "tool_outbox_events"
+    __table_args__ = (Index("ix_tool_outbox_claim", "status", "available_at"),)
+
+    id = Column(String(36), primary_key=True)
+    tool_action_id = Column(
+        String(36), ForeignKey("tool_actions.id"), nullable=False, index=True
+    )
+    event_type = Column(String(40), nullable=False, index=True)
+    status = Column(String(30), nullable=False, index=True)
+    dedupe_key = Column(String(220), unique=True, nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_role = Column(String(50), nullable=False)
+    request_id = Column(String(128), nullable=False, index=True)
+    trace_id = Column(String(32), nullable=True, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=5)
+    version = Column(Integer, nullable=False, default=1)
+    available_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    lease_owner = Column(String(80), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    last_error_type = Column(String(80), nullable=True)
+    last_error_message = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+    completed_at = Column(DateTime, nullable=True)
+
+    tool_action = relationship("ToolAction", back_populates="outbox_events")
 
 
 class ToolActionEvent(Base):

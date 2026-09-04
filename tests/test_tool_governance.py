@@ -3,8 +3,16 @@ from dataclasses import replace
 import pytest
 from sqlalchemy import func, select
 
-from src.models.db_models import Ticket, ToolAction, ToolInvocationAudit
+from src.config import settings
+from src.models.db_models import (
+    Ticket,
+    ToolAction,
+    ToolActionControl,
+    ToolInvocationAudit,
+)
+from src.tools.outbox import OutboxStatus, ToolOutboxWorker, tool_outbox_worker
 from src.tools.payload_security import tool_payload_security
+from src.tools.refund_gateway import refund_gateway
 from src.tools.registry import tool_registry
 
 
@@ -37,7 +45,7 @@ async def _ticket(db_session, customer_id: str = "cust_101") -> Ticket:
 
 @pytest.mark.asyncio
 async def test_high_risk_action_persists_approval_execution_and_audit(
-    client, db_session, agent_headers
+    client, db_session, agent_headers, outbox_session_factory
 ):
     manager_headers = await _register_and_login(client, "governance_manager", "manager")
     ticket = await _ticket(db_session)
@@ -61,6 +69,8 @@ async def test_high_risk_action_persists_approval_execution_and_audit(
     proposed_body = proposed.json()
     assert proposed_body["status"] == "pending_approval"
     assert proposed_body["version"] == 2
+    assert proposed_body["idempotency_key"].startswith("supportgpt:")
+    assert len(proposed_body["policy_hash"]) == 64
     assert len(proposed_body["events"]) == 2
     assert proposed_body["payload_summary"]["customer_id"] == "[FILTERED]"
     assert proposed_body["payload_summary"]["order_id"] == "[FILTERED]"
@@ -91,10 +101,15 @@ async def test_high_risk_action_persists_approval_execution_and_audit(
         json={"expected_version": 3},
     )
     assert executed.status_code == 200, executed.text
-    executed_body = executed.json()
+    assert executed.json()["status"] == "queued"
+    assert executed.json()["version"] == 4
+    assert await tool_outbox_worker.run_once(outbox_session_factory) == 1
+
+    completed = await client.get(f"/tool-actions/{stored.id}", headers=manager_headers)
+    executed_body = completed.json()
     assert executed_body["status"] == "succeeded"
-    assert executed_body["version"] == 5
-    assert len(executed_body["events"]) == 5
+    assert executed_body["version"] == 6
+    assert len(executed_body["events"]) == 6
     assert all(event["request_id"] for event in executed_body["events"])
     assert executed_body["result_summary"]["status"] == "submitted"
     assert executed_body["result_summary"]["message"] == "[FILTERED]"
@@ -107,6 +122,7 @@ async def test_high_risk_action_persists_approval_execution_and_audit(
     assert audit_body["total"] == 1
     assert audit_body["items"][0]["status"] == "success"
     assert audit_body["items"][0]["tool_action_id"] == stored.id
+    assert audit_body["items"][0]["policy_version"] == "tool-policy-v2.2-test"
     assert "payload_hash" not in audit_body["items"][0]
 
 
@@ -196,11 +212,10 @@ async def test_pending_action_and_direct_registry_call_cannot_execute(
 
 
 @pytest.mark.asyncio
-async def test_agent_cannot_list_governance_records(
-    client, db_session, agent_headers
-):
+async def test_agent_cannot_list_governance_records(client, db_session, agent_headers):
     assert (await client.get("/tool-actions", headers=agent_headers)).status_code == 403
     assert (await client.get("/tool-audits", headers=agent_headers)).status_code == 403
+    assert (await client.get("/tool-outbox", headers=agent_headers)).status_code == 403
 
     count = await db_session.execute(select(func.count(ToolInvocationAudit.id)))
     assert count.scalar_one() == 0
@@ -242,7 +257,7 @@ async def test_ticket_workflow_batch_persists_parallel_tool_audits(
 
 @pytest.mark.asyncio
 async def test_uncertain_write_failure_enters_unknown_without_retry(
-    client, db_session, agent_headers, monkeypatch
+    client, db_session, agent_headers, monkeypatch, outbox_session_factory
 ):
     manager_headers = await _register_and_login(client, "unknown_manager", "manager")
     ticket = await _ticket(db_session)
@@ -270,9 +285,11 @@ async def test_uncertain_write_failure_enters_unknown_without_retry(
 
     calls = 0
 
-    def uncertain_handler(**_kwargs):
+    def uncertain_handler(**kwargs):
         nonlocal calls
         calls += 1
+        # 模拟 OMS 已落账，但客户端在收到响应前超时。
+        refund_gateway.create_refund_request(**kwargs)
         raise TimeoutError("mock downstream timeout")
 
     definition = tool_registry.get_definition("orders.create_refund_request")
@@ -289,8 +306,16 @@ async def test_uncertain_write_failure_enters_unknown_without_retry(
     )
 
     assert executed.status_code == 200, executed.text
-    assert executed.json()["status"] == "unknown"
-    assert executed.json()["error_type"] == "timeout"
+    assert executed.json()["status"] == "queued"
+    assert await tool_outbox_worker.run_once(outbox_session_factory) == 1
+    unknown = await client.get(f"/tool-actions/{action_id}", headers=manager_headers)
+    assert unknown.json()["status"] == "unknown"
+    assert unknown.json()["error_type"] == "timeout"
+    assert calls == 1
+    # 对账只查询相同幂等键的权威结果，不会再次调用退款写 Handler。
+    assert await tool_outbox_worker.run_once(outbox_session_factory) == 1
+    reconciled = await client.get(f"/tool-actions/{action_id}", headers=manager_headers)
+    assert reconciled.json()["status"] == "succeeded"
     assert calls == 1
     audit = (
         await db_session.execute(
@@ -303,9 +328,239 @@ async def test_uncertain_write_failure_enters_unknown_without_retry(
     assert audit.attempts == 1
 
 
+@pytest.mark.asyncio
+async def test_reconciliation_exhaustion_enters_dlq_and_requires_manual_review(
+    client,
+    db_session,
+    agent_headers,
+    monkeypatch,
+    outbox_session_factory,
+):
+    manager_headers = await _register_and_login(client, "dlq_manager", "manager")
+    ticket = await _ticket(db_session)
+    proposed = await client.post(
+        "/tool-actions",
+        headers=agent_headers,
+        json={
+            "ticket_id": ticket.id,
+            "tool_name": "orders.create_refund_request",
+            "payload": {
+                "customer_id": "cust_101",
+                "order_id": "ORD-7001",
+                "reason": "Duplicate charge",
+            },
+            "intent": "billing_dispute",
+        },
+    )
+    action_id = proposed.json()["id"]
+    await client.post(
+        f"/tool-actions/{action_id}/decision",
+        headers=manager_headers,
+        json={"decision": "approved", "expected_version": 2},
+    )
+    calls = 0
+
+    def timeout_without_side_effect(**_kwargs):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("OMS did not persist this request")
+
+    definition = tool_registry.get_definition("orders.create_refund_request")
+    assert definition is not None
+    monkeypatch.setitem(
+        tool_registry._tools,
+        definition.name,
+        replace(definition, handler=timeout_without_side_effect),
+    )
+    monkeypatch.setattr(settings, "TOOL_OUTBOX_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(settings, "TOOL_OUTBOX_RETRY_BASE_SECONDS", 0.0)
+    monkeypatch.setattr(settings, "TOOL_OUTBOX_RETRY_MAX_SECONDS", 0.0)
+    await client.post(
+        f"/tool-actions/{action_id}/execute",
+        headers=manager_headers,
+        json={"expected_version": 3},
+    )
+
+    await tool_outbox_worker.run_once(outbox_session_factory)
+    await tool_outbox_worker.run_once(outbox_session_factory)
+    await tool_outbox_worker.run_once(outbox_session_factory)
+
+    dlq = await client.get(
+        "/tool-outbox",
+        headers=manager_headers,
+        params={"status": OutboxStatus.DEAD_LETTER, "action_id": action_id},
+    )
+    assert dlq.status_code == 200
+    assert dlq.json()["total"] == 1
+    assert dlq.json()["items"][0]["event_type"] == "reconcile"
+    action = await client.get(f"/tool-actions/{action_id}", headers=manager_headers)
+    assert action.json()["status"] == "unknown"
+    assert action.json()["events"][-1]["action"] == "dead_letter"
+    assert calls == 1
+    replayed = await client.post(
+        f"/tool-outbox/{dlq.json()['items'][0]['id']}/retry",
+        headers=manager_headers,
+    )
+    assert replayed.status_code == 200
+    assert replayed.json()["status"] == OutboxStatus.RETRY
+    retried_action = await client.get(
+        f"/tool-actions/{action_id}", headers=manager_headers
+    )
+    assert retried_action.json()["events"][-1]["action"] == "retry_dead_letter"
+
+
+@pytest.mark.asyncio
+async def test_successful_action_can_be_compensated_asynchronously(
+    client, db_session, agent_headers, outbox_session_factory
+):
+    manager_headers = await _register_and_login(
+        client, "compensation_manager", "manager"
+    )
+    ticket = await _ticket(db_session)
+    proposed = await client.post(
+        "/tool-actions",
+        headers=agent_headers,
+        json={
+            "ticket_id": ticket.id,
+            "tool_name": "orders.create_refund_request",
+            "payload": {
+                "customer_id": "cust_101",
+                "order_id": "ORD-7001",
+                "reason": "Duplicate charge",
+            },
+            "intent": "billing_dispute",
+        },
+    )
+    action_id = proposed.json()["id"]
+    await client.post(
+        f"/tool-actions/{action_id}/decision",
+        headers=manager_headers,
+        json={"decision": "approved", "expected_version": 2},
+    )
+    await client.post(
+        f"/tool-actions/{action_id}/execute",
+        headers=manager_headers,
+        json={"expected_version": 3},
+    )
+    await tool_outbox_worker.run_once(outbox_session_factory)
+
+    requested = await client.post(
+        f"/tool-actions/{action_id}/compensate",
+        headers=manager_headers,
+        json={"expected_version": 6, "reason": "Order dispute was withdrawn"},
+    )
+    assert requested.status_code == 200, requested.text
+    assert requested.json()["status"] == "compensation_pending"
+    await tool_outbox_worker.run_once(outbox_session_factory)
+    compensated = await client.get(
+        f"/tool-actions/{action_id}", headers=manager_headers
+    )
+    assert compensated.json()["status"] == "compensated"
+    assert compensated.json()["version"] == 9
+
+
+@pytest.mark.asyncio
+async def test_policy_snapshot_replay_detects_tampering(
+    client, db_session, agent_headers
+):
+    manager_headers = await _register_and_login(client, "replay_manager", "manager")
+    ticket = await _ticket(db_session)
+    proposed = await client.post(
+        "/tool-actions",
+        headers=agent_headers,
+        json={
+            "ticket_id": ticket.id,
+            "tool_name": "orders.create_refund_request",
+            "payload": {
+                "customer_id": "cust_101",
+                "order_id": "ORD-7001",
+                "reason": "Duplicate charge",
+            },
+            "intent": "billing_dispute",
+        },
+    )
+    action_id = proposed.json()["id"]
+    replay = await client.get(
+        f"/tool-actions/{action_id}/policy-replay", headers=manager_headers
+    )
+    assert replay.status_code == 200
+    assert replay.json()["passed"] is True
+
+    control = await db_session.get(ToolActionControl, action_id)
+    control.policy_hash = "0" * 64
+    await db_session.commit()
+    tampered = await client.get(
+        f"/tool-actions/{action_id}/policy-replay", headers=manager_headers
+    )
+    assert tampered.json()["passed"] is False
+    assert "policy_hash_valid" in tampered.json()["violations"]
+
+
+@pytest.mark.asyncio
+async def test_outbox_lease_allows_only_one_worker_to_claim_event(
+    client, db_session, agent_headers, outbox_session_factory
+):
+    manager_headers = await _register_and_login(client, "lease_manager", "manager")
+    ticket = await _ticket(db_session)
+    proposed = await client.post(
+        "/tool-actions",
+        headers=agent_headers,
+        json={
+            "ticket_id": ticket.id,
+            "tool_name": "orders.create_refund_request",
+            "payload": {
+                "customer_id": "cust_101",
+                "order_id": "ORD-7001",
+                "reason": "Duplicate charge",
+            },
+            "intent": "billing_dispute",
+        },
+    )
+    action_id = proposed.json()["id"]
+    await client.post(
+        f"/tool-actions/{action_id}/decision",
+        headers=manager_headers,
+        json={"decision": "approved", "expected_version": 2},
+    )
+    await client.post(
+        f"/tool-actions/{action_id}/execute",
+        headers=manager_headers,
+        json={"expected_version": 3},
+    )
+    worker_a = ToolOutboxWorker()
+    worker_b = ToolOutboxWorker()
+
+    claimed_a = await worker_a._claim_batch(outbox_session_factory)
+    claimed_b = await worker_b._claim_batch(outbox_session_factory)
+
+    assert len(claimed_a) == 1
+    assert claimed_b == []
+    await worker_a._process_one(outbox_session_factory, claimed_a[0])
+    completed = await client.get(f"/tool-actions/{action_id}", headers=manager_headers)
+    assert completed.json()["status"] == "succeeded"
+
+
 def test_tool_payload_integrity_rejects_ciphertext_tampering():
     encrypted = tool_payload_security.encrypt({"customer_id": "cust_101"})
     tampered = encrypted[:-2] + ("AA" if encrypted[-2:] != "AA" else "BB")
 
     with pytest.raises(ValueError):
         tool_payload_security.decrypt(tampered)
+
+
+def test_mock_oms_returns_same_result_for_same_business_idempotency_key():
+    payload = {
+        "customer_id": "cust_101",
+        "order_id": "ORD-7001",
+        "reason": "Duplicate charge",
+        "idempotency_key": "refund-action-idempotency-001",
+    }
+
+    first = refund_gateway.create_refund_request(**payload)
+    second = refund_gateway.create_refund_request(**payload)
+
+    assert second == first
+    assert (
+        refund_gateway.reconcile(idempotency_key=payload["idempotency_key"])["result"]
+        == first
+    )

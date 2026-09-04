@@ -33,6 +33,7 @@
 - [x] 建立门禁后 CD：仅对通过 Release Gate 的同一 Git SHA 构建镜像，发布 GHCR 不可变 SHA Tag 并生成 Provenance Attestation。
 - [x] 完成 Resilience V1：LLM/RAG/Tool 统一故障分类、超时、有界 Retry、进程内 Circuit Breaker、Fallback、AgentState/Risk/OTel 联动与高风险禁重试。
 - [x] 完成 Tool Governance V2.1：Tool 调用脱敏持久化审计，高风险写 Action 加密/HMAC、职责分离审批、乐观版本和 Append-only 状态事件。
+- [x] 完成 Tool Governance V2.2：写 Action 业务幂等键、Transactional Outbox、异步 Worker、数据库租约/乐观抢占、unknown 自动对账、Retry/DLQ、状态事件补写、显式补偿和版本化 Policy 回放。
 - [x] 完成 LangGraph Checkpoint + Durable Execution V1：SQLite/PostgreSQL Saver、Approval Gate interrupt/resume、AgentExecution、数据库恢复租约、启动扫描和主管重试 API。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
@@ -47,7 +48,8 @@
 - [ ] 增加 `ticket_status_events`；Tool Calling 持久化审计已在 V2.1 完成。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。
-- [ ] 建设 Resilience / Tool Governance V2.2：分布式 Circuit Breaker、故障注入/混沌测试、写 Tool 业务幂等键、Outbox 与 `unknown` 结果自动对账，并评估 Queue / DLQ。
+- [ ] 将 Tool Governance V2.2 的 Mock OMS 幂等/对账/补偿契约接入真实 OMS，并完成跨服务契约测试。
+- [ ] 为 Resilience 增加多副本 Circuit Breaker、故障注入/混沌测试；当前 Tool Outbox Retry/DLQ 不等于通用任务消息平台。
 
 ## P2
 
@@ -58,7 +60,7 @@
 
 ## 已知问题与风险
 
-- [x] 2026-09-04 完成 200 条全量测试，覆盖 Checkpoint 跨重启恢复、审批续跑幂等、Trace 与 Feedback 兼容；CI / Docker 使用 Python 3.11。
+- [x] 2026-09-04 完成 207 条全量测试，覆盖 Checkpoint 跨重启恢复、Tool 幂等/Outbox/对账/DLQ/补偿/租约竞争、审批续跑幂等、Trace 与 Feedback 兼容；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] Checkpoint 尚无 TTL/归档、旧 Graph 多版本恢复与定期清理；AgentExecution 和 Saver DDL 尚未纳入 Alembic/受控 Migration。
@@ -67,5 +69,5 @@
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。
 - [ ] Qwen3Guard 默认未启用且尚无本项目真实运行指标，未知语义变体与误报率仍需通过持续红队样本验证。
 - [ ] Risk Engine 阈值尚未基于真实客服运营数据校准，当前采用保守的 high / critical 转人工策略。
-- [ ] Circuit Breaker 当前只在单进程内生效；`asyncio.to_thread` 超时不能终止已运行的底层线程，真实写 Tool 上线前必须补幂等和对账。
+- [ ] Circuit Breaker 当前只在单进程内生效；`asyncio.to_thread` 超时不能终止已运行线程。V2.2 已用幂等键和对账保护受治理写 Tool，但真实 OMS 仍需验证同一契约。
 - [ ] 用户咨询页当前使用演示客户选择器；生产接入前必须绑定真实用户身份与工单归属，并增加限流和异步处理完成通知。

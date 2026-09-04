@@ -105,7 +105,25 @@ RESILIENCE_CIRCUIT_FAILURE_THRESHOLD=3
 RESILIENCE_CIRCUIT_RECOVERY_SECONDS=30
 ```
 
-`LLM_FALLBACK_*` 三项必须同时配置。仅超时、限流、连接与服务端故障可重试；Auth、Schema / Validation 与错误 JSON 不重试。仅低风险读 Tool 使用自动 Retry，高风险或非幂等写操作必须单次执行并在结果不确定时转人工。
+`LLM_FALLBACK_*` 三项必须同时配置。仅超时、限流、连接与服务端故障可重试；Auth、Schema / Validation 与错误 JSON 不重试。仅低风险读 Tool 使用自动 Retry；高风险写调用始终单次，结果不确定时由 Tool Governance V2.2 自动对账。
+
+## Tool Governance V2.2
+
+```dotenv
+TOOL_POLICY_VERSION=tool-policy-v2.2
+TOOL_OUTBOX_WORKER_ENABLED=true
+TOOL_OUTBOX_POLL_INTERVAL_SECONDS=1
+TOOL_OUTBOX_BATCH_SIZE=20
+TOOL_OUTBOX_LEASE_SECONDS=30
+TOOL_OUTBOX_MAX_ATTEMPTS=5
+TOOL_OUTBOX_RETRY_BASE_SECONDS=1
+TOOL_OUTBOX_RETRY_MAX_SECONDS=60
+TOOL_RECONCILIATION_DELAY_SECONDS=2
+```
+
+Worker 默认随 FastAPI lifespan 启动；需要独立进程时运行 `python scripts/run_tool_outbox_worker.py`。多实例通过 `lease_owner + lease_expires_at + version` Compare-and-Set 抢占事件。`pending/processing/retry/succeeded/dead_letter` 共用 `tool_outbox_events`，Outbox payload 不保存退款原始参数。
+
+审批后的 `/tool-actions/{id}/execute` 只返回 `queued`。排障时先用 `GET /tool-actions/{id}` 查看状态事件，再用 `GET /tool-outbox?action_id=<id>` 查看投递；只有 manager/admin 可对 DLQ 调用 `POST /tool-outbox/{event_id}/retry`。退款超时只能等待 `reconcile` 查询，禁止直接再次调用写 Tool。
 
 ## 安全配置
 
@@ -137,6 +155,13 @@ QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
 | `POST /approvals/{approval_id}` | 通过、修改或拒绝草稿 | 客服员工 |
 | `GET /agent-executions/{execution_id}` | 查看暂停/恢复状态及 Trace 关联 | 客服员工 |
 | `POST /agent-executions/{execution_id}/resume` | 重试已持久化人工决策的 Workflow | `manager/admin` |
+| `POST /tool-actions` | 提议高风险写 Action | `agent+` |
+| `POST /tool-actions/{id}/decision` | 独立审批 Action | `manager/admin` |
+| `POST /tool-actions/{id}/execute` | 原子入队，不同步执行外部写入 | `manager/admin` |
+| `POST /tool-actions/{id}/compensate` | 为成功 Action 发起幂等补偿 | `manager/admin` |
+| `GET /tool-actions/{id}/policy-replay` | 按历史 Policy 快照审计回放 | `manager/admin` |
+| `GET /tool-outbox` | 查看 Outbox、Retry Queue 与 DLQ | `manager/admin` |
+| `POST /tool-outbox/{event_id}/retry` | 显式重放 DLQ 事件 | `manager/admin` |
 | `POST /feedback/user` | 提交一次性用户评价 | `agent_run_id + feedback_token` |
 | `GET /feedback/runs/{agent_run_id}` | 查看 Run 与反馈关联 | `manager/admin` |
 | `GET /observability/runs` | 分页查询 Agent Run 摘要 | `manager/admin` |
@@ -150,7 +175,7 @@ Swagger 是最新 Schema 的最终参考；修改 API 时必须同步 Pydantic M
 - LangGraph Saver 保存 Graph State 正文；AgentExecution 只保存业务关联、执行状态、恢复租约和 Trace ID。
 - Redis 保存短期会话和最近消息；不可用时回退数据库。
 - ChromaDB 保存 Embedding 与文档 metadata，支持 `kb_version` 和 category filter。
-- 当前 AgentExecution 等业务新表及 LangGraph Saver 表由启动期 setup/create_all 创建；生产上线前必须统一纳入受控 Alembic/DDL Migration。
+- 当前 AgentExecution、ToolActionControl、ToolOutboxEvent 等业务新表及 LangGraph Saver 表由启动期 setup/create_all 创建；生产上线前必须统一纳入受控 Alembic/DDL Migration。
 
 ## OpenTelemetry 与 LangSmith
 
@@ -315,7 +340,8 @@ docker compose -f deployment/docker-compose.yml up --build
 - Pydantic Schema 应提供合理默认值和字段描述。
 - 数据库使用 `AsyncSession`，明确事务边界。
 - 新 Tool 必须注册到 ToolRegistry，配置 Schema、permission、risk level 和审计字段。
-- 高风险 `WRITE` Tool 不得加入 Agent 自动路由；必须使用 `/tool-actions` 提议，由不同 manager/admin 审批，再携带 expected version 执行。
+- 高风险 `WRITE` Tool 不得加入 Agent 自动路由；必须使用 `/tool-actions` 提议，由不同 manager/admin 审批，再携带 expected version 入 Outbox。禁止恢复同步直调写 Handler。
+- 新增写 Tool 必须提供下游幂等键契约和 `reconciliation_handler`；如业务可逆，再显式提供 `compensation_handler`。超时分支必须验证“写调用次数为 1、后续只查结果”。
 - `TOOL_ACTION_ENCRYPTION_KEY` 生产必须使用独立 Fernet Key；审计表只保存 payload HMAC、字段名和脱敏结果，不得新增原始参数或异常正文字段。
 - 改动 Agent 节点时同步 State、Trace、Metrics、确定性测试和 Baseline 评测。
 - 不得提交 `.env`、API Key、业务评测报告或训练候选数据。

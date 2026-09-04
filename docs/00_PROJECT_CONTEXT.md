@@ -35,7 +35,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 2. **多层安全短路**：先执行 Unicode 规范化、中英文特征、组合启发式、角色提权与 Base64 载荷扫描，规则未命中时再使用 Qwen3Guard-Gen-0.6B 扫描客户输入、Tool 返回和 RAG 文档。
 3. **PII 脱敏**：正常请求进入 LLM 前对主题和描述中的敏感信息进行匿名化。
 4. **业务工具上下文**：通过 ToolRegistry 查询客户画像、近期订单和历史工单，并把结构化结果注入 Resolver。
-5. **工具治理**：工具具有 `input_schema`、`output_schema`、`min_role`、`timeout_seconds` 和 `mocked` 元数据；每次调用返回状态、耗时、权限结果和错误。
+5. **工具治理**：除 ToolRegistry 的 Schema、RBAC 和审计外，高风险写操作具备业务幂等键、Transactional Outbox、异步 Worker、`unknown` 自动对账、Retry/DLQ、补偿和版本化 Policy 回放。
 6. **Hybrid RAG**：融合 ChromaDB 向量召回、进程内 BM25 风格词法打分和轻量 rerank，返回带版本的 citation。
 7. **回复生成与 QA**：使用知识库 citation 和 Tool Context 生成草稿，再评估 QA 分数、幻觉风险和输出泄露。
 8. **Risk Engine 与 Human-in-the-Loop**：统一输出 `risk_level`、`risk_score`、`risk_reasons`、是否人工处理及是否阻断自动化，并为高风险草稿创建审批记录。
@@ -195,7 +195,7 @@ resolved / closed --reopen--> in_progress
 | Durable Execution | `src/agents/durable_execution.py` | 管理 Thread 业务关联、执行状态、恢复租约、重启扫描和幂等续跑 |
 | Agent 节点 | `src/agents/` | Analyzer、Tooling、Retriever、Resolver、QA、Escalation |
 | Tool Registry | `src/tools/registry.py` | 工具注册、Schema、RBAC、风险策略、执行和 Trace |
-| Tool Governance | `src/tools/governance.py` | 高风险写 Action 的加密提议、职责分离审批、状态机和持久化审计 |
+| Tool Governance | `src/tools/governance.py`、`outbox.py`、`policy.py` | 高风险写 Action 的加密提议、职责分离审批、幂等 Outbox 执行、自动对账/补偿、Retry/DLQ 和 Policy 回放 |
 | Mock Adapter | `src/tools/crm.py`、`order_mgmt.py`、`ticketing.py` | 模拟 CRM、OMS 和历史工单系统 |
 | LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure，并支持 Analyzer/QA 独立 Fast Model 路由 |
 | Guardrails | `src/guardrails/` | PII 脱敏、Prompt Injection、Jailbreak 和 Response Filter |
@@ -334,7 +334,9 @@ resolved / closed --reopen--> in_progress
 - LangGraph Checkpoint + Durable Execution：本地 SQLite / 生产 PostgreSQL Saver、`interrupt` / `Command(resume)`、`AgentExecution` 状态、数据库恢复租约、启动恢复和主管手动重试。
 - Prompt Injection、Jailbreak、PII 脱敏和 Response Filter。
 - ToolRegistry、4 个读 Tool 与 1 个高风险 Mock 写 Tool，具备 Schema、RBAC、风险策略和超时边界。
-- Tool Governance V2.1：高风险写操作必须经过 `proposed -> pending_approval -> approved/rejected -> executing -> succeeded/failed/unknown` 状态机；提议人不能批准自己的 Action，且 Agent Workflow 不会自动路由该写 Tool。
+- Tool Governance V2.2：高风险写操作必须经过 `proposed -> pending_approval -> approved/rejected -> queued -> executing -> succeeded/failed/unknown` 状态机；提议人不能自批，Agent Workflow 不会自动路由该写 Tool。
+- 写 Action 具备唯一业务幂等键；`queued + Outbox` 在同一数据库事务提交，Worker 用数据库租约和乐观版本竞争消费。超时只进入 `unknown` 并自动对账；对账 Retry 耗尽进入 DLQ，主管可显式重放；已成功动作可进入独立幂等补偿状态机。
+- Tool Policy 在 Action 创建时保存版本化快照与 HMAC，支持不调用外部系统的 deterministic 审计回放。
 - Tool 调用已持久化到 `tool_invocation_audits`，只保存 HMAC、字段名、脱敏结果、执行状态、身份与 Request/Trace 关联；Action 迁移以 Append-only Event 保存。
 - ChromaDB、知识库版本/类别过滤、Hybrid Retrieval、轻量 rerank 和 citation。
 - Mock / OpenAI / Azure OpenAI LLM Provider 适配。
@@ -358,21 +360,21 @@ resolved / closed --reopen--> in_progress
 ### 部分完成
 
 - **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
-- **Tool Governance**：V2.1 已实现持久化审计与高风险 Action 状态机；当前写 Tool 仍是 Mock，尚无跨服务幂等键、Outbox、自动 Reconciliation Worker 和生产 Alembic Migration。
+- **Tool Governance**：V2.2 治理闭环已实现，但当前退款写入、对账和补偿仍使用 Mock OMS 账本；真实 OMS 集成、跨服务契约验证和生产 Alembic Migration 尚未完成。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口、统一报告与两级 Quality Gate。2026-08-30 同一固定 Dataset 的 DeepSeek + Qwen 真实复测将 Case Pass Rate 从 `0.54` 提升到 `0.99`，平均耗时约 `1.62s`、P95 约 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。PR Gate 要求 Mock 确定性回放 100% 通过，Release Gate 固化当前真实模型质量和性能阈值；语义回答质量与人工标注仍是后续评测范围。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
 - **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。
 - **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
-- **故障治理**：已完成单进程第一版；尚无分布式 Circuit Breaker、Queue / DLQ、跨服务幂等键、写操作结果对账与故障注入压测。
+- **故障治理**：LLM/RAG/读 Tool 仍是单进程 Resilience；受治理写 Tool 已有数据库 Outbox、租约、Retry/DLQ、业务幂等和结果对账，但尚无分布式 Circuit Breaker、通用消息平台与故障注入压测。
 - **Durable Execution**：已覆盖人工审批等待与重启续跑；尚无 Checkpoint TTL/归档清理、多 Workflow 版本兼容执行器、通用后台任务队列和全节点失败的自动续跑策略。
 
 ### 已知环境限制
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；2026-09-04 当前环境全量测试 200 passed，包含 Checkpoint 跨 Saver 重启恢复、审批续跑幂等与 Feedback 兼容回归；CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；2026-09-04 当前环境全量测试 207 passed，包含 Checkpoint 跨 Saver 重启恢复、Tool 幂等/Outbox/对账/DLQ/补偿/租约竞争、审批续跑幂等与 Feedback 兼容回归；CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划
@@ -407,7 +409,7 @@ resolved / closed --reopen--> in_progress
 ### P1：审计与可观测增强
 
 - 新增 `ticket_status_events` 持久化状态流转历史。
-- 为真实写 Tool 增加业务幂等键、Outbox 与 Unknown 结果自动对账。
+- 将当前 Mock OMS 的幂等、结果查询和补偿契约接入真实 OMS，并补充跨服务故障演练。
 - 根据部署需要为 Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样与告警策略。
 
 ### P2：用户通知与异步处理

@@ -76,11 +76,15 @@ from src.models.schemas import (
     TicketSummaryResponse,
     Token,
     ToolActionCreateRequest,
+    ToolActionCompensationRequest,
     ToolActionDecisionRequest,
     ToolActionExecuteRequest,
     ToolActionPageResponse,
     ToolActionResponse,
     ToolInvocationAuditPageResponse,
+    ToolOutboxEventResponse,
+    ToolOutboxPageResponse,
+    ToolPolicyReplayResponse,
     UserCreate,
     UserFeedbackRequest,
     UserResponse,
@@ -105,6 +109,7 @@ from src.tools.crm import crm_tool
 from src.tools.audit import tool_audit_repository
 from src.tools.audit_context import begin_tool_audit_scope, finish_tool_audit_scope
 from src.tools.governance import tool_governance_service
+from src.tools.outbox import tool_outbox_service, tool_outbox_worker
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.ticketing import ticketing_tool
 
@@ -112,9 +117,7 @@ tracer = get_tracer(__name__)
 logger = logging.getLogger("supportgpt.main")
 
 
-async def _run_workflow_with_tool_audit(
-    db: AsyncSession, initial_state: dict
-) -> dict:
+async def _run_workflow_with_tool_audit(db: AsyncSession, initial_state: dict) -> dict:
     """并行 Tool 只收集审计，由主请求会话统一持久化。"""
     token = begin_tool_audit_scope()
     workflow_error: Exception | None = None
@@ -338,9 +341,7 @@ async def _resume_approval_execution(
         return execution
     await durable_execution_service.queue_resume(db, execution)
     await db.commit()
-    lease_owner = await durable_execution_service.acquire_resume_lease(
-        db, execution.id
-    )
+    lease_owner = await durable_execution_service.acquire_resume_lease(db, execution.id)
     if lease_owner is None:
         await db.refresh(execution)
         return execution
@@ -459,9 +460,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     await initialize_agent_checkpointing()
     await _recover_resumable_workflows()
+    await tool_outbox_worker.start()
     try:
         yield
     finally:
+        await tool_outbox_worker.stop()
         await shutdown_agent_checkpointing()
 
 
@@ -1026,9 +1029,7 @@ async def process_approval(
     )
 
 
-@app.get(
-    "/agent-executions/{execution_id}", response_model=AgentExecutionResponse
-)
+@app.get("/agent-executions/{execution_id}", response_model=AgentExecutionResponse)
 async def get_agent_execution(
     execution_id: str,
     current_user: User = Depends(require_agent),
@@ -1157,13 +1158,47 @@ async def execute_tool_action(
     current_user: User = Depends(require_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    """仅执行已批准且版本匹配的 Action，重复请求会被状态机拒绝。"""
-    return await tool_governance_service.execute(
+    """仅将已批准 Action 与执行事件原子入队，由 Worker 异步投递。"""
+    action = await tool_governance_service.execute(
         db,
         action_id=action_id,
         expected_version=req.expected_version,
         executor=current_user,
     )
+    await db.commit()
+    return await tool_governance_service.get(db, action.id)
+
+
+@app.post("/tool-actions/{action_id}/compensate", response_model=ToolActionResponse)
+async def compensate_tool_action(
+    action_id: str,
+    req: ToolActionCompensationRequest,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """为已成功写操作创建幂等补偿 Outbox 事件。"""
+    action = await tool_governance_service.request_compensation(
+        db,
+        action_id=action_id,
+        expected_version=req.expected_version,
+        requester=current_user,
+        reason=req.reason,
+    )
+    await db.commit()
+    return await tool_governance_service.get(db, action.id)
+
+
+@app.get(
+    "/tool-actions/{action_id}/policy-replay",
+    response_model=ToolPolicyReplayResponse,
+)
+async def replay_tool_policy(
+    action_id: str,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """按 Action 创建时的 Policy 快照执行纯离线审计回放。"""
+    return await tool_governance_service.policy_replay(db, action_id)
 
 
 @app.get("/tool-audits", response_model=ToolInvocationAuditPageResponse)
@@ -1188,6 +1223,40 @@ async def list_tool_audits(
     return ToolInvocationAuditPageResponse(
         items=records, total=total, limit=limit, offset=offset
     )
+
+
+@app.get("/tool-outbox", response_model=ToolOutboxPageResponse)
+async def list_tool_outbox(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    event_status: str | None = Query(default=None, alias="status"),
+    action_id: str | None = Query(default=None),
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """供主管查看 Outbox、Retry Queue 和 DLQ，不返回业务参数。"""
+    events, total = await tool_outbox_service.list_events(
+        db,
+        limit=limit,
+        offset=offset,
+        event_status=event_status,
+        action_id=action_id,
+    )
+    return ToolOutboxPageResponse(items=events, total=total, limit=limit, offset=offset)
+
+
+@app.post("/tool-outbox/{event_id}/retry", response_model=ToolOutboxEventResponse)
+async def retry_tool_outbox_event(
+    event_id: str,
+    current_user: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    """允许主管显式重放 DLQ，写操作仍先对账而非盲目重试。"""
+    event = await tool_outbox_service.retry_dead_letter(
+        db, event_id=event_id, actor=current_user
+    )
+    await db.commit()
+    return event
 
 
 # --- GENERAL TICKETING APIS ---

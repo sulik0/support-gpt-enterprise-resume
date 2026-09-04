@@ -12,6 +12,7 @@ from src.tools.contracts import ApprovedToolExecution
 from src.tools.crm import crm_tool
 from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.payload_security import tool_payload_security
+from src.tools.refund_gateway import refund_gateway
 from src.tools.ticketing import ticketing_tool
 from src.observability.tracing import (
     get_tracer,
@@ -71,6 +72,8 @@ class ToolDefinition:
     allowed_intents: Optional[frozenset[IntentType]] = None
     operation_type: OperationType = OperationType.READ
     version: str = "v1"
+    reconciliation_handler: Optional[Callable[..., Any]] = None
+    compensation_handler: Optional[Callable[..., Any]] = None
 
 
 class ToolRegistry:
@@ -123,6 +126,7 @@ class ToolRegistry:
         audit_db: Optional[AsyncSession] = None,
         action_id: Optional[str] = None,
         execution_grant: Optional[ApprovedToolExecution] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         with observed_span(
             tracer,
@@ -149,6 +153,7 @@ class ToolRegistry:
                 forbidden_tools=forbidden_tools or frozenset(),
                 action_id=action_id,
                 execution_grant=execution_grant,
+                idempotency_key=idempotency_key,
             )
             definition = self.get_definition(name)
             audit_record = tool_audit_repository.build_record(
@@ -170,6 +175,9 @@ class ToolRegistry:
                 action_id=action_id,
                 error_type=result.get("error_type"),
                 result=result.get("result"),
+                policy_version=(
+                    execution_grant.policy_version if execution_grant else None
+                ),
             )
             await tool_audit_repository.record(audit_record, db=audit_db)
             result["audit_id"] = audit_record["id"]
@@ -199,6 +207,7 @@ class ToolRegistry:
         forbidden_tools: set[str] | frozenset[str],
         action_id: Optional[str],
         execution_grant: Optional[ApprovedToolExecution],
+        idempotency_key: Optional[str],
     ) -> Dict[str, Any]:
         started = time.time()
         definition = self._tools.get(name)
@@ -237,6 +246,7 @@ class ToolRegistry:
             forbidden_tools=forbidden_tools,
             action_id=action_id,
             execution_grant=execution_grant,
+            idempotency_key=idempotency_key,
         )
         if policy_error:
             policy_status, policy_message = policy_error
@@ -265,12 +275,13 @@ class ToolRegistry:
                 error=str(exc),
             )
 
+        handler_args = args.model_dump()
+        if definition.operation_type is OperationType.WRITE:
+            handler_args["idempotency_key"] = idempotency_key
         resilient_result = await resilience_executor.execute(
             component="tool",
             operation=name,
-            call=lambda: asyncio.to_thread(
-                definition.handler, **args.model_dump()
-            ),
+            call=lambda: asyncio.to_thread(definition.handler, **handler_args),
             policy=tool_policy(
                 timeout_seconds=definition.timeout_seconds,
                 operation_type=definition.operation_type,
@@ -321,6 +332,7 @@ class ToolRegistry:
         forbidden_tools: set[str] | frozenset[str],
         action_id: Optional[str],
         execution_grant: Optional[ApprovedToolExecution],
+        idempotency_key: Optional[str],
     ) -> Optional[tuple[str, str]]:
         """在 Handler 之前独立校验 forbidden tool、意图边界和高风险语义。"""
         if definition.name in forbidden_tools:
@@ -352,12 +364,19 @@ class ToolRegistry:
                     or execution_grant.tool_name != definition.name
                     or execution_grant.payload_hash != expected_hash
                     or not execution_grant.approved_by_user_id
+                    or execution_grant.idempotency_key != idempotency_key
+                    or not execution_grant.policy_version
                 ):
                     return (
                         "approval_required",
                         f"High-risk write tool '{definition.name}' requires an "
                         "approved Tool Action execution grant.",
                     )
+        if definition.operation_type is OperationType.WRITE and not idempotency_key:
+            return (
+                "policy_denied",
+                f"Write tool '{definition.name}' requires a business idempotency key.",
+            )
         return None
 
     def _record_call(
@@ -421,27 +440,10 @@ tool_registry.register(
 )
 
 
-def mock_create_refund_request(
-    customer_id: str, order_id: str, reason: str
-) -> Dict[str, Any]:
-    """仅模拟 OMS 写操作，真实接入时必须增加幂等键。"""
-    reference = tool_payload_security.payload_hash(
-        {"customer_id": customer_id, "order_id": order_id, "reason": reason}
-    )[:12]
-    return {
-        "refund_request_id": f"REF-{reference.upper()}",
-        "status": "submitted",
-        "message": "Mock refund request submitted for downstream processing.",
-    }
-
-
 tool_registry.register(
     ToolDefinition(
         name="orders.create_refund_request",
-        description=(
-            "创建退款处理请求；必须经过独立人工审批，"
-            "不允许 Agent 自动执行。"
-        ),
+        description="创建退款处理请求；必须经过独立人工审批，不允许 Agent 自动执行。",
         input_schema=RefundRequestInput,
         output_schema={
             "refund_request_id": "str",
@@ -451,11 +453,13 @@ tool_registry.register(
         min_role="manager",
         timeout_seconds=2.0,
         mocked=True,
-        handler=mock_create_refund_request,
+        handler=refund_gateway.create_refund_request,
         risk_level="high",
         allowed_intents=frozenset({IntentType.BILLING_DISPUTE}),
         operation_type=OperationType.WRITE,
-        version="v2.1",
+        version="v2.2",
+        reconciliation_handler=refund_gateway.reconcile,
+        compensation_handler=refund_gateway.compensate,
     )
 )
 
