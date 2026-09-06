@@ -168,7 +168,9 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 13. Prompt
 
-当前 Prompt 分散维护在 LLM Provider 中。Feedback Pipeline 会在 Agent Run 快照中记录配置型 `prompt_version`，但系统没有独立 Prompt Registry、Prompt 内容快照、灰度发布或 A/B 实验。
+当前已实现 PromptOps / EvalOps V1：Analyzer、Resolver、QA 共用内容寻址 Prompt Bundle，支持不可变快照、模板变量校验、请求级版本绑定和并发实验隔离。AgentRun 的 `prompt_version` 保存实际 Bundle Hash，报告保存完整静态模板与节点 Hash，Trace 关联 Hash。
+
+CLI 可将当前/候选版本在相同 100 条 Baseline 上成对回放，生成质量门禁与指标/Case Diff，保留实验快照、Policy Hash 和 Git 工作树指纹。staging 可使用 Mock 验证；production 晋级需要真实模型、当前版本对比、相同干净 Git Revision、完整 Dataset 和通过门禁，并禁止新增失败 Case。支持带操作人/原因的显式晋级与回滚。没有线上 A/B、自动回滚、独立留出集认证或人工校准的语义发布门禁。
 
 | Prompt 阶段 | 当前约束 |
 |---|---|
@@ -177,7 +179,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | QA | 确定性失败由规则短路；其余仅输出 score、hallucination_detected、citation_verified，可配置轻量模型 |
 | 输出过滤 | 删除可能泄露内部角色、指令或工作流的内容 |
 
-OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。不能说 Prompt 已版本化、已灰度或已通过线上实验优化。
+OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。可以表述 Prompt 已内容版本化、已有离线发布门禁；不能表述已灰度、已通过线上实验提升质量，也不能把 Mock 成对实验当作 Prompt 语义效果验证。
 
 OpenAI-compatible Provider 支持主模型与 Fast Model 分离：Resolver 使用 `LLM_MODEL_NAME`，Analyzer 与 QA 优先使用 `LLM_FAST_MODEL_NAME`，并可通过节点级模型名覆盖。Fast Model 可配置独立 Base URL 与 API Key，例如接入 Qwen Turbo；未配置时回退主模型。
 
@@ -351,7 +353,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 5. 抽象 `SearchBackend`，保留 Chroma 本地方案并设计 OpenSearch Hybrid Search 方案。
 6. 增加 `ticket_status_events`，并将 Tool Governance V2.2 的 Mock 幂等/对账/补偿契约接入真实 OMS，补 Alembic Migration 和故障演练。
 7. 完成客服工作台，展示工单、AI 草稿、Tool Context、citation、QA、风险原因与审批动作。
-8. 引入 Prompt Registry、内容快照、灰度和回滚，并按版本关联质量与成本指标。
+8. 在已完成 Prompt Registry、快照、离线门禁晋级与回滚基础上，补充独立留出集、语义评测校准和真实流量灰度。
 9. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
 10. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
 11. 启用 Qwen3Guard Shadow Mode，建设安全样本库、策略版本与持久化安全事件，用真实数据校准语义结果与 Risk Engine 阈值。

@@ -22,6 +22,9 @@ services:
       - TOOL_RECONCILIATION_DELAY_SECONDS=${TOOL_RECONCILIATION_DELAY_SECONDS:-2}
       - REDIS_URL=redis://cache:6379/0
       - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - PROMPT_REGISTRY_DIR=/app/promptops
+      - PROMPT_ENVIRONMENT=${PROMPT_ENVIRONMENT:-production}
+      - PROMPT_BUNDLE_ID=${PROMPT_BUNDLE_ID:-}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-mock-support-v1}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
@@ -48,6 +51,7 @@ services:
       - LANGSMITH_LLM_CONTENT_MAX_CHARS=${LANGSMITH_LLM_CONTENT_MAX_CHARS:-50000}
     volumes:
       - chromadb-data:/app/chromadb_store
+      - ../.runtime/promptops:/app/promptops
     depends_on:
       - db
       - cache

@@ -706,7 +706,7 @@ Agent 系统既需要运营指标，也需要排查“哪一步慢、哪一步�
 
 Kubernetes manifests 已存在，但不代表完成生产发布。当前 CD 只在真实 LLM Release Gate 通过后将同一 Git SHA 的镜像交付到 GHCR，不会自动修改未授权的集群。
 
-## 决策 22：暂不引入 Prompt Registry、灰度与 A/B 实验
+## 决策 22：采用 PromptOps / EvalOps V1，暂缓线上 A/B
 
 ### 问题背景
 
@@ -728,15 +728,15 @@ Analyzer、Resolver 与 QA 都依赖 Prompt，后续需要可追踪地比较 Pro
 
 ### 最终方案
 
-当前 Prompt 直接维护在 Provider 中，不采用 Prompt Registry、灰度或 A/B。
+采用文件型内容寻址 Prompt Registry、请求级 Bundle 绑定、成对 Baseline 实验和门禁控制的环境指针；支持显式晋级、回滚与发布审计。暂不引入线上 A/B、自动回滚或分布式配置中心。
 
 ### 为什么选择
 
-在缺少 Golden Set、稳定回归指标和真实流量时，引入灰度体系无法产生可靠结论。
+项目已有固定 100 条 Baseline、Diff 和 CI/CD 门禁，复用它们即可让 Prompt 变更与评测证据绑定。静态模板快照没有企业服务依赖，适合本地复现；production 拒绝 Mock 证据，避免把工程验证误作模型效果验证。
 
 ### 工程权衡
 
-Prompt 修改的可追溯性有限。建立 Golden Set 和离线评测报告后，应优先引入版本管理再做灰度。
+文件锁和原子指针适用于单机/统一发布目录，不提供跨节点分布式配置一致性。晋级需同一干净代码版本的成对真实评测；独立留出集、人工语义校准、签名制品和流量灰度仍需后续建设。
 
 ## 决策 23：采用 RAGAS / DeepEval Adapter 与本地评测降级
 

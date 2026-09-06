@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     TOOL_OUTBOX_RETRY_MAX_SECONDS: float = Field(default=60.0, ge=0.0, le=3600.0)
     TOOL_RECONCILIATION_DELAY_SECONDS: float = Field(default=2.0, ge=0.0, le=300.0)
     PROMPT_VERSION: str = Field(default="support-v1")
+    # PromptOps 按内容 Hash 绑定版本；旧标签仅保留兼容。
+    PROMPT_REGISTRY_DIR: str = Field(default="./.runtime/promptops")
+    PROMPT_ENVIRONMENT: str = Field(default="production", pattern="^(staging|production)$")
+    PROMPT_BUNDLE_ID: Optional[str] = Field(default=None)
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。
     OPENAI_API_KEY: Optional[str] = Field(default=None)

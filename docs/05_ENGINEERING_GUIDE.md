@@ -4,6 +4,8 @@
 
 ## 环境要求
 
+PromptOps / EvalOps V1 的注册、成对评测、晋级、回滚和权限边界见 [Prompt 治理操作](06_PROMPTS.md#promptops--evalops-v1-操作)。默认 Registry 在 `.runtime/promptops`，不提交 Git；需随部署单独备份/交付，生产晋级在同一干净 Git Checkout 执行。
+
 - 推荐 Python 3.11，CI 与 Docker 也使用 Python 3.11。
 - Node.js 用于 Vite + React 前端。
 - 默认使用 SQLite、Mock LLM、本地 ChromaDB，Redis 可选，因此无外部服务也能运行。

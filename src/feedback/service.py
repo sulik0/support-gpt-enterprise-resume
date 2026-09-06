@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,7 +59,11 @@ class FeedbackService:
             workflow_version=self._bounded(
                 settings.AGENT_WORKFLOW_VERSION, 100, "unknown"
             ),
-            prompt_version=self._bounded(settings.PROMPT_VERSION, 100, "unknown"),
+            prompt_version=(
+                str(agent_output["prompt_bundle_id"])
+                if re.fullmatch(r"[0-9a-f]{64}", str(agent_output.get("prompt_bundle_id", "")))
+                else self._bounded(settings.PROMPT_VERSION, 100, "unknown")
+            ),
             model_provider=self._bounded(settings.LLM_PROVIDER, 50, "unknown"),
             model_name=self._model_name(),
             kb_version=self._bounded(agent_output.get("kb_version"), 50, "v1"),

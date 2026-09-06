@@ -23,6 +23,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | HITL | 高风险、低置信度、低 QA、投诉与退款场景在 Graph 内暂停审批，完成后从原 Thread 恢复 |
 | Observability | OpenTelemetry 统一采集，Collector 导出 LangSmith Trace 和 Prometheus Metrics |
 | Evaluation | Ragas、DeepEval、确定性 Agent/Security Evaluator、100 条 Baseline Workflow Replay |
+| PromptOps / EvalOps | 内容 Hash 快照、请求级版本绑定、成对实验、staging/production 门禁晋级、显式回滚与发布审计 |
 | Feedback | AgentRun + FeedbackEvent + Trace 关联，脱敏 SFT/DPO 候选导出 |
 | Resilience | LLM/RAG/Tool 统一超时、有界 Retry、Circuit Breaker、Fallback 与风险降级 |
 | Frontend | 用户咨询页、客服审批后台、Agent 可观测页 |
@@ -78,6 +79,10 @@ Analyzer 和 QA 可配置 `LLM_FAST_*`、`LLM_ANALYZER_MODEL_NAME` 和 `LLM_QA_M
 可选配置 `LLM_FALLBACK_*` 指向独立备用模型。SDK 内建重试已关闭，由 Resilience 模块统一执行超时、有界 Retry 和 Circuit Breaker；仅低风险读 Tool 可自动重试。
 
 ## 测试与评测
+
+PromptOps V1 使用 `python scripts/promptops.py` 管理 Analyzer / Resolver / QA 模板。默认模板保持现有行为；`evaluate --bundle default --mock` 会在隔离环境中将当前版本与内置版本各回放 100 条，保存不可变实验、完整 Prompt/配置、指标 Diff 和逐 Case Trace。Mock 只验证工程链路，不能用于 production 晋级。
+
+完整操作步骤、付费实验和回滚说明见 [Prompt 治理](docs/06_PROMPTS.md#promptops--evalops-v1-操作)。
 
 ```bash
 python -m pip install -r requirements/test.txt

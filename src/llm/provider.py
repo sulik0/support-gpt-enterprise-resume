@@ -5,21 +5,14 @@ from src.config import settings
 from src.models.intents import (
     DEFAULT_INTENT,
     IntentType,
-    intent_prompt_guide,
-    intent_prompt_values,
     normalize_intent,
 )
 from src.observability.tracing import record_current_llm_io, trace_operation
 from src.resilience.executor import resilience_executor
 from src.resilience.policies import llm_policy
+from src.promptops.defaults import RESOLUTION_LANGUAGE_POLICY
+from src.promptops.runtime import active_bundle
 
-
-RESOLUTION_LANGUAGE_POLICY = (
-    "Reply in the language used in the customer's current Description. "
-    "If the current Description explicitly asks for a different response language, "
-    "use the requested language instead. Do not choose the response language from the "
-    "subject, retrieved context, tool results, or earlier messages."
-)
 
 CHAT_LANGUAGE_POLICY = (
     "Reply in the language used in the latest user message. If that message explicitly "
@@ -30,15 +23,7 @@ CHAT_LANGUAGE_POLICY = (
 
 def _ticket_classifier_prompt(text: str) -> str:
     """所有真实 Provider 共用同一份 Intent Taxonomy 与输出约束。"""
-    return (
-        "Classify this support ticket by the business meaning below. Distinguish a "
-        "request to perform an operation from a request explaining policy or navigation. "
-        "Payment, invoice and refund questions are billing_dispute. A current API error, "
-        "timeout or outage is outage_report, not information_request. Return only JSON "
-        "with exactly: intent, priority, department, sentiment, confidence_score. "
-        f"intent must be one of {intent_prompt_values()}. Taxonomy:\n"
-        f"{intent_prompt_guide()}\nTicket: {text}"
-    )
+    return active_bundle().messages("analyzer", text=text)[1]["content"]
 
 
 def _normalize_ticket_analysis(analysis: Dict[str, Any]) -> Dict[str, Any]:
@@ -370,14 +355,7 @@ class OpenAILLMProvider(BaseLLMProvider):
 
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
-        prompt = _ticket_classifier_prompt(text)
-        messages = [
-            {
-                "role": "system",
-                "content": "Classify customer support tickets. Output compact JSON only.",
-            },
-            {"role": "user", "content": prompt},
-        ]
+        messages = active_bundle().messages("analyzer", text=text)
         content, in_tok, out_tok = await self._call_gpt(
             messages,
             json_mode=True,
@@ -392,24 +370,9 @@ class OpenAILLMProvider(BaseLLMProvider):
     async def generate_resolution(
         self, subject: str, description: str, context: str
     ) -> Tuple[str, int, int]:
-        prompt = (
-            f"Subject: {subject}\n"
-            f"Description: {description}\n\n"
-            f"Relevant Context:\n{context}\n\n"
-            "Write only the final customer reply. Be concise, actionable, and cite the "
-            "provided source labels for policy claims. Do not explain your reasoning."
+        messages = active_bundle().messages(
+            "resolver", subject=subject, description=description, context=context
         )
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Answer using only the supplied context. Never invent policy or promise "
-                    "an irreversible action. If evidence is insufficient, say human review "
-                    f"is needed. {RESOLUTION_LANGUAGE_POLICY}"
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
         return await self._call_gpt(
             messages,
             json_mode=False,
@@ -421,19 +384,9 @@ class OpenAILLMProvider(BaseLLMProvider):
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
-        prompt = (
-            f"Question: {query}\nEvidence: {json.dumps(context, ensure_ascii=False)}\n"
-            f"Answer: {response}\n"
-            'Return only JSON: {"score":0.0,"hallucination_detected":false,'
-            '"citation_verified":false}. Judge whether the answer is supported by evidence.'
+        messages = active_bundle().messages(
+            "qa", query=query, context=json.dumps(context, ensure_ascii=False), response=response
         )
-        messages = [
-            {
-                "role": "system",
-                "content": "Verify answer grounding. Output only the requested compact JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ]
         content, in_tok, out_tok = await self._call_gpt(
             messages,
             json_mode=True,
@@ -534,14 +487,7 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
 
     @trace_operation(name="supportgpt.llm.analyze_ticket", component="llm")
     async def analyze_ticket(self, text: str) -> Tuple[Dict[str, Any], int, int]:
-        prompt = _ticket_classifier_prompt(text)
-        messages = [
-            {
-                "role": "system",
-                "content": "Classify customer support tickets. Output compact JSON only.",
-            },
-            {"role": "user", "content": prompt},
-        ]
+        messages = active_bundle().messages("analyzer", text=text)
         content, in_tok, out_tok = await self._call_gpt(
             messages,
             json_mode=True,
@@ -555,24 +501,9 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
     async def generate_resolution(
         self, subject: str, description: str, context: str
     ) -> Tuple[str, int, int]:
-        prompt = (
-            f"Subject: {subject}\n"
-            f"Description: {description}\n\n"
-            f"Relevant Context:\n{context}\n\n"
-            "Write only the final customer reply. Be concise, actionable, and cite the "
-            "provided source labels for policy claims. Do not explain your reasoning."
+        messages = active_bundle().messages(
+            "resolver", subject=subject, description=description, context=context
         )
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Answer using only the supplied context. Never invent policy or promise "
-                    "an irreversible action. If evidence is insufficient, say human review "
-                    f"is needed. {RESOLUTION_LANGUAGE_POLICY}"
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
         return await self._call_gpt(
             messages,
             json_mode=False,
@@ -584,19 +515,9 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
     async def evaluate_qa(
         self, query: str, context: List[str], response: str
     ) -> Tuple[Dict[str, Any], int, int]:
-        prompt = (
-            f"Question: {query}\nEvidence: {json.dumps(context, ensure_ascii=False)}\n"
-            f"Answer: {response}\n"
-            'Return only JSON: {"score":0.0,"hallucination_detected":false,'
-            '"citation_verified":false}. Judge whether the answer is supported by evidence.'
+        messages = active_bundle().messages(
+            "qa", query=query, context=json.dumps(context, ensure_ascii=False), response=response
         )
-        messages = [
-            {
-                "role": "system",
-                "content": "Verify answer grounding. Output only the requested compact JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ]
         content, in_tok, out_tok = await self._call_gpt(
             messages,
             json_mode=True,

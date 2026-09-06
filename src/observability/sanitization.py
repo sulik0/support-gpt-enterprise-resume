@@ -101,6 +101,10 @@ def sanitize_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in attributes.items():
         if value is None:
             continue
+        # 仅允许固定字段中的合法内容 Hash 原样通过，避免长数字片段被当成电话。
+        if key == "prompt.bundle_id" and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value):
+            output[key] = value
+            continue
         safe_value = "[FILTERED]" if is_sensitive_key(key) else sanitize_value(value)
         if isinstance(safe_value, (str, bool, int, float)):
             output[key] = safe_value

@@ -214,6 +214,9 @@ def langsmith_span_attributes(
 
 def _llm_span_attributes() -> Dict[str, Any]:
     """记录模型识别信息，不上报 Prompt 和回复正文。"""
+    from src.promptops.runtime import active_bundle
+
+    bundle = active_bundle()
     provider = settings.LLM_PROVIDER.lower()
     if provider == "azure":
         model = settings.AZURE_OPENAI_DEPLOYMENT or "azure"
@@ -227,6 +230,8 @@ def _llm_span_attributes() -> Dict[str, Any]:
         "gen_ai.system": provider,
         "gen_ai.provider.name": provider,
         "gen_ai.request.model": model,
+        "prompt.bundle_id": bundle.bundle_id,
+        "prompt.version": bundle.version,
     }
 
 

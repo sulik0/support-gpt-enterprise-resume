@@ -417,7 +417,11 @@ flowchart LR
 | QA Prompt | 评估依据与幻觉风险 | 问题、Top-2 citation、草稿 | score / hallucination / citation JSON | 将质量门从生成职责中分离 | 长文 Judge | 确定性失败规则短路，其余使用轻量结构化 Judge |
 | 输出过滤 | 删除内部信息泄露 | 草稿 | 过滤后的回复和风险标记 | 防止提示词与工作流暴露 | DLP 服务、关键词规则 | 当前规则简单，需持续维护覆盖面 |
 
-Prompt 当前直接维护在 LLM Provider 中，没有 Prompt Registry、版本号、灰度发布或 A/B 实验。采用这种方式的原因是项目仍处于单工作流、少量 Prompt 阶段；代价是 Prompt 变更不可独立审计。未来应在 Golden Set 建立后再引入版本治理。
+PromptOps / EvalOps V1 使用文件型内容寻址 Registry。`PromptBundle` 校验 Analyzer / Resolver / QA 的变量契约并冻结内容；OpenAI-compatible / Azure 渲染同一 Bundle，Mock 保持确定性行为。`ContextVar` 在 Workflow 与整个 Baseline 实验入口固定版本，并行节点继承该版本。AgentState 保存 Bundle Hash，Checkpoint 随 State 保留该标识；AgentRun、LLM/Workflow Span 和实验报告关联同一 Hash。
+
+`scripts/promptops.py evaluate` 隔离 SQLite/Chroma，按相同固定 100 条数据先回放当前版本、再回放候选，复用原确定性指标、Diff 和 Quality Gate。实验目录保留两份完整报告、Policy 快照、内容 Hash 和 Git 工作树指纹。晋级时重新计算门禁并核对证据；production 只接受同一干净 Git Revision 的真实模型对比，拒绝新增 FAIL Case。环境指针通过文件锁与原子替换发布，CAS 防止过时实验覆盖较新版本，回滚只允许返回已发布历史的前一版本。
+
+V1 权限边界为受信任的本地 CLI / 发布目录写权限，适合单机与统一发布目录；没有分布式 Registry、公共管理 API、线上 A/B、自动回滚或独立语义质量发布认证。默认实验关闭外部遥测但保留本地 Trace 同源性能采集。文件 Hash 用于完整性检查，不替代签名制品与访问控制。
 
 ## 11. Redis、PostgreSQL 与数据持久化
 
@@ -565,7 +569,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | Checkpoint 生命周期 | 增加 TTL/归档、旧 Graph 版本兼容与 Checkpoint 清理任务 | 控制持久化数据规模并保证跨版本恢复 | 迁移策略、兼容测试、合规保留周期 |
 | MCP | 将外部业务能力封装为 MCP Server，但保留本地治理层 | 标准化工具发现和跨宿主集成 | 鉴权、协议治理、可观测与安全隔离 |
 | Planner / Reflection | 在 Golden Set 和预算控制基础上增加受限计划与限次重写 | 处理更复杂的调查型工单 | 质量比较、循环控制、成本和审批边界 |
-| Prompt 治理 | Prompt Registry、版本记录、A/B 与灰度 | 支持可重复的质量回归 | 评测集、指标归因、发布流程 |
+| Prompt 治理 | V1 已有 Registry、版本记录、成对评测与门禁回滚；后续 A/B 与灰度 | 支持可重复的质量回归 | 留出集、语义校准、真实流量 |
 
 ## 17. 最终架构决策摘要
 

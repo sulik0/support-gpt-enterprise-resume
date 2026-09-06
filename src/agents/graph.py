@@ -41,6 +41,7 @@ from src.observability.tracing import (
 from src.risk.engine import risk_engine
 from src.resilience.context import begin_resilience_scope, finish_resilience_scope
 from src.resilience.models import DEGRADATION_RANK, DependencyEvent
+from src.promptops.runtime import active_bundle, prompt_scope
 
 logger = logging.getLogger("supportgpt.agents.graph")
 tracer = get_tracer(__name__)
@@ -53,6 +54,8 @@ class AgentState(TypedDict):
     """
 
     request_id: str
+    prompt_bundle_id: str
+    prompt_version: str
     checkpoint_thread_id: str
     checkpoint_namespace: str
     durable_execution_enabled: bool
@@ -613,6 +616,8 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "request_id": initial_state.get("request_id")
         or get_request_id()
         or "background",
+        "prompt_bundle_id": active_bundle().bundle_id,
+        "prompt_version": active_bundle().version,
         "checkpoint_thread_id": initial_state.get("checkpoint_thread_id")
         or str(uuid.uuid4()),
         "checkpoint_namespace": initial_state.get("checkpoint_namespace")
@@ -677,6 +682,12 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
 
 
 async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
+    """固定本次请求的 Prompt 快照，并行节点继承同一上下文。"""
+    with prompt_scope():
+        return await _run_agent_workflow_pinned(initial_state)
+
+
+async def _run_agent_workflow_pinned(initial_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes the Agent workflow with parallel context enrichment using LangGraph.
     Estimates latency, total tokens, and USD costs.
@@ -693,6 +704,8 @@ async def run_agent_workflow(initial_state: Dict[str, Any]) -> Dict[str, Any]:
                 "supportgpt.langgraph.workflow",
                 {
                     **_trace_attrs(state_input, node="workflow"),
+                    "prompt.bundle_id": state_input["prompt_bundle_id"],
+                    "prompt.version": state_input["prompt_version"],
                     **langsmith_span_attributes(
                         "chain",
                         trace_name="SupportGPT Agent Workflow",

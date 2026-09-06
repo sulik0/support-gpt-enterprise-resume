@@ -259,7 +259,7 @@ resolved / closed --reopen--> in_progress
 
 ### 总体原则
 
-- Prompt 当前集中在 `src/llm/provider.py` 的 Provider 实现中。Agent Run 会保存配置型 `prompt_version`，但没有独立 Prompt Registry、Prompt 内容快照或发布管理。
+- PromptOps V1 将 Analyzer / Resolver / QA 模板集中为 `src/promptops/defaults.py` 内置 Bundle 与文件型 Prompt Registry。内容 Hash 同时覆盖版本、系统/用户模板及冻结的 Intent 说明；Workflow 和整次评测固定 Bundle，AgentRun 的 `prompt_version` 保存实际 Bundle Hash。
 - `BaseLLMProvider` 定义 `analyze_ticket`、`generate_resolution`、`evaluate_qa` 和 `run_chat` 四类统一接口。
 - 默认 `LLM_PROVIDER=mock`，保证无 API Key 的本地开发、测试和演示可复现。
 - OpenAI 和 Azure OpenAI 使用 `temperature=0.0`；Analyzer 和 QA 要求 JSON Mode，Resolver 返回自然语言。
@@ -291,7 +291,7 @@ resolved / closed --reopen--> in_progress
 - 不得在 Prompt 中宣称 Mock Adapter 可以执行真实退款、取消订单或修改 CRM 数据。
 - 不得删除“上下文不足时升级”的核心约束。
 - 新增 Prompt 字段时必须同步更新 Provider 接口、Mock Provider、外部 Provider 和相关测试。
-- 配置型 `prompt_version` 已用于运行归因；Prompt Registry、内容快照、发布管理与 A/B 灰度尚未实现，不得将其写成已有能力。
+- 已实现内容快照、成对评测、环境指针、门禁晋级、显式回滚和发布审计；未实现按用户分流的 A/B 灰度、自动回滚、人工校准的语义发布门禁和反馈自动纳入评测集。旧 `PROMPT_VERSION` 仅为无 Bundle 历史记录的兼容标签。
 
 ## 评测体系
 
@@ -417,11 +417,11 @@ resolved / closed --reopen--> in_progress
 - 将同步 `POST /support/requests` 演进为提交后立即返回 `ticket_id` 的后台任务。
 - 增加用户身份、工单归属校验以及人工审批完成后的站内通知或推送。
 
-### P2：Prompt 版本管理与灰度
+### P2：PromptOps 后续优化
 
-- 对 Analyzer、Resolver 和 QA Prompt 进行版本化。
-- 记录 Prompt 版本、QA 分数、审批率、延迟和 token 成本。
-- 在有 Golden Set 和回归基线后再引入 A/B 或灰度发布。
+- V1 已完成三个节点的内容版本、运行归因和评测晋级/回滚。
+- 后续建立独立留出集、反馈人工复核、Dataset Registry 与人工校准的语义质量指标。
+- 在有真实流量后引入 A/B、按会话灰度和自动回滚。
 
 ## 项目不变约束
 

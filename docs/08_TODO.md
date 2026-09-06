@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-09-04。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-09-06。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -43,7 +43,8 @@
 - [ ] 建设 Dataset Registry、数据版本和不可变 Snapshot。
 - [ ] 增加 Train / Validation / Test 划分及数据泄漏检查。
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
-- [ ] 增加 Prompt Registry、内容快照、灰度和回滚门禁。
+- [x] 增加 PromptOps / EvalOps V1：三个节点内容快照、ContextVar 版本绑定、运行/Trace 归因、当前/候选成对实验、证据校验、环境晋级和显式回滚。
+- [ ] 增加按会话灰度、线上 A/B、自动回滚和人工校准的语义发布门禁；V1 的 Mock 通过不代表 Prompt 语义质量通过。
 - [x] 基于首次真实 100 条 Baseline 完成归因修复，Case Pass 由 `0.54` 提升到 `0.99`，固化 Release Gate 阈值与已知失败 Case 白名单。
 - [ ] 增加 `ticket_status_events`；Tool Calling 持久化审计已在 V2.1 完成。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
@@ -59,6 +60,9 @@
 - [ ] 建立“候选模型离线评测 → 灰度 → 回滚”的发布闭环。
 
 ## 已知问题与风险
+
+- [x] 2026-09-06 PromptOps V1 完成全量回归、原 100 条 PR Gate、当前/候选各 100 条 Mock 实验及独立 staging 晋级/回滚验证；未调用付费模型，未切换实际 production 指针。
+- [ ] PromptOps V1 使用文件型 Registry，后续需增加分布式发布、签名制品、独立留出集和人工语义校准；不能将 Mock 实验结果写成真实 Prompt 效果提升。
 
 - [x] 2026-09-04 完成 207 条全量测试，覆盖 Checkpoint 跨重启恢复、Tool 幂等/Outbox/对账/DLQ/补偿/租约竞争、审批续跑幂等、Trace 与 Feedback 兼容；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。

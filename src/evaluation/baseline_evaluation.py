@@ -24,6 +24,7 @@ from src.evaluation.offline_rag import (
 )
 from src.models.intents import IntentType, normalize_intent
 from src.observability.sanitization import sanitize_value
+from src.promptops.runtime import active_bundle, prompt_scope
 
 
 ENABLED_BEHAVIOR_METRICS = (
@@ -482,6 +483,8 @@ def build_baseline_report(
         case_rows.append(
             {
                 "id": record.case.id,
+                "prompt_bundle_id": record.workflow_output.get("prompt_bundle_id")
+                or record.ticket_state.get("prompt_bundle_id") or active_bundle().bundle_id,
                 "dataset_case": asdict(record.case),
                 "ticket_state": sanitize_value(record.ticket_state),
                 "trace_id": record.trace_id,
@@ -582,6 +585,22 @@ def write_baseline_report(report: Dict[str, Any], output_dir: Path) -> Dict[str,
 
 
 async def run_baseline_evaluation_v1(
+    dataset_path: Path,
+    output_dir: Path,
+    *,
+    limit: Optional[int] = None,
+    execution_metadata: Optional[Dict[str, Any]] = None,
+    workflow_runner: Optional[WorkflowRunner] = None,
+) -> Dict[str, Path]:
+    """整次实验固定 Prompt，防止逐 Case 回放时版本漂移。"""
+    with prompt_scope():
+        return await _run_baseline_evaluation_pinned(
+            dataset_path, output_dir, limit=limit,
+            execution_metadata=execution_metadata, workflow_runner=workflow_runner,
+        )
+
+
+async def _run_baseline_evaluation_pinned(
     dataset_path: Path,
     output_dir: Path,
     *,
@@ -868,7 +887,7 @@ def _build_experiment_config(
             },
             "workflow": {
                 "version": settings.AGENT_WORKFLOW_VERSION,
-                "prompt_version": settings.PROMPT_VERSION,
+                "prompt_version": active_bundle().version,
                 "source_revision": source_revision,
             },
             "models": {
@@ -905,6 +924,11 @@ def _build_experiment_config(
     sanitized = sanitize_value(config)
     # Git SHA 是复现实验的非敏感标识，避免被电话号规则误脱敏。
     sanitized["workflow"]["source_revision"] = source_revision
+    sanitized["dataset"]["sha256"] = config["dataset"]["sha256"]
+    # 模板快照只含开发者静态内容，Hash 不经过 PII 数字脱敏。
+    sanitized["prompts"] = {
+        **active_bundle().metadata(), "snapshot": active_bundle().payload()
+    }
     return sanitized
 
 

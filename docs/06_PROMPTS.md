@@ -1,6 +1,6 @@
 # Prompt 设计与治理
 
-> 本文档记录当前 Prompt Pipeline 的稳定约束。Prompt 原文以 `src/llm/provider.py` 为准，本文档不复制可能快速变化的长 Prompt。
+> 本文档记录当前 Prompt Pipeline 与 PromptOps / EvalOps V1。内置模板以 `src/promptops/defaults.py` 为准，已注册版本以 Registry 中经过 Hash 校验的快照为准。
 
 ## 设计目标
 
@@ -42,7 +42,8 @@ Prompt 服务于可控 Workflow，不承担权限、状态机或高风险决策�
   "intent": "<IntentType>",
   "priority": "low|medium|high|urgent",
   "department": "<department>",
-  "confidence": 0.0
+  "sentiment": "neutral",
+  "confidence_score": 0.0
 }
 ```
 
@@ -103,7 +104,10 @@ RAG Context 是不可信数据，不是系统指令：
 
 ## Prompt 版本与可观测
 
-- 当前版本由 `PROMPT_VERSION` 记录，Workflow 版本由 `AGENT_WORKFLOW_VERSION` 记录。
+- Analyzer / Resolver / QA 作为一个 Bundle 发布，SHA256 覆盖实际模板、版本标签和冻结的 Intent 说明。旧 `PROMPT_VERSION` 不再决定实际运行内容。
+- `PROMPT_REGISTRY_DIR` 默认 `.runtime/promptops`；`PROMPT_ENVIRONMENT` 默认 `production`。可选 `PROMPT_BUNDLE_ID` 固定某个内容 Hash，设置后优先于环境指针。
+- `ContextVar` 在 Workflow 与整次评测开始时固定 Bundle，并行节点继承该版本。Graph Checkpoint 保留 State 中的 Bundle Hash。
+- `AgentRun.prompt_version` 新记录保存 Bundle Hash；旧记录保留原标签。Baseline 记录静态模板、节点 Hash、逐 Case Bundle ID；Workflow / LLM Span 记录 `prompt.bundle_id` 与 `prompt.version`。
 - AgentRun、Evaluation Report 和 OpenTelemetry Span 保存模型、Token、延迟和版本信息。
 - LangSmith 的 LLM Span 可记录脱敏、截断后的节点输入输出；是否开启受 `LANGSMITH_CAPTURE_LLM_CONTENT` 控制。
 - Trace 内容不得包含 API Key、Authorization、Cookie、密码或未脱敏 PII。
@@ -117,6 +121,61 @@ Prompt 修改必须：
 3. 运行相关 pytest。
 4. 先执行 Baseline Dry Run，再在有成本确认时运行真实 LLM Replay。
 5. 比较 Intent/HITL/Tool 行为、QA、延迟、Token 和安全指标。
-6. 更新 `PROMPT_VERSION`、报告实验配置和相关文档。
+6. 注册新的内容快照，执行成对实验；满足门禁后显式晋级并留下操作人和原因。
 
-当前尚未实现完整 Prompt Registry、灰度发布和自动回滚，不得将这些路线图能力描述为已实现。
+## PromptOps / EvalOps V1 操作
+
+### 创建候选版本
+
+```bash
+python scripts/promptops.py export-default --output .runtime/prompt-candidate.json
+```
+
+编辑 JSON 的 `version` 和节点的 `system` / `user`。模板采用 `$variable`，字面量 `$` 写成 `$$`。变量必须保留：Analyzer 为 `text`，Resolver 为 `subject / description / context`，QA 为 `query / context / response`。System 模板不接受动态变量；用户文本不会递归展开。模板只放静态开发者指令，不写凭据或真实客户数据。
+
+```bash
+python scripts/promptops.py register .runtime/prompt-candidate.json
+python scripts/promptops.py status
+```
+
+注册返回 `bundle_id`；后续命令用实际 Hash 替换 `<bundle-id>`。同一 Hash 重复注册幂等，内容变化生成新 Hash；读快照会重新校验 Hash。
+
+### 免费验证工程链路
+
+```bash
+python scripts/promptops.py evaluate --bundle <bundle-id> --environment staging --mock
+```
+
+将 staging 当前版本与候选分别回放同一固定 100 条 Baseline，总计 200 条 Workflow；使用隔离 SQLite/Chroma，关闭外部遥测、真实模型和语义安全服务。`--bundle default` 可用内置 Bundle 验证实验流程。`--limit 3` 可抽样调试，但不完整报告不能通过原门禁。
+
+Mock 不读取 Prompt 推理，因此 PASS 只证明 Workflow、归因与发布管道正确，不能证明候选 Prompt 改善回答。
+
+### 真实模型实验
+
+```bash
+python scripts/promptops.py evaluate --bundle <bundle-id> --environment production --live --confirm-live --max-workflow-calls 600
+```
+
+读取 `.env` 的真实 Provider。需先提交代码，保证实验与晋级时处于相同的干净 Git Revision。预算为两次回放的估算调用预算；Resilience 重试与可选语义安全服务可能增加实际请求，不是计费硬额度。默认关闭外部遥测，现有本地 Trace 性能捕获仍用于延迟、Token 和调用次数统计。
+
+实验保存在 `<registry>/experiments/<时间戳_随机ID>/`：
+
+- `candidate.json`：候选完整 Baseline，含逐 Case 结果、Trace 信息、Prompt 快照和模型配置。
+- `baseline.json`：同次运行的当前版本完整 Baseline。
+- `policy.json`：门禁策略快照。
+- `experiment.json` / `experiment.md`：证据 Hash、Git 指纹、门禁原因、13 项指标 Diff 与四类 Case 变化。
+
+`experiments/latest.json` 是普通索引文件；晋级指定固定实验 ID。原 `run_baseline_eval.py` 的 snapshot/latest/Error Analysis 机制保持不变，并自动增加 Prompt 内容归因。
+
+### 晋级与回滚
+
+```bash
+python scripts/promptops.py promote --experiment <experiment-id> --actor developer --reason "同代码同数据成对评测通过"
+python scripts/promptops.py rollback --environment staging --actor developer --reason "恢复上一个版本"
+```
+
+晋级重新校验证据、当前 Policy Hash、逐 Case Bundle 和质量门禁；比较 Dataset、Evaluator、模型、生成限制、Risk 阈值、Workflow 和代码版本；禁止新增 PASS→FAIL。production 必须提供当前 Prompt 的真实模型对比和同一干净 Git Revision，Mock 不能晋级。环境已切换则 CAS 拒绝过时晋级。
+
+环境指针与历史原子替换，记录前后 Hash、操作人、原因和实验标识。回滚只返回该环境最近切换前的历史版本。应用在下一个新请求读取环境指针，已运行请求继续用旧 Bundle；默认读取 production，staging 晋级不影响它。设置 `PROMPT_BUNDLE_ID` 后需修改/取消固定 Hash 并重启才能跟随环境指针。
+
+V1 管理入口为受信任 CLI，权限依赖发布目录和主机权限；文件锁适用于单机或有可靠共享锁的统一目录。容器需挂载同一 Registry，晋级在含 Git Checkout 的发布主机执行，再交付 Registry 快照。没有分布式配置服务、线上 A/B/灰度、自动回滚、独立留出集认证、人工校准的语义发布门禁或反馈自动纳入 Baseline。
