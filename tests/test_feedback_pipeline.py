@@ -161,6 +161,8 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
     if response_trace_id:
         assert run_detail.json()["trace_id"] == response_trace_id
     assert run_detail.json()["prompt_version"]
+    assert run_detail.json()["skill_selection"]["skill_name"] == "refund_support"
+    assert run_detail.json()["skill_selection"]["skill_version"] == "v1"
     assert any(
         event["source"] == "human_review"
         for event in run_detail.json()["feedback_events"]
@@ -176,6 +178,7 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
     listed = next(item for item in page["items"] if item["id"] == run_id)
     assert listed["trace_id"] == run_detail.json()["trace_id"]
     assert listed["workflow_path"]
+    assert listed["skill_selection"]["selection_strategy"] == "intent_rule"
     assert "input_text" not in listed
 
     await client.post(
@@ -215,6 +218,8 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
     sft = json.loads((tmp_path / "sft_candidates.jsonl").read_text().strip())
     dpo = json.loads((tmp_path / "dpo_candidates.jsonl").read_text().strip())
     assert sft["metadata"]["agent_run_id"] == run_id
+    assert sft["metadata"]["skill_name"] == "refund_support"
+    assert sft["metadata"]["skill_version"] == "v1"
     assert dpo["chosen"] == approval.json()["final_response"]
     assert dpo["chosen"] != dpo["rejected"]
 

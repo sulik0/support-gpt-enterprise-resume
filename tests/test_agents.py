@@ -762,6 +762,7 @@ async def test_rag_prompt_injection_short_circuits_before_generation(monkeypatch
 
     assert final_output["workflow_path"] == [
         "ticket_analyzer",
+        "skill_selector",
         "tool_call",
         "retriever",
         "escalation",

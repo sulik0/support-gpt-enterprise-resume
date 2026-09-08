@@ -8,7 +8,7 @@
 
 这是一个面向企业售后客服场景的、可本地运行的生产风格 Agent 平台。它把初版 FAQ / RAG 问答扩展为一条完整的客服处理链：先理解工单和识别风险，再补充客户、订单与历史工单上下文，检索售后知识，生成回复草稿，执行 QA 和输出过滤，最后决定是否进入人工审批。
 
-平台目前有 6 个逻辑 Agent 节点、5 个注册 Tool，使用 LangGraph 编排，使用 ChromaDB 做 Hybrid RAG，使用 SQLAlchemy 持久化工单、审批、Tool Action 与调用审计，Redis 作为可选短期会话缓存，并通过 Prometheus 和 OpenTelemetry 做可观测性。CRM、OMS、工单工具与默认 LLM 都是本地 Mock，不是已接入的真实企业系统。
+平台目前有 6 个逻辑业务 Agent 节点、1 个确定性 Skill Selector、1 个 Approval Gate 和 5 个注册 Tool。Skill Framework V1 将 8 个统一 Intent 映射到 6 个版本化 Skill，并使用 Tool Allowlist 收窄能力边界。CRM、OMS、工单工具与默认 LLM 都是本地 Mock，不是已接入的真实企业系统。
 
 ### 2. 为什么传统 FAQ 系统无法满足售后场景？
 
@@ -21,12 +21,12 @@
 架构可以分为五层：
 
 1. FastAPI 接入层：聊天、工单、审批、鉴权、评测和 Metrics。
-2. LangGraph 编排层：Analyzer、Tooling、Retriever、Resolver、QA、Escalation。
+2. LangGraph 编排层：Analyzer、Skill Selector、Tooling、Retriever、Resolver、QA、Escalation、Approval Gate。
 3. 上下文层：ToolRegistry 提供结构化业务上下文，Hybrid RAG 提供知识 citation。
 4. 数据层：SQLite / PostgreSQL 保存领域数据，Redis 可选保存短期会话，ChromaDB 保存向量分块。
 5. 治理层：Prompt Guardrails、RBAC、工单状态机、HITL、Prometheus 和 OpenTelemetry。
 
-正常路径是 Analyzer → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation；安全风险会从 Analyzer 或上下文合并阶段直接短路到 Escalation。
+正常路径是 Analyzer → Skill Selector → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation → Approval Gate；安全风险会从 Analyzer 或上下文合并阶段直接短路到 Escalation。
 
 ### 4. 为什么选择 Agent，而不是普通 RAG 问答？
 
@@ -49,7 +49,7 @@
 
 系统先创建工单并读取会话存储，然后对当前输入进行 Prompt Injection、Jailbreak 和 PII 处理。安全请求被短路；正常请求进入分类，得到情绪、优先级、部门和意图。
 
-之后并行执行业务工具与 Hybrid RAG：工具侧查询客户画像、历史工单及相关订单，检索侧按知识库版本和业务类别召回 citation。Resolver 只使用最高相关的 Top-2 citation 和必要 Tool 字段生成草稿；QA 以规则短路或精简结构化 Judge 检查依据、幻觉和泄露，Escalation 根据安全、优先级、情绪和 QA 决定是否审批。需要审批时创建待审批记录；不需要时返回草稿及审计信息。
+之后先以统一 Intent 确定性选择版本化 Skill，再在其 Tool/RAG 边界内并行执行业务工具与 Hybrid RAG。Resolver 只使用最高相关的 Top-2 citation 和必要 Tool 字段生成草稿；QA 以规则短路或精简结构化 Judge 检查依据、幻觉和泄露，Escalation 与 Approval Gate 决定是否暂停等待审批。
 
 要注意，“本次 Agent 返回回复”不等于“工单已关闭”。工单只有经过合法状态流转才进入 resolved 和 closed。
 
@@ -75,15 +75,15 @@ LangGraph 原生提供状态图、条件边和异步节点执行，适合表达�
 
 ### 10. 你的 LangGraph Workflow 有哪些节点？
 
-当前是 6 个逻辑节点：
+当前是 6 个逻辑业务 Agent 节点，加两个确定性控制节点：
 
 ```text
 Analyzer（包含 Input Guard 与分类）
   ├─ 安全风险 → Escalation → END
-  └─ 正常请求 → Context Enrichment（Tooling ∥ Retriever）→ Resolver → QA → Escalation → END
+  └─ 正常请求 → Skill Selector → Context Enrichment（Tooling ∥ Retriever）→ Resolver → QA → Escalation → Approval Gate → END / interrupt
 ```
 
-项目没有独立 Tool Planner、Tool Executor、Human Review Graph 节点。Tooling 内部按确定性规则调用受治理工具；Human Review 发生在 Graph 完成后的审批流程中。
+项目没有独立 Tool Planner 或 Tool Executor Agent。Tooling 内部按确定性规则调用受治理工具；Human Review 在 Approval Gate 中暂停，人工决策后从原 Checkpoint 恢复。
 
 ### 11. 为什么这样拆节点？
 
@@ -93,7 +93,7 @@ Analyzer（包含 Input Guard 与分类）
 
 ### 12. 每个节点之间传递什么 State？
 
-State 包含：工单与客户标识、主题与描述、知识库版本；情绪、优先级、部门和意图；操作角色、Tool Context 与 Tool Calls；citation 与回复草稿；QA 分数、幻觉标记、升级原因、是否审批；Checkpoint Thread、执行/审批状态和人工决策；以及 token、成本、延迟和错误列表。
+State 包含：工单与客户标识、主题与描述、知识库版本；情绪、优先级、部门和意图；Skill 名称/版本/Registry Hash、Tool/RAG/槽位边界；Tool Context 与 Tool Calls；citation 与回复草稿；QA、风险、审批和 Checkpoint 状态；以及 token、成本、延迟和错误列表。
 
 节点只补充或更新自己负责的字段，后续节点消费已产生的信息。
 
@@ -117,7 +117,7 @@ State 包含：工单与客户标识、主题与描述、知识库版本；情�
 
 ### 16. 如何避免 Agent 自主规划导致流程失控？
 
-当前根本不提供动态 Planner。执行路径由固定图决定，工具选择是确定性规则，所有工具经过 Registry，退款初筛要求 Manager 权限，QA 和 Escalation 是固定关卡。
+当前根本不提供动态 Planner。执行路径由固定图决定，Skill 由统一 Intent 确定性选择，工具同时经过 Skill Allowlist 和 ToolRegistry 治理，QA、Escalation 和 Approval Gate 是固定关卡。
 
 系统没有 Reflection Loop 或因 QA 低分而自动重写的 Retry。依赖层只对明确的瞬时故障做有界 Retry，高风险失败转人工，不会无限重新生成或重复写操作。
 
@@ -131,13 +131,13 @@ State 包含：工单与客户标识、主题与描述、知识库版本；情�
 
 ### 18. 用户请求如何分类？
 
-正常输入先脱敏，然后由 LLM Provider 输出情绪、优先级、部门、意图、情绪标签和置信度。当前部门范围主要是 billing、technical、shipping、general，优先级为 low、medium、high、urgent。
+正常输入先脱敏，固定高置信度场景优先规则分类，无法确定时才由 LLM Provider 输出情绪、优先级、部门、意图和置信度。
 
 安全风险在分类前检测，命中后不再进行正常分类和生成。
 
 ### 19. Intent 分类是规则还是 LLM？
 
-业务分类由 LLM Provider 完成；默认 Mock Provider 使用确定性关键词模拟分类，OpenAI/Azure 模式使用 JSON Prompt。
+意图分类是“规则优先 + LLM 兜底”；命中固定高置信度意图时不调用 LLM，模糊或多意图才使用结构化 JSON Prompt。
 
 订单工具是否调用、是否升级等下游决策由代码规则完成。也就是说，语义识别由模型负责，权限和关键业务决策由确定性逻辑负责。
 
@@ -661,7 +661,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 ### 102. 最后为什么选择 LangGraph？
 
-因为当前不是单次 RAG 问答，而是一个有 State、固定阶段、安全条件边和人工暂停/恢复的工作流。LangGraph 能清晰表达六个业务节点、Approval Gate、安全短路及 Checkpoint Resume，并方便节点级测试与 Trace。
+因为当前不是单次 RAG 问答，而是一个有 State、固定阶段、安全条件边和人工暂停/恢复的工作流。LangGraph 能清晰表达六个业务节点、Skill Selector、Approval Gate、安全短路及 Checkpoint Resume，并方便节点级测试与 Trace。
 
 我选择它不是为了追求“多 Agent”标签，而是因为它与受控客服流程匹配；如果只有一次检索和一次生成，普通函数或 Chain 就足够。
 

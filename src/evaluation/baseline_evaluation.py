@@ -25,6 +25,7 @@ from src.evaluation.offline_rag import (
 from src.models.intents import IntentType, normalize_intent
 from src.observability.sanitization import sanitize_value
 from src.promptops.runtime import active_bundle, prompt_scope
+from src.skills import skill_registry
 
 
 ENABLED_BEHAVIOR_METRICS = (
@@ -55,6 +56,7 @@ IGNORED_DATASET_FIELDS = (
 )
 NODE_SPAN_NAMES = {
     "analyzer": "agent.analyzer",
+    "skill_selector": "agent.skill_selector",
     "tool": "agent.tooling",
     "rag": "agent.retriever",
     "resolver": "agent.resolver",
@@ -504,6 +506,18 @@ def build_baseline_report(
                         "analyzer_strategy": record.workflow_output.get(
                             "analyzer_strategy", "not_run"
                         ),
+                        "skill_name": record.workflow_output.get(
+                            "skill_name", "unselected"
+                        ),
+                        "skill_version": record.workflow_output.get(
+                            "skill_version", "unselected"
+                        ),
+                        "skill_selection_strategy": record.workflow_output.get(
+                            "selection_strategy", "not_run"
+                        ),
+                        "skill_registry_id": record.workflow_output.get(
+                            "skill_registry_id", "unselected"
+                        ),
                         "qa_strategy": record.workflow_output.get(
                             "qa_strategy", "not_run"
                         ),
@@ -890,6 +904,7 @@ def _build_experiment_config(
                 "prompt_version": active_bundle().version,
                 "source_revision": source_revision,
             },
+            "skills": skill_registry.snapshot(),
             "models": {
                 "provider": provider,
                 "resolver": resolver_model,

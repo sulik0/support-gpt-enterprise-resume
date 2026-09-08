@@ -69,6 +69,19 @@ LANGGRAPH_RESUME_LEASE_SECONDS=60
 
 LANGGRAPH_CHECKPOINT_DATABASE_URL 可显式覆盖 Saver 数据库。高风险请求在 Approval Gate 暂停；人工审批后使用原 execution ID 恢复。应用启动会扫描人工已决策但未完成的执行，恢复失败则保留 resume_pending，可由主管重试。不要手工删除正在等待审批的 Checkpoint 文件或表。
 
+## Skill Framework V1
+
+Skill 清单在 `src/skills/definitions.py`，协议和 Registry 分别在 `models.py` 与 `registry.py`。正常 Workflow 在 Analyzer 后执行确定性 Skill Selector；选择结果自动进入 AgentState、Checkpoint、OpenTelemetry、AgentRun 和 Baseline Report。
+
+新增 Skill 时必须：
+
+1. 先在统一 `IntentType` 中确定业务边界，不得为了单个 Case 新建意图。
+2. 注册唯一 Skill 名称和版本，声明 input/output Schema、required slots、RAG categories、minimum role 和 Tool Allowlist/Forbidden List。
+3. 保证每个 Intent 只有一个主 Skill，且引用的 Tool 已在 ToolRegistry 注册。
+4. 增加 Skill 选择、跨域 Tool 拒绝、AgentRun 归因与固定 100 条 Baseline 回归。
+
+V1 的 Skill 共享现有 Workflow，不是运行时动态插件，也不允许 LLM 自由选 Skill。Tool Allowlist 是额外收窄层，不能替代 Schema、RBAC、Risk Engine、Approval Grant 和 Tool Governance。
+
 ## LLM Provider 配置
 
 默认 Provider 为 `mock`。`openai` 是通用 OpenAI-compatible 实现，可接 OpenAI、DeepSeek、Qwen 和 vLLM：

@@ -79,7 +79,7 @@ LangGraph Agent Workflow
 Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 ```
 
-正常请求的固定顺序为：Analyzer → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation → Approval Gate。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Context Enrichment 直接进入 Escalation，不调用后续 Resolver / QA。所有路径最终经过 Approval Gate：普通请求结束，高风险请求持久化 Checkpoint 并暂停等待人工决策。
+正常请求的固定顺序为：Analyzer → Skill Selector → Context Enrichment（Tooling 与 Retriever 并行）→ Resolver → QA → Escalation → Approval Gate。客户输入命中 Prompt Injection 或 Jailbreak 时，系统从 Analyzer 直接进入 Escalation；Tool 返回或 RAG 文档命中间接 Prompt Injection 时，系统清空受污染上下文，从 Context Enrichment 直接进入 Escalation，不调用后续 Resolver / QA。所有路径最终经过 Approval Gate：普通请求结束，高风险请求持久化 Checkpoint 并暂停等待人工决策。
 
 ## 7. 技术栈
 
@@ -103,11 +103,12 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 8. Agent 数量与职责
 
-当前存在 **6 个逻辑 Agent 节点 + 1 个确定性 Approval Gate 控制节点**。六个 Agent 节点是单个 LangGraph Workflow 中的职责分工，不代表 6 个独立部署的模型服务；Approval Gate 不调用 LLM，不计为 Agent。
+当前存在 **6 个逻辑业务 Agent 节点 + 1 个确定性 Skill Selector + 1 个 Approval Gate 控制节点**。六个业务 Agent 节点是单个 LangGraph Workflow 中的职责分工，不代表 6 个独立部署的模型服务；Skill Selector 和 Approval Gate 都不调用 LLM，不计为自治 Agent。
 
 | Agent | 职责 |
 |---|---|
 | Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测、情绪/优先级/部门/意图/置信度分类和初始 Risk Engine 评估 |
+| Skill Selector（控制节点） | 将统一 Intent 确定性选择为版本化 Skill，固定 Tool/RAG/槽位能力边界 |
 | Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文，并检查工具返回的间接注入 |
 | Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation，并在生成前检查文档间接注入 |
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
@@ -115,7 +116,13 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | Escalation | 调用 Risk Engine 生成最终风险结论，计算 SLA，判断升级与人工审批需求 |
 | Approval Gate（控制节点） | 无需审批时结束；需要审批时 interrupt，人工决策后从原 Checkpoint Thread 恢复 |
 
-当前没有独立 Planner、Selector、Reviewer 以外的 Agent、Validator Agent 或 Reflection Agent。QA 承担 Review 职责；安全、工具和状态验证由分层规则完成。
+当前没有独立 Planner、LLM Selector、Validator Agent 或 Reflection Agent。Skill Selector 是确定性控制节点；QA 承担 Review 职责；安全、工具和状态验证由分层规则完成。
+
+## 8.1 Skill Framework
+
+Skill Framework V1 共有 **6 个 Skill**：`refund_support`、`order_support`、`account_support`、`api_incident_triage`、`warranty_support`、`general_support`，覆盖全部 8 个 `IntentType`。`SkillDefinition` 保存版本、输入/输出 Schema、Tool Allowlist/Forbidden List、RAG 类别、必需槽位与最低角色；`SkillRegistry` 拒绝重复 Intent 注册，并为整份 Registry 生成内容 Hash。
+
+选择结果写入 `AgentState` 和 LangGraph Checkpoint，并关联 OpenTelemetry Span/Metric、`AgentSkillSelection` 持久化记录与 Baseline Report。ToolRegistry 在 Handler 前校验 Skill 版本和 Allowlist，但不替代现有 Schema、RBAC、Risk、Approval Grant 与 Tool Governance。V1 共享同一份 Workflow，没有每 Skill 独立 Subgraph、动态 Skill 组合、LLM 选 Skill 或运行时插件加载。
 
 ## 9. Tool 数量与 Tool Calling
 
@@ -145,7 +152,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 ## 11. TaskState 与任务规划
 
-当前没有独立 `TaskState`。LangGraph 使用单一 `AgentState` 传递工单输入、分类结果与置信度、工具上下文、citation、回复草稿、QA、安全信号、`risk_level`、`risk_score`、`risk_reasons`、人工/自动化建议、降级等级与脱敏依赖事件、升级结论、token、成本和错误信息。
+当前没有独立 `TaskState`。LangGraph 使用单一 `AgentState` 传递工单输入、分类结果与置信度、Skill 版本/策略/Policy 快照、工具上下文、citation、回复草稿、QA、安全信号、`risk_level`、`risk_score`、`risk_reasons`、人工/自动化建议、降级等级与脱敏依赖事件、升级结论、token、成本和错误信息。
 
 当前也没有独立 Planner 或动态任务分解。系统采用固定 Workflow，并根据安全结果、部门、意图和优先级做有限的规则路由。当前唯一的受限重新规划是：类别检索无结果时，保留知识库版本并放宽类别进行一次回退检索。
 
@@ -212,7 +219,7 @@ Prompt Injection 不再只是英文关键词检测，当前实现为确定性多
 | 本地默认 | SQLite | 降低启动门槛，支持无额外服务运行 |
 | Docker Compose | PostgreSQL | 提供更接近生产的并发与连接池环境 |
 
-持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、AgentRun、AgentRunLink、AgentExecution、FeedbackEvent、ToolAction、ToolActionControl、ToolActionEvent、ToolOutboxEvent 和 ToolInvocationAudit。AgentExecution 只保存业务关联、状态、租约和 Trace ID；Graph State 正文由 LangGraph Saver 的官方表保存。当前没有数据库迁移工具、读写分离、分库分表、ticket_status_events 审计表或多租户数据隔离。
+持久化实体包括用户、工单、会话记忆、知识文档、回复审批记录、AgentRun、AgentSkillSelection、AgentRunLink、AgentExecution、FeedbackEvent、ToolAction、ToolActionControl、ToolActionEvent、ToolOutboxEvent 和 ToolInvocationAudit。AgentExecution 只保存业务关联、状态、租约和 Trace ID；Graph State 正文由 LangGraph Saver 的官方表保存。当前没有数据库迁移工具、读写分离、分库分表、ticket_status_events 审计表或多租户数据隔离。
 
 ## 16. Redis
 
@@ -330,7 +337,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 
 | 已知问题 | 当前事实 | 当前解决方案 | 不应夸大的内容 |
 |---|---|---|---|
-| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 曾混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；2026-09-04 当前环境 207 条全量测试通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
+| Python 3.13 下 pytest 崩溃 | 旧 `.venv` 曾混装 Evaluation 与不兼容 LangGraph 依赖，可以 `exit code 139` 退出 | 核心版本已固定；2026-09-08 当前环境 231 条全量测试通过，PR Agent Quality Gate 通过；CI / Docker 使用 Python 3.11 | 不要把旧环境崩溃解释为业务断言失败，也不要声称所有可选 Evaluation 依赖已完成全量兼容验证 |
 | ChromaDB 本地 schema 不兼容 | 其他 ChromaDB 大版本写入的旧持久化目录不能保证反向兼容 | 本地默认使用 `.runtime/chromadb-0.5` 版本化目录，必要时重新执行 `seed_kb.py` | 不要说 ChromaDB 任意版本间可原地升降级 |
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
@@ -364,7 +371,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 
 1. 已实现、部分实现、规划中和未知信息必须明确区分。
 2. 所有 CRM、OMS、Ticketing、退款初筛和默认 LLM 均为 Mock，除非代码与凭据明确变为真实集成。
-3. Agent 数量固定表述为 6 个逻辑节点；Tool 数量固定表述为 5 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
+3. Agent 数量固定表述为 6 个逻辑业务 Agent 节点 + Skill Selector + Approval Gate；Tool 数量固定表述为 5 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
 4. MCP 数量为 0；独立 TaskState、动态 Planner、自动 Reflection 和 pgvector 均未采用。Checkpoint 已实现，但只覆盖固定 Workflow 的审批暂停与恢复；Tool Outbox 是高风险写操作专用队列，不是通用 Agent 任务队列。
 5. Redis 是可选短期缓存，SQL 是持久化兜底；会话历史尚未注入 Agent 推理。
 6. ChromaDB 是当前向量数据库；Hybrid RAG 是当前检索方案。

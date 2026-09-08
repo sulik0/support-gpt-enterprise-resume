@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.config import settings
-from src.models.db_models import AgentRun, AgentRunLink, FeedbackEvent
+from src.models.db_models import (
+    AgentRun,
+    AgentRunLink,
+    AgentSkillSelection,
+    FeedbackEvent,
+)
 from src.observability.metrics import (
     FEEDBACK_EVENTS_TOTAL,
     TRAINING_CANDIDATES_TOTAL,
@@ -89,6 +94,25 @@ class FeedbackService:
         )
         db.add(run)
         await db.flush()
+        if agent_output.get("skill_name") not in {None, "", "unselected"}:
+            db.add(
+                AgentSkillSelection(
+                    agent_run_id=run.id,
+                    skill_name=self._bounded(
+                        agent_output.get("skill_name"), 100, "unknown"
+                    ),
+                    skill_version=self._bounded(
+                        agent_output.get("skill_version"), 50, "unknown"
+                    ),
+                    selection_strategy=self._bounded(
+                        agent_output.get("selection_strategy"), 50, "unknown"
+                    ),
+                    registry_id=self._bounded(
+                        agent_output.get("skill_registry_id"), 64, "unknown"
+                    ),
+                )
+            )
+            await db.flush()
         run._feedback_token = feedback_token
         return run
 
@@ -279,7 +303,10 @@ class FeedbackService:
         """查询 Agent Run 及全部 Feedback Event。"""
         result = await db.execute(
             select(AgentRun)
-            .options(selectinload(AgentRun.feedback_events))
+            .options(
+                selectinload(AgentRun.feedback_events),
+                selectinload(AgentRun.skill_selection),
+            )
             .where(AgentRun.id == run_id)
         )
         run = result.scalars().first()
@@ -298,6 +325,7 @@ class FeedbackService:
         total = int(total_result.scalar_one())
         result = await db.execute(
             select(AgentRun)
+            .options(selectinload(AgentRun.skill_selection))
             .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
             .limit(limit)
             .offset(offset)
@@ -312,7 +340,10 @@ class FeedbackService:
         db.expire_all()
         result = await db.execute(
             select(AgentRun)
-            .options(selectinload(AgentRun.feedback_events))
+            .options(
+                selectinload(AgentRun.feedback_events),
+                selectinload(AgentRun.skill_selection),
+            )
             .order_by(AgentRun.created_at.asc())
         )
         runs = list(result.scalars().unique().all())
@@ -529,6 +560,12 @@ class FeedbackService:
             "model_provider": run.model_provider,
             "model_name": run.model_name,
             "kb_version": run.kb_version,
+            "skill_name": (
+                run.skill_selection.skill_name if run.skill_selection else None
+            ),
+            "skill_version": (
+                run.skill_selection.skill_version if run.skill_selection else None
+            ),
         }
         sft = (
             {

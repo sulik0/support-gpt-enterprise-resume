@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-09-06。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-09-08。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -35,6 +35,7 @@
 - [x] 完成 Tool Governance V2.1：Tool 调用脱敏持久化审计，高风险写 Action 加密/HMAC、职责分离审批、乐观版本和 Append-only 状态事件。
 - [x] 完成 Tool Governance V2.2：写 Action 业务幂等键、Transactional Outbox、异步 Worker、数据库租约/乐观抢占、unknown 自动对账、Retry/DLQ、状态事件补写、显式补偿和版本化 Policy 回放。
 - [x] 完成 LangGraph Checkpoint + Durable Execution V1：SQLite/PostgreSQL Saver、Approval Gate interrupt/resume、AgentExecution、数据库恢复租约、启动扫描和主管重试 API。
+- [x] 完成 Skill Framework V1：6 个版本化 Skill 覆盖 8 个 Intent，确定性 Selector、Registry Hash、Tool Allowlist，并关联 State/Checkpoint/OTel/AgentRun/Baseline。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -51,6 +52,7 @@
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。
 - [ ] 将 Tool Governance V2.2 的 Mock OMS 幂等/对账/补偿契约接入真实 OMS，并完成跨服务契约测试。
 - [ ] 为 Resilience 增加多副本 Circuit Breaker、故障注入/混沌测试；当前 Tool Outbox Retry/DLQ 不等于通用任务消息平台。
+- [ ] Skill Framework V2：在需要不同节点组合时引入受控 Subgraph，增加 Registry 签名发布、变更 Diff 和 Skill 级评测门禁；V1 不支持动态插件或 LLM 自由选 Skill。
 
 ## P2
 
@@ -64,7 +66,7 @@
 - [x] 2026-09-06 PromptOps V1 完成全量回归、原 100 条 PR Gate、当前/候选各 100 条 Mock 实验及独立 staging 晋级/回滚验证；未调用付费模型，未切换实际 production 指针。
 - [ ] PromptOps V1 使用文件型 Registry，后续需增加分布式发布、签名制品、独立留出集和人工语义校准；不能将 Mock 实验结果写成真实 Prompt 效果提升。
 
-- [x] 2026-09-04 完成 207 条全量测试，覆盖 Checkpoint 跨重启恢复、Tool 幂等/Outbox/对账/DLQ/补偿/租约竞争、审批续跑幂等、Trace 与 Feedback 兼容；CI / Docker 使用 Python 3.11。
+- [x] 2026-09-08 完成 231 条全量测试，并通过固定 100 条 Baseline 的 PR Agent Quality Gate；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
 - [ ] Checkpoint 尚无 TTL/归档、旧 Graph 多版本恢复与定期清理；AgentExecution 和 Saver DDL 尚未纳入 Alembic/受控 Migration。

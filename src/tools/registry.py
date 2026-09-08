@@ -24,6 +24,7 @@ from src.observability.metrics import TOOL_CALLS_TOTAL, TOOL_CALL_DURATION_SECON
 from src.resilience.executor import resilience_executor
 from src.resilience.models import OperationType
 from src.resilience.policies import tool_policy
+from src.skills import skill_registry
 
 
 ROLE_RANK = {
@@ -127,6 +128,8 @@ class ToolRegistry:
         action_id: Optional[str] = None,
         execution_grant: Optional[ApprovedToolExecution] = None,
         idempotency_key: Optional[str] = None,
+        skill_name: Optional[str] = None,
+        skill_version: Optional[str] = None,
     ) -> Dict[str, Any]:
         with observed_span(
             tracer,
@@ -139,6 +142,8 @@ class ToolRegistry:
                 "tool.policy.intent": str(intent) if intent is not None else None,
                 "tool.policy.request_risk_level": request_risk_level,
                 "tool.policy.forbidden": name in (forbidden_tools or set()),
+                "skill.name": skill_name,
+                "skill.version": skill_version,
                 "ticket.id": ticket_id,
                 "tool.payload_keys": sorted(payload.keys()),
             },
@@ -154,6 +159,8 @@ class ToolRegistry:
                 action_id=action_id,
                 execution_grant=execution_grant,
                 idempotency_key=idempotency_key,
+                skill_name=skill_name,
+                skill_version=skill_version,
             )
             definition = self.get_definition(name)
             audit_record = tool_audit_repository.build_record(
@@ -208,6 +215,8 @@ class ToolRegistry:
         action_id: Optional[str],
         execution_grant: Optional[ApprovedToolExecution],
         idempotency_key: Optional[str],
+        skill_name: Optional[str],
+        skill_version: Optional[str],
     ) -> Dict[str, Any]:
         started = time.time()
         definition = self._tools.get(name)
@@ -247,6 +256,8 @@ class ToolRegistry:
             action_id=action_id,
             execution_grant=execution_grant,
             idempotency_key=idempotency_key,
+            skill_name=skill_name,
+            skill_version=skill_version,
         )
         if policy_error:
             policy_status, policy_message = policy_error
@@ -333,8 +344,16 @@ class ToolRegistry:
         action_id: Optional[str],
         execution_grant: Optional[ApprovedToolExecution],
         idempotency_key: Optional[str],
+        skill_name: Optional[str],
+        skill_version: Optional[str],
     ) -> Optional[tuple[str, str]]:
         """在 Handler 之前独立校验 forbidden tool、意图边界和高风险语义。"""
+        if skill_name is not None:
+            skill_error = skill_registry.tool_policy_error(
+                skill_name, skill_version, definition.name
+            )
+            if skill_error:
+                return "skill_denied", skill_error
         if definition.name in forbidden_tools:
             return (
                 "policy_denied",
@@ -439,7 +458,6 @@ tool_registry.register(
     )
 )
 
-
 tool_registry.register(
     ToolDefinition(
         name="orders.create_refund_request",
@@ -541,4 +559,9 @@ tool_registry.register(
         risk_level="high",
         allowed_intents=frozenset({IntentType.BILLING_DISPUTE}),
     )
+)
+
+# 启动期确保 Skill Policy 没有引用未注册 Tool。
+skill_registry.validate_tool_catalog(
+    item["name"] for item in tool_registry.list_tools()
 )

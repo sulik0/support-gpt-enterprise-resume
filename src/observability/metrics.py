@@ -38,6 +38,9 @@ AGENT_NODE_DURATION_SECONDS = meter.create_histogram(
     unit="s",
     description="Agent node execution duration",
 )
+AGENT_SKILL_SELECTIONS_TOTAL = meter.create_counter(
+    "agent_skill_selections", description="Total deterministic Skill selections"
+)
 AGENT_WORKFLOW_INTERRUPTS_TOTAL = meter.create_counter(
     "agent_workflow_interrupts", description="Total durable workflow interrupts"
 )

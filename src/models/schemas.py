@@ -573,6 +573,20 @@ class FeedbackEventResponse(BaseModel):
         from_attributes = True
 
 
+class AgentSkillSelectionResponse(BaseModel):
+    """返回一次 Agent Run 的 Skill 归因快照。"""
+
+    skill_name: str
+    skill_version: str
+    selection_strategy: str
+    registry_id: str
+
+    class Config:
+        """允许从 ORM 关联对象读取字段。"""
+
+        from_attributes = True
+
+
 class AgentRunResponse(BaseModel):
     """返回一次 Agent 执行快照及其全部反馈事件。"""
 
@@ -600,6 +614,7 @@ class AgentRunResponse(BaseModel):
     tokens_output: int
     latency_seconds: float
     created_at: datetime
+    skill_selection: Optional[AgentSkillSelectionResponse] = None
     feedback_events: List[FeedbackEventResponse] = Field(default_factory=list)
 
     class Config:
@@ -631,6 +646,7 @@ class AgentRunSummaryResponse(BaseModel):
     tokens_output: int
     latency_seconds: float
     created_at: datetime
+    skill_selection: Optional[AgentSkillSelectionResponse] = None
 
     class Config:
         """允许从 AgentRun ORM 实例读取摘要字段。"""

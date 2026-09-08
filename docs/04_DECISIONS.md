@@ -58,7 +58,7 @@ Agent 工作流涉及异步数据库访问、可选 Redis、外部 LLM 和检索
 
 ### 最终方案
 
-采用 LangGraph 固定 Workflow：六个业务节点后增加 Approval Gate，形成可暂停、可恢复的七节点图。
+采用 LangGraph 固定 Workflow：六个业务节点之间增加确定性 Skill Selector，末尾使用 Approval Gate，形成可暂停、可恢复的八节点图。
 
 ### 为什么选择
 
@@ -164,37 +164,39 @@ Agent 工作流涉及异步数据库访问、可选 Redis、外部 LLM 和检索
 
 当前只能进行有限的 RAG 类别回退，不能自主重新规划。人工拒绝草稿后由人工重新处理，而不是让模型无限重试。
 
-## 决策 6：不引入独立 Selector，使用确定性选择规则
+## 决策 6：采用确定性 Skill Selector 与版本化 Skill Registry
 
 ### 问题背景
 
-系统需要选择安全分支、订单工具、RAG 类别过滤和升级动作。
+系统需要把不同 Intent 组织成可版本化、可审计的能力边界，并限制每类能力可用的 Tool。
 
 ### 候选方案
 
-- 确定性条件规则
+- 确定性 `IntentType -> SkillDefinition` Registry
 - LLM Selector / Router
 - 学习型策略模型
+- 每个 Skill 独立 LangGraph Subgraph
 
 ### 优点与缺点
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
-| 确定性规则 | 可解释、可测试、权限风险低 | 覆盖范围受规则限制 |
+| 确定性 Skill Registry | 可解释、可版本化、可测试、权限风险低 | 新增 Intent 需显式注册，V1 共享 Workflow |
 | LLM Selector | 适应表达变化 | 可能误选高风险工具或错误路径 |
 | 学习型模型 | 可根据数据优化 | 需要标注数据、线上反馈和治理机制 |
+| 独立 Subgraph | 每个能力编排自治、扩展强 | 图版本、Checkpoint 迁移和测试成本高 |
 
 ### 最终方案
 
-采用确定性规则，不设置独立 Selector Agent。
+采用不调用 LLM 的 Skill Selector 控制节点，通过内容 Hash Registry 管理 6 个版本化 Skill。选择快照进入 State、Checkpoint、Trace、AgentRun 和 Evaluation；ToolRegistry 额外校验 Skill 版本与 Tool Allowlist。
 
 ### 为什么选择
 
-工具选择、类别过滤和升级动作直接影响风险与成本，当前应优先保证可审计性。
+能力选择直接影响 Tool 权限与业务风险。统一 Intent 已是稳定分类边界，使用唯一映射可在不增加 LLM 调用的情况下得到可复现结果。
 
 ### 工程权衡
 
-新增业务类型时要扩展规则；未来场景增多后可增加受限 Selector，但不可绕过 Guardrails、RBAC 和状态机。
+V1 的 Skill 是策略和归因层，不是独立 Subgraph，也不支持运行时动态加载。该局限换来对现有退款、HITL、Resilience 和 Durable Execution 零业务行为改动。
 
 ## 决策 7：采用 Tool Calling 与 ToolRegistry
 
@@ -842,7 +844,7 @@ Action 参数使用 Fernet 加密，HMAC 用于 payload 与 Policy 快照完整�
 
 | 领域 | 最终决策 | 当前边界 |
 |---|---|---|
-| Agent 编排 | LangGraph 固定工作流 + Approval Gate | 无动态 Planner / 自治协商 |
+| Agent 编排 | LangGraph 固定工作流 + Skill Selector + Approval Gate | 无动态 Planner / 自治协商；V1 Skill 共享 Workflow |
 | 状态 | 单一 AgentState + SQLite/PostgreSQL Checkpoint + AgentExecution | 无独立 TaskState；无 TTL/旧 Graph 兼容 |
 | 工具 | ToolRegistry + Mock Adapter + Tool Governance V2.2 | 无 MCP；写 Tool 仍为 Mock，但已有业务幂等、Outbox、自动对账、Retry/DLQ、补偿与 Policy 回放契约 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |

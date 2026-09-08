@@ -23,6 +23,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 ### 工程目标
 
 - 使用 LangGraph 将 Agent 流程拆分为职责清晰、可独立观测的节点。
+- 使用 Skill Registry 将统一 Intent 映射为可版本化能力包，并以 Skill 级 Tool Allowlist 限制能力边界。
 - 使用 LangGraph Checkpoint 持久化 Graph State，让高风险回复可在人工审批前暂停，并在进程重启后从原 Thread 恢复。
 - 通过 ToolRegistry 统一工具协议，实现 Schema 校验、RBAC、超时和调用审计。
 - 使用 Hybrid RAG 兼顾语义检索与政策编号、产品名、时间窗口等精确词匹配。
@@ -32,6 +33,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 ## 核心能力
 
 1. **工单分析**：识别 `sentiment`、`priority`、`department` 和 `intent`。
+2. **Skill 选择**：将 8 个统一 Intent 确定性映射到 6 个版本化 Skill，固定 Tool Allowlist、RAG 类别和必需槽位快照。
 2. **多层安全短路**：先执行 Unicode 规范化、中英文特征、组合启发式、角色提权与 Base64 载荷扫描，规则未命中时再使用 Qwen3Guard-Gen-0.6B 扫描客户输入、Tool 返回和 RAG 文档。
 3. **PII 脱敏**：正常请求进入 LLM 前对主题和描述中的敏感信息进行匿名化。
 4. **业务工具上下文**：通过 ToolRegistry 查询客户画像、近期订单和历史工单，并把结构化结果注入 Resolver。
@@ -50,7 +52,8 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | 层级 | 技术 | 当前用途 |
 |---|---|---|
 | API | Python、FastAPI、Pydantic | 异步 API、请求/响应 Schema与健康检查 |
-| Agent 编排 | LangGraph、LangGraph Checkpoint | 编排 Analyzer、Tooling、Retriever、Resolver、QA、Escalation 和 Approval Gate，持久化暂停/恢复状态 |
+| Agent 编排 | LangGraph、LangGraph Checkpoint | 编排 Analyzer、Skill Selector、Tooling、Retriever、Resolver、QA、Escalation 和 Approval Gate，持久化暂停/恢复状态 |
+| Skill Framework | SkillDefinition、SkillRegistry | 版本化 Skill 协议、Intent 确定性选择、Tool Policy 与运行归因 |
 | LLM | Mock LLM、OpenAI、Azure OpenAI | 默认 Mock 保证离线可复现；通过 `BaseLLMProvider` 适配外部模型 |
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
 | 短期记忆 | Redis | 可选的会话历史快速存储，失败时不影响 SQL 持久化 |
@@ -74,6 +77,7 @@ FastAPI
   |
   +--> LangGraph Agent Workflow
   |      |-- Analyzer + Guardrails
+  |      |-- Skill Selector --> SkillRegistry
   |      |-- Tooling --> ToolRegistry --> Mock CRM / OMS / Ticketing
   |      |-- Retriever --> ChromaDB Hybrid RAG
   |      |-- Resolver --> BaseLLMProvider --> Mock / OpenAI / Azure OpenAI
@@ -109,6 +113,7 @@ LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为�
 
 - 请求标识：`ticket_id`、`customer_id`、`subject`、`description`、`kb_version`、`checkpoint_thread_id`。
 - 分析结果：`sentiment`、`priority`、`intent`、`department`、`analyzer_confidence`。`intent` 必须来自统一 `IntentType`：`billing_dispute`、`outage_report`、`order_cancellation`、`order_status`、`account_support`、`warranty_claim`、`feedback`、`information_request`；最后一项是唯一兜底值。
+- Skill 快照：`skill_name`、`skill_version`、`selection_strategy`、`skill_registry_id`、必需/缺失槽位、Tool Allowlist/Forbidden List 和 RAG 类别。
 - 权限与工具：`operator_role`、`tool_context`、`tool_calls`。
 - RAG 与回复：`context_citations`、`suggested_response`。
 - 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`semantic_guard_label`、`semantic_guard_categories`、`semantic_guard_checks`、`semantic_guard_degraded`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
@@ -128,7 +133,7 @@ analyzer
   |      `--> escalation --> approval_gate
   |
   `-- 正常请求
-         `--> context_enrichment
+         `--> skill_selector --> context_enrichment
                 |-- tooling（并行）
                 `-- retriever（并行）
                       |-- 任一上下文命中注入 --> escalation --> approval_gate
@@ -145,30 +150,33 @@ approval_gate
    - 先执行多层 Prompt Injection 和 Jailbreak 检测。
    - 命中安全风险时写入 `errors`，设置紧急优先级和拒绝回复，不执行后续 Tooling、RAG、Resolver 和 QA。
    - 正常请求先对 PII 脱敏；固定单意图且高置信度时使用规则输出必要字段，模糊或多意图时才调用 LLM。
-2. **Tooling**
+2. **Skill Selector**
+   - 基于归一化 `IntentType` 使用确定性规则选择 Skill，V1 不调用 LLM。
+   - 固定本次请求的 Skill 版本、Registry Hash、Tool 边界和缺失槽位，并写入 State、Trace 与 Metrics。
+3. **Tooling**
    - 始终查询客户画像和历史工单。
    - 只在 billing、shipping 或相关意图下查询订单历史。
    - 所有调用必须经过 ToolRegistry，Agent 不能直接调用 Mock Adapter。
    - 工具返回在写入 Tool Context 前扫描间接 Prompt Injection；命中后保留调用审计，但清空工具上下文并短路。
-3. **Retriever**
+4. **Retriever**
    - 用工单主题和描述构造 Query，默认返回 Top 3 citation。
    - 强制带 `kb_version`，并优先按 `department` 过滤类别。
    - 类别过滤无结果时，保留版本过滤并放宽类别再检索一次。
    - citation 在交给 Resolver 前扫描间接 Prompt Injection；命中后清空 citation 并短路。
    - 与 Tooling 并行执行，由 Context Enrichment 统一合并结果；风险信号只升不降。
-4. **Resolver**
+5. **Resolver**
    - 只选取最高相关的 Top-2 citation 与必要 Tool 字段，并限制上下文字符数。
    - 将精简上下文交给 LLM Provider，只生成最终客服回复并限制输出 token。
-5. **QA**
+6. **QA**
    - 空回复、输出泄露或完全缺少依据等确定性失败优先使用规则判断，不调用 LLM。
    - 其余请求使用可单独配置的轻量模型，仅返回 `score`、`hallucination_detected`、`citation_verified`。
    - 通过 Response Filter 删除内部指令或工作流泄露；命中时将 QA 分数降为 `0.5` 并标记幻觉。
-6. **Escalation**
+7. **Escalation**
    - 按优先级计算 SLA：urgent `2h`、high `12h`、medium `24h`、low `48h`。
    - 调用独立 Risk Engine 综合安全威胁、优先级、情绪、业务意图、Analyzer 置信度、QA、幻觉和 Workflow 错误。
    - 默认风险等级阈值为 `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；`high` / `critical` 要求人工处理。
    - 建议升级、`qa_score < 0.8` 或 `risk_requires_human = true` 任一命中，就设置 `approval_required = true`。
-7. **Approval Gate**
+8. **Approval Gate**
    - 无需审批时直接结束；需审批时调用 LangGraph `interrupt()` 暂停并保存 Checkpoint。
    - 人工通过、修改或拒绝后，API 使用原 `thread_id` 和 `Command(resume=...)` 续跑，不重跑 Analyzer、Tool、RAG、Resolver 和 QA。
 
@@ -191,6 +199,7 @@ resolved / closed --reopen--> in_progress
 |---|---|---|
 | API 入口 | `src/main.py` | FastAPI 应用、鉴权、聊天、工单、审批、评测、Metrics 与 HTTP Trace |
 | Agent Graph | `src/agents/graph.py` | `AgentState`、节点编排、安全条件路由、token/成本/延迟汇总 |
+| Skill Framework | `src/skills/`、`src/agents/skill_selector.py` | Skill 协议、Registry、Intent 选择、Tool Allowlist 与版本快照 |
 | Checkpoint | `src/agents/checkpointing.py` | 根据环境管理 Memory / SQLite / PostgreSQL Saver 及其连接生命周期 |
 | Durable Execution | `src/agents/durable_execution.py` | 管理 Thread 业务关联、执行状态、恢复租约、重启扫描和幂等续跑 |
 | Agent 节点 | `src/agents/` | Analyzer、Tooling、Retriever、Resolver、QA、Escalation |
@@ -204,7 +213,7 @@ resolved / closed --reopen--> in_progress
 | 记忆 | `src/memory/redis_memory.py` | Redis 可选会话历史存储与降级 |
 | 审批 | `src/approval/workflows.py` | 创建待审批记录，处理通过、修改、拒绝和审批延迟 |
 | 工单状态机 | `src/tickets/state_machine.py` | 工单合法状态与动作约束 |
-| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval、AgentRun、AgentExecution、Feedback 与 Tool Action/Audit |
+| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval、AgentRun/AgentSkillSelection、AgentExecution、Feedback 与 Tool Action/Audit |
 | 评测 | `src/evaluation/` | RAGAS / DeepEval Adapter、本地指标与统一评测入口 |
 | 可观测 | `src/observability/` | Prometheus Metrics、token/成本估算和 OpenTelemetry Trace |
 | 部署 | `deployment/`、`monitoring/` | Docker、Docker Compose、Kubernetes、Prometheus 和 Grafana 模板 |
@@ -330,7 +339,8 @@ resolved / closed --reopen--> in_progress
 ### 已完成
 
 - FastAPI 后端 API、JWT 鉴权和基础 RBAC。
-- LangGraph 六个业务节点 + Approval Gate 工作流和安全条件路由。
+- LangGraph 六个业务节点 + Skill Selector + Approval Gate 工作流和安全条件路由。
+- Skill Framework V1：6 个版本化 Skill 覆盖 8 个统一 Intent；选择结果进入 AgentState、Checkpoint、OpenTelemetry、AgentRun 独立关联表和 Baseline Report，ToolRegistry 在 Handler 前执行 Skill Allowlist 兜底。
 - LangGraph Checkpoint + Durable Execution：本地 SQLite / 生产 PostgreSQL Saver、`interrupt` / `Command(resume)`、`AgentExecution` 状态、数据库恢复租约、启动恢复和主管手动重试。
 - Prompt Injection、Jailbreak、PII 脱敏和 Response Filter。
 - ToolRegistry、4 个读 Tool 与 1 个高风险 Mock 写 Tool，具备 Schema、RBAC、风险策略和超时边界。
@@ -374,7 +384,7 @@ resolved / closed --reopen--> in_progress
 
 - 项目推荐 Python 3.11。
 - 旧的本机 `.venv` 是混装 Evaluation 依赖的 Python 3.13 环境，其 pytest `exit code 139` 与 LangGraph 版本冲突不代表业务断言失败。
-- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；2026-09-04 当前环境全量测试 207 passed，包含 Checkpoint 跨 Saver 重启恢复、Tool 幂等/Outbox/对账/DLQ/补偿/租约竞争、审批续跑幂等与 Feedback 兼容回归；CI / Docker 继续使用 Python 3.11。
+- 核心运行时已固定经验证的 LangChain / LangGraph / ChromaDB 版本组合；2026-09-08 当前环境全量测试 231 passed，并通过固定 100 条 Baseline 的 PR Agent Quality Gate；CI / Docker 继续使用 Python 3.11。
 - 本地 ChromaDB 使用版本化目录 `.runtime/chromadb-0.5`；其他 ChromaDB 大版本写入的旧 SQLite schema 不应直接复用。
 
 ## 下一步规划

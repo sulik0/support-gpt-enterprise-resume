@@ -152,6 +152,32 @@ class AgentRun(Base):
     links = relationship(
         "AgentRunLink", back_populates="agent_run", cascade="all, delete-orphan"
     )
+    skill_selection = relationship(
+        "AgentSkillSelection",
+        back_populates="agent_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentSkillSelection(Base):
+    """持久化 Agent Run 选中的 Skill 及注册表快照标识。
+
+    使用独立表避免改动已有 agent_runs 表结构。
+    """
+
+    __tablename__ = "agent_skill_selections"
+
+    agent_run_id = Column(
+        String(36), ForeignKey("agent_runs.id"), primary_key=True
+    )
+    skill_name = Column(String(100), nullable=False, index=True)
+    skill_version = Column(String(50), nullable=False)
+    selection_strategy = Column(String(50), nullable=False)
+    registry_id = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    agent_run = relationship("AgentRun", back_populates="skill_selection")
 
 
 class AgentExecution(Base):

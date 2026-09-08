@@ -11,6 +11,7 @@ from src.models.intents import IntentType, normalize_intent
 from src.observability.metrics import AGENT_EXECUTION_DURATION_SECONDS
 from src.observability.sanitization import sanitize_value
 from src.risk.engine import risk_engine
+from src.skills import skill_registry
 from src.tools.registry import tool_registry
 
 logger = logging.getLogger("supportgpt.agents.tooling")
@@ -29,6 +30,21 @@ class ToolingAgent:
         operator_role = state.get("operator_role", "agent")
         department = state.get("department", "general")
         intent = normalize_intent(state.get("intent"))
+        skill_selection = (
+            skill_registry.select(state)
+            if state.get("skill_name") in {None, "", "unselected"}
+            else None
+        )
+        skill_name = (
+            skill_selection.definition.name
+            if skill_selection
+            else str(state.get("skill_name"))
+        )
+        skill_version = (
+            skill_selection.definition.version
+            if skill_selection
+            else str(state.get("skill_version"))
+        )
 
         if "Security threat" in "".join(state.get("errors", [])):
             return state
@@ -54,6 +70,8 @@ class ToolingAgent:
                 "intent": intent,
                 "request_risk_level": state.get("risk_level", "low"),
                 "forbidden_tools": automated_forbidden_tools,
+                "skill_name": skill_name,
+                "skill_version": skill_version,
             }
             pending_calls = [
                 tool_registry.call_tool(
@@ -169,6 +187,9 @@ class ToolingAgent:
                     "permission_checked": True,
                     "risk_checked": True,
                     "forbidden_tool_checked": True,
+                    "skill_checked": True,
+                    "skill_name": skill_name,
+                    "skill_version": skill_version,
                     "audit_enabled": True,
                 },
                 "mock_note": "CRM, order, and ticketing tools are local mock adapters behind the tool registry.",

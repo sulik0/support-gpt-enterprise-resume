@@ -17,8 +17,9 @@
 ## 当前系统快照
 
 - 后端：FastAPI + SQLAlchemy Async + JWT/RBAC。
-- Agent：LangGraph StateGraph，包含 Analyzer、Tooling、Retriever、Resolver、QA、Escalation 六个逻辑 Agent 节点及一个不调用 LLM 的 Approval Gate。
-- 执行：Analyzer 后 Tooling/Retriever 并行，安全强命中直接短路；之后 Resolver、QA、Escalation、Approval Gate。高风险路径 interrupt，人工决策后从原 Checkpoint Thread 恢复。
+- Agent：LangGraph StateGraph，包含 Analyzer、Tooling、Retriever、Resolver、QA、Escalation 六个逻辑业务 Agent 节点，以及不调用 LLM 的 Skill Selector 和 Approval Gate。
+- 执行：Analyzer 后先使用统一 Intent 确定性选择 Skill，再并行 Tooling/Retriever；安全强命中直接短路；之后 Resolver、QA、Escalation、Approval Gate。高风险路径 interrupt，人工决策后从原 Checkpoint Thread 恢复。
+- Skill：`src/skills/` 管理 6 个版本化 Skill，选择快照进入 State/Checkpoint/Trace/AgentRun/Evaluation；ToolRegistry 在现有治理前再做 Skill Allowlist 校验。
 - Durable Execution：本地 AsyncSqliteSaver、PostgreSQL AsyncPostgresSaver；AgentExecution 关联工单/审批/Run/Trace，数据库恢复租约防重复，启动扫描补偿已决策但未完成的续跑。
 - LLM：默认 Mock，保留 `mock/openai/azure`；`openai` 为通用 OpenAI-compatible Provider。
 - 优化：Analyzer 规则优先，Analyzer/QA 可使用小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
@@ -58,6 +59,7 @@
 | LangGraph Workflow / AgentState | `src/agents/graph.py` |
 | Checkpoint / Durable Execution | `src/agents/checkpointing.py`、`src/agents/durable_execution.py` |
 | 意图枚举 | `src/models/intents.py` |
+| Skill Framework | `src/skills/`、`src/agents/skill_selector.py` |
 | LLM Provider 与 Prompt | `src/llm/provider.py` |
 | Tool Registry / Adapter | `src/tools/` |
 | RAG | `src/rag/` |

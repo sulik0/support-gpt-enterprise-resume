@@ -13,7 +13,8 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 
 | 领域 | 当前能力 |
 |---|---|
-| Agent Workflow | 六个业务节点 + Approval Gate；Tool/RAG 并行执行 |
+| Agent Workflow | 六个业务节点 + Skill Selector + Approval Gate；Tool/RAG 并行执行 |
+| Skill Framework | 6 个版本化 Skill；Intent 确定性选择、Tool Allowlist、Trace/AgentRun/Evaluation 归因 |
 | Durable Execution | SQLite/PostgreSQL Checkpoint、interrupt/resume、AgentExecution、恢复租约与重启扫描 |
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |

@@ -14,6 +14,7 @@ from src.agents.escalation import escalation_agent
 from src.agents.quality_assurance import quality_assurance_agent
 from src.agents.resolver import resolution_agent
 from src.agents.retriever import knowledge_retriever_agent
+from src.agents.skill_selector import skill_selector_agent
 from src.agents.tooling import tooling_agent
 from src.config import settings
 from src.models.intents import DEFAULT_INTENT, IntentType
@@ -22,6 +23,7 @@ from src.observability.metrics import (
     AGENT_NODE_DURATION_SECONDS,
     AGENT_NODE_EXECUTIONS_TOTAL,
     AGENT_REQUESTS_TOTAL,
+    AGENT_SKILL_SELECTIONS_TOTAL,
     AGENT_WORKFLOW_INTERRUPTS_TOTAL,
     AGENT_WORKFLOW_RESUME_DURATION_SECONDS,
     AGENT_WORKFLOW_RESUMES_TOTAL,
@@ -73,6 +75,15 @@ class AgentState(TypedDict):
     department: str
     analyzer_confidence: float
     analyzer_strategy: str
+    skill_name: str
+    skill_version: str
+    selection_strategy: str
+    skill_registry_id: str
+    skill_required_slots: List[str]
+    skill_missing_slots: List[str]
+    skill_allowed_tools: List[str]
+    skill_forbidden_tools: List[str]
+    skill_rag_categories: List[str]
     security_threat_detected: bool
     security_risk_score: float
     security_source: Optional[str]
@@ -206,6 +217,37 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
                 "risk_score": result.get("risk_score"),
             },
         )
+        return result
+
+
+async def skill_selector_node(state: AgentState) -> Dict[str, Any]:
+    """在 Analyzer 后选择版本化 Skill，不调用 LLM。"""
+    with observed_span(
+        tracer, "agent.skill_selector", _trace_attrs(state, node="skill_selector")
+    ) as span:
+        result = await _run_node(
+            "skill_selector", skill_selector_agent.select, state
+        )
+        attrs = {
+            "skill.name": result.get("skill_name", "unknown"),
+            "skill.version": result.get("skill_version", "unknown"),
+            "skill.selection_strategy": result.get(
+                "selection_strategy", "unknown"
+            ),
+            "skill.registry_id": result.get("skill_registry_id", "unknown"),
+        }
+        set_span_attributes(span, attrs)
+        try:
+            AGENT_SKILL_SELECTIONS_TOTAL.add(
+                1,
+                {
+                    "skill": attrs["skill.name"],
+                    "version": attrs["skill.version"],
+                    "strategy": attrs["skill.selection_strategy"],
+                },
+            )
+        except Exception:
+            logger.debug("Unable to record Skill selection metric")
         return result
 
 
@@ -507,6 +549,10 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "ticket.department": state.get("department"),
         "ticket.priority": state.get("priority"),
         "operator.role": state.get("operator_role"),
+        "skill.name": state.get("skill_name"),
+        "skill.version": state.get("skill_version"),
+        "skill.selection_strategy": state.get("selection_strategy"),
+        "skill.registry_id": state.get("skill_registry_id"),
         "risk.level": state.get("risk_level"),
         "risk.score": state.get("risk_score"),
         "risk.requires_human": state.get("risk_requires_human"),
@@ -543,7 +589,7 @@ def route_after_analyzer(state: AgentState) -> str:
     """输入安全检查失败时直接进入人工升级。"""
     if _is_automation_blocked(state):
         return "escalation"
-    return "context_enrichment"
+    return "skill_selector"
 
 
 def route_after_context_enrichment(state: AgentState) -> str:
@@ -561,6 +607,7 @@ def create_agent_graph(
 
     # Register Nodes
     workflow.add_node("analyzer", analyze_node)
+    workflow.add_node("skill_selector", skill_selector_node)
     workflow.add_node("context_enrichment", context_enrichment_node)
     workflow.add_node("resolver", resolve_node)
     workflow.add_node("qa", qa_node)
@@ -573,10 +620,11 @@ def create_agent_graph(
         "analyzer",
         route_after_analyzer,
         {
-            "context_enrichment": "context_enrichment",
+            "skill_selector": "skill_selector",
             "escalation": "escalation",
         },
     )
+    workflow.add_edge("skill_selector", "context_enrichment")
     workflow.add_conditional_edges(
         "context_enrichment",
         route_after_context_enrichment,
@@ -639,6 +687,15 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "department": "general",
         "analyzer_confidence": 1.0,
         "analyzer_strategy": "not_run",
+        "skill_name": "unselected",
+        "skill_version": "unselected",
+        "selection_strategy": "not_run",
+        "skill_registry_id": "unselected",
+        "skill_required_slots": [],
+        "skill_missing_slots": [],
+        "skill_allowed_tools": [],
+        "skill_forbidden_tools": [],
+        "skill_rag_categories": [],
         "security_threat_detected": False,
         "security_risk_score": 0.0,
         "security_source": None,
@@ -757,6 +814,12 @@ async def _run_agent_workflow_pinned(initial_state: Dict[str, Any]) -> Dict[str,
         "agent.escalation_recommended": final_output.get(
             "escalation_recommended", False
         ),
+        "skill.name": final_output.get("skill_name", "unselected"),
+        "skill.version": final_output.get("skill_version", "unselected"),
+        "skill.selection_strategy": final_output.get(
+            "selection_strategy", "not_run"
+        ),
+        "skill.registry_id": final_output.get("skill_registry_id", "unselected"),
         "risk.level": final_output.get("risk_level", "low"),
         "risk.score": final_output.get("risk_score", 0.0),
         "risk.requires_human": final_output.get("risk_requires_human", False),

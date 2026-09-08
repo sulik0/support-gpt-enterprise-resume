@@ -37,9 +37,15 @@ class KnowledgeRetrievalAgent:
         subject = state.get("subject", "")
         description = state.get("description", "")
         kb_version = state.get("kb_version", "v1")
-        category_filter = state.get(
-            "department"
-        )  # Can align filters with detected department
+        category_filter = state.get("department")
+        skill_categories = tuple(state.get("skill_rag_categories", []))
+        if (
+            category_filter not in {None, "general"}
+            and skill_categories
+            and category_filter not in skill_categories
+        ):
+            # 分类异常时仍不允许检索越出 Skill 知识边界。
+            category_filter = skill_categories[0]
 
         # Use a unified query string
         query_str = f"{subject} {description}"
@@ -56,6 +62,8 @@ class KnowledgeRetrievalAgent:
                     "customer.id": state.get("customer_id"),
                     "kb.version": kb_version,
                     "rag.category_filter": category_filter,
+                    "skill.name": state.get("skill_name"),
+                    "skill.version": state.get("skill_version"),
                     "rag.query_length": len(query_str),
                     "rag.top_k": 3,
                 },

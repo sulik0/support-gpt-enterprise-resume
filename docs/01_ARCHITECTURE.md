@@ -34,6 +34,7 @@ flowchart TB
 
     subgraph Graph[LangGraph 工作流]
         Analyzer[Analyzer + Guardrails]
+        SkillSelector[Skill Selector]
         Tooling[Tooling]
         Retriever[Retriever]
         ContextJoin[Context Enrichment]
@@ -41,8 +42,9 @@ flowchart TB
         QA[QA + Response Filter]
         Escalation[Escalation]
         ApprovalGate[Approval Gate]
-        Analyzer -->|normal| Tooling
-        Analyzer -->|normal| Retriever
+        Analyzer -->|normal| SkillSelector
+        SkillSelector --> Tooling
+        SkillSelector --> Retriever
         Tooling --> ContextJoin
         Retriever --> ContextJoin
         ContextJoin --> Resolver --> QA --> Escalation --> ApprovalGate
@@ -52,6 +54,8 @@ flowchart TB
     end
 
     Tooling --> Registry[ToolRegistry]
+    SkillSelector --> Skills[SkillRegistry / SkillDefinition]
+    Skills --> Registry
     Registry --> CRM[Mock CRM Adapter]
     Registry --> OMS[Mock OMS Adapter]
     Registry --> Ticketing[Mock Ticketing Adapter]
@@ -104,7 +108,8 @@ flowchart TB
 stateDiagram-v2
     [*] --> Analyzer
     Analyzer --> Escalation: Prompt Injection / Jailbreak
-    Analyzer --> ContextFork: 正常请求
+    Analyzer --> SkillSelector: 正常请求
+    SkillSelector --> ContextFork: Intent 确定性选择
     state ContextFork <<fork>>
     ContextFork --> Tooling
     ContextFork --> Retriever
@@ -127,7 +132,8 @@ stateDiagram-v2
 | 节点 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前取舍 |
 |---|---|---|---|---|---|---|
 | Analyzer | 规则与 Qwen3Guard 语义安全检测、PII 脱敏、情绪/优先级/部门/意图分类和初始风险评估 | 主题、描述 | 分类结果、置信度、脱敏文本、语义安全结果或安全阻断 | 在早期阻断风险，减少越权工具和无效 LLM 调用 | 只用规则、只用专用分类模型 | 固定高置信度意图优先规则分类，模糊/多意图才调用精简 LLM Schema |
-| Context Enrichment | 并行执行 Tooling 与 Retriever，以风险只升不降策略合并 State | Analyzer State | Tool Context、citation、联合风险结果 | 两分支无强依赖，并行可降低等待时间 | LangGraph 串行节点 | 并行分支后集中合并，任一分支高风险都清空上下文并转人工 |
+| Skill Selector | 将归一化 Intent 映射到版本化 Skill，固定 Tool/RAG/槽位能力边界 | Analyzer State | Skill 名称、版本、Registry Hash、Policy 快照 | 把业务能力与 Graph 节点解耦，且不让 LLM 选择高风险能力 | LLM Router、每 Skill 独立 Subgraph | V1 使用 Intent 确定性选择和共享 Workflow，避免成本与路由漂移 |
+| Context Enrichment | 并行执行 Tooling 与 Retriever，以风险只升不降策略合并 State | Skill Selector State | Tool Context、citation、联合风险结果 | 两分支无强依赖，并行可降低等待时间 | LangGraph 串行节点 | 并行分支后集中合并，任一分支高风险都清空上下文并转人工 |
 | Tooling | 补充客户、订单、历史工单上下文，检查工具结果的间接注入 | 客户 ID、角色、部门、意图 | `tool_context`、`tool_calls` 或安全阻断 | 先补齐业务事实，但不信任外部工具文本 | 让 LLM 自行决定工具 | 确定性调用后执行规则 + Qwen3Guard 扫描；语义服务不可用时隔离未扫描的 Tool Context |
 | Retriever | 召回售后政策、FAQ 和操作指引，检查文档间接注入 | 工单主题、描述、版本、类别 | citation 列表或安全阻断 | 给回复提供知识依据，且不把受污染文档交给模型 | 纯关键字搜索、纯向量搜索 | 混合检索后执行规则 + Qwen3Guard 扫描；语义服务不可用时隔离 citation |
 | Resolver | 合并检索与业务上下文生成客服草稿 | 工单、Top-2 citation、必要 Tool Context | `suggested_response` | 将业务事实与知识事实统一供给模型 | 模板化回复、全量上下文 | 限制 Context 和 max_tokens，只生成最终客服回复 |
@@ -149,6 +155,7 @@ stateDiagram-v2
 |---|---|---|---|---|
 | 工单标识 | 工单 ID、客户 ID、主题、描述、知识库版本 | API | 全部节点 | 保证所有结果可关联到具体请求和知识版本 |
 | 分类结果 | 情绪、优先级、意图、部门、Analyzer 置信度 | Analyzer | Tooling、Retriever、Risk Engine | 决定订单查询、类别过滤、SLA 和初始风险 |
+| Skill 快照 | 名称、版本、选择策略、Registry Hash、槽位、Tool/RAG 边界 | Skill Selector | ToolRegistry、Checkpoint、Trace、AgentRun、Evaluation | 让能力选择可复现、可审计、可回放 |
 | 安全与风险 | 安全威胁、检测分数与信号、风险等级/分数/原因、人工与自动化建议 | Guardrails、Analyzer、QA、Risk Engine | 条件边、Escalation、Approval、API、Trace | 让所有节点使用同一风险语义，避免分散阈值漂移 |
 | 工具上下文 | 操作角色、结构化 Tool Context、调用审计 | Tooling / ToolRegistry | Resolver、API、Trace | 让回复可利用业务事实并暴露治理证据 |
 | RAG 结果 | citation | Retriever | Resolver、QA、API | 让回答、质量判断和人工核验使用同一依据 |
@@ -188,7 +195,7 @@ stateDiagram-v2
 
 ### 5.1 Agent 编排
 
-当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Tooling/Retriever 并行 → Context Enrichment 合并 → Resolver → QA → Escalation → Approval Gate；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，直接路由到 Escalation，再由 Approval Gate 强制暂停等待人工处理。
+当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Skill Selector → Tooling/Retriever 并行 → Context Enrichment 合并 → Resolver → QA → Escalation → Approval Gate；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，直接路由到 Escalation，再由 Approval Gate 强制暂停等待人工处理。
 
 **职责**：控制节点顺序与唯一条件分支。
 
@@ -217,12 +224,13 @@ stateDiagram-v2
 | 输出 | 固定节点路径或安全短路路径 | 计划列表、子任务、依赖关系 | 当前输出更易测试；灵活性较低 |
 | 重新规划 | 仅有 RAG 类别回退和人工拒绝后的重新处理 | Plan Revision、反思式重规划 | 当前没有自主 Replanning，避免不可控循环 |
 
-### 5.3 Selector
+### 5.3 Selector 与 Skill Framework
 
-当前项目**没有独立 Selector Agent**。选择逻辑由确定性规则承担：
+当前项目已有不调用 LLM 的 `Skill Selector` 控制节点。它在 Analyzer 后将 8 个统一 Intent 映射到 6 个 Skill：`refund_support`、`order_support`、`account_support`、`api_incident_triage`、`warranty_support`、`general_support`。
 
 - 安全路由选择：客户输入、Tool 返回或 RAG 文档命中 Prompt Injection，或输入命中 Jailbreak 时直接进入 Escalation。
-- 订单工具选择：billing、shipping 或相关意图时才查询订单历史。
+- Skill 选择：使用 `IntentType -> SkillDefinition` 唯一索引，不接受 LLM 自由路由。
+- Tool 选择：Skill 定义 Allowlist/Forbidden List，ToolRegistry 在 Schema、RBAC 和高风险审批之前额外校验 Skill 版本与权限。
 - 检索范围选择：优先按部门类别检索；为空时放宽类别过滤。
 - 升级选择：由 Risk Engine 综合安全、优先级、情绪、高风险业务意图、分类置信度、QA、幻觉和异常信号决定。
 
@@ -230,12 +238,12 @@ stateDiagram-v2
 
 **输入**：安全结果、分类结果、当前上下文。
 
-**输出**：下一节点、是否调用订单工具、检索过滤条件或升级结论。
+**输出**：Skill 名称/版本、Registry Hash、必需/缺失槽位、Tool 和 RAG 能力边界，以及其他确定性路由结论。
 
 **设计原因**：这些选择直接影响权限、成本和客户体验，使用确定性规则可减少 LLM 误选。
 
-**可替代方案**：LLM Router、策略模型、学习型 Bandit Selector。
-**工程权衡**：规则可解释但覆盖有限；未来场景显著增多时可在保留 Guardrails 的前提下增加受限 Selector。
+**可替代方案**：LLM Router、策略模型、每 Skill 独立 LangGraph Subgraph。
+**工程权衡**：V1 共享现有 Workflow，能力隔离尚不是运行时 Subgraph 隔离；但选择、版本、权限与评测归因已经可复现，且不改变稳定业务流程。
 
 ## 6. Reviewer、Validator 与 Reflection
 
