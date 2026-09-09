@@ -27,7 +27,7 @@
 - Tool：Mock CRM/OMS/Ticket Adapter 通过 ToolRegistry 暴露；V2.2 为高风险写 Action 增加业务幂等、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿和 Policy 回放。
 - 故障治理：LLM/RAG/读 Tool 统一超时、有界 Retry、进程内 Circuit Breaker 与 Fallback；高风险写调用禁止重试，只 Retry 幂等对账查询。
 - 安全：确定性多层规则 + 可选 Qwen3Guard-Gen-0.6B + Risk Engine + 输出过滤 + HITL。
-- Memory：Redis 短期状态，PostgreSQL 长期持久化，Redis 不可用时回退数据库。
+- Memory V1：SQL 结构化会话是事实源，Redis 是可选 revision Cache；有界历史、摘要和实体进入 AgentState，待审草稿不进入 Prompt。
 - 可观测：OpenTelemetry 唯一采集，OTLP 统一导出，Collector 分发 LangSmith Trace 和 Prometheus Metrics。
 - 评测：Ragas + DeepEval + 确定性 Agent/Security Evaluator，固定 100 条 Baseline 支持真实 Workflow Replay。
 - PromptOps / EvalOps V1：`src/promptops/` 管理模板快照、运行绑定和实验晋级；CLI 为 `scripts/promptops.py`。默认 Prompt 内容保持原样，production 不接受 Mock、过时版本、未提交代码或新增失败 Case。操作流程见 `06_PROMPTS.md`。
@@ -86,7 +86,7 @@
 ## 已知限制
 
 - 真实 CRM/OMS/Ticketing 尚未接入。
-- 多轮 Memory 已存储，尚未系统性注入 Prompt。
+- Memory V1 已注入 Analyzer、Retriever、Resolver 和 QA；尚无向量长期记忆、真实用户/租户身份接入和多轮专项评测门禁。
 - Tool 调用已持久化脱敏审计；高风险写 Tool 必须经 `ToolAction` 状态机、职责分离审批和 Outbox Worker，Agent Workflow 不会自动执行。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未基于真实运营数据校准。
 - Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
@@ -97,7 +97,7 @@
 
 ## 当前优先级
 
-1. 为 Feedback 表引入 Alembic migration。
+1. 为 Feedback、Memory 和 Durable Execution 新表引入 Alembic migration。
 2. 为 Resilience V1 增加故障注入、多副本 Breaker，并将 Tool Governance V2.2 的 Mock 契约接入真实 OMS。
 3. 建设 Dataset Registry、人工复核与数据保留策略。
 4. 增加 `ticket_status_events`，Tool 审计不再是待办。

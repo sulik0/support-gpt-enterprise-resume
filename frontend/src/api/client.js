@@ -69,11 +69,11 @@ export async function fetchReviewQueue() {
   return response.json();
 }
 
-export async function submitSupportRequest(customerId, message, kbVersion = 'v1') {
+export async function submitSupportRequest(customerId, message, sessionId, kbVersion = 'v1') {
   const response = await fetch(`${BASE_URL}/support/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customer_id: customerId, message, kb_version: kbVersion }),
+    body: JSON.stringify({ customer_id: customerId, message, session_id: sessionId, kb_version: kbVersion }),
   });
   if (!response.ok) throw new Error('问题提交失败，请稍后重试');
   return response.json();

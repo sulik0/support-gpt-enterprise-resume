@@ -49,6 +49,9 @@ class KnowledgeRetrievalAgent:
 
         # Use a unified query string
         query_str = f"{subject} {description}"
+        memory_query = str(state.get("memory_retrieval_context", "")).strip()
+        if memory_query:
+            query_str = f"{query_str} Prior customer context: {memory_query}"
 
         try:
             # Run semantic query on our ChromaDB manager

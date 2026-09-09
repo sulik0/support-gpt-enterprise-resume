@@ -36,6 +36,12 @@ class QualityAssuranceAgent:
             return state
 
         query = str(state.get("description", ""))
+        memory_entities = state.get("memory_active_entities") or {}
+        if memory_entities:
+            query = (
+                f"{query}\nResolved conversation entities: "
+                f"{json.dumps(memory_entities, ensure_ascii=False)}"
+            )
         citations = state.get("context_citations", [])
         tool_context = state.get("tool_context", {})
         raw_response = state.get("suggested_response", "")
@@ -138,9 +144,10 @@ class QualityAssuranceAgent:
         for index, citation in enumerate(citations[:2], start=1):
             source = str(getattr(citation, "source", f"doc-{index}"))
             prefix = f"[S{index}] {source}: "
-            text = prefix + str(getattr(citation, "text", ""))[
-                : max(remaining - len(prefix), 0)
-            ]
+            text = (
+                prefix
+                + str(getattr(citation, "text", ""))[: max(remaining - len(prefix), 0)]
+            )
             if not text:
                 continue
             context.append(text)
@@ -361,8 +368,7 @@ class QualityAssuranceAgent:
     ) -> bool:
         """用 OMS 返回验证“目标订单不存在”，避免负向查询被误判为幻觉。"""
         requested_ids = {
-            value.upper()
-            for value in re.findall(r"(?i)\bORD-[A-Z0-9-]+\b", query)
+            value.upper() for value in re.findall(r"(?i)\bORD-[A-Z0-9-]+\b", query)
         }
         if not requested_ids:
             return False

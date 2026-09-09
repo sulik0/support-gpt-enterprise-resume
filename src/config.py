@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # Default to sqlite in-memory or file for easy local run without postgres, override via env
     DATABASE_URL: str = Field(default="sqlite+aiosqlite:///./supportgpt.db")
     REDIS_URL: Optional[str] = Field(default=None)
+    # Memory V1 仅使用有界近期对话和确定性摘要。
+    MEMORY_ENABLED: bool = Field(default=True)
+    MEMORY_RECENT_MESSAGES: int = Field(default=12, ge=2, le=40)
+    MEMORY_CONTEXT_MAX_CHARS: int = Field(default=4000, ge=500, le=20000)
+    MEMORY_SUMMARY_MAX_CHARS: int = Field(default=1200, ge=200, le=5000)
+    MEMORY_SCAN_MESSAGES: int = Field(default=48, ge=12, le=200)
+    MEMORY_TTL_SECONDS: int = Field(default=86400, ge=300, le=2592000)
 
     # LangGraph Checkpoint 本地使用独立 SQLite，生产默认复用 PostgreSQL。
     LANGGRAPH_CHECKPOINT_ENABLED: bool = Field(default=True)
@@ -82,7 +89,9 @@ class Settings(BaseSettings):
     PROMPT_VERSION: str = Field(default="support-v1")
     # PromptOps 按内容 Hash 绑定版本；旧标签仅保留兼容。
     PROMPT_REGISTRY_DIR: str = Field(default="./.runtime/promptops")
-    PROMPT_ENVIRONMENT: str = Field(default="production", pattern="^(staging|production)$")
+    PROMPT_ENVIRONMENT: str = Field(
+        default="production", pattern="^(staging|production)$"
+    )
     PROMPT_BUNDLE_ID: Optional[str] = Field(default=None)
     AGENT_WORKFLOW_VERSION: str = Field(default="support-workflow-v1")
     # OPENAI_API_KEY 继续供 Embedding 和离线评测模块独立使用。

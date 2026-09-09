@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -10,11 +11,10 @@ logger = logging.getLogger("supportgpt.memory.redis")
 class RedisConversationMemory:
     """提供基于 Redis 的短期会话缓存。
 
-    Redis 不可用时由上层回退 SQL `SessionMemory`，不阻断主流程。
+    Cache 携带 SQL revision，过期或落后时由上层回退数据库。
     """
 
-    def __init__(self, max_turns: int = 12):
-        self.max_turns = max_turns
+    def __init__(self):
         self._client = None
 
     async def _get_client(self):
@@ -34,33 +34,56 @@ class RedisConversationMemory:
                 self._client = None
         return self._client
 
-    def _key(self, session_id: str) -> str:
-        return f"supportgpt:session:{session_id}:messages"
+    def _key(self, session_id: str, customer_id: str) -> str:
+        # 不把客户和会话原始标识写入 Redis Key。
+        digest = hashlib.sha256(
+            f"{customer_id}:{session_id}".encode("utf-8")
+        ).hexdigest()
+        return f"supportgpt:memory:v1:{digest}"
 
-    async def load_messages(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+    async def load_messages(
+        self, session_id: str, customer_id: str, *, revision: int
+    ) -> Optional[List[Dict[str, Any]]]:
         client = await self._get_client()
         if client is None:
             return None
 
         try:
-            raw_messages = await client.lrange(self._key(session_id), 0, -1)
-            return [json.loads(item) for item in raw_messages]
+            raw_value = await client.get(self._key(session_id, customer_id))
+            if not raw_value:
+                return None
+            cached = json.loads(raw_value)
+            if int(cached.get("revision", -1)) != int(revision):
+                return None
+            messages = cached.get("messages")
+            return messages if isinstance(messages, list) else None
         except Exception as exc:
             logger.warning("Failed to load Redis conversation memory: %s", exc)
             return None
 
-    async def save_messages(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
+    async def save_messages(
+        self,
+        session_id: str,
+        customer_id: str,
+        messages: List[Dict[str, Any]],
+        *,
+        revision: int,
+    ) -> None:
         client = await self._get_client()
         if client is None:
             return
 
         try:
-            key = self._key(session_id)
-            trimmed = messages[-self.max_turns :]
-            await client.delete(key)
-            if trimmed:
-                await client.rpush(key, *[json.dumps(msg, default=str) for msg in trimmed])
-            await client.expire(key, 60 * 60 * 24)
+            payload = json.dumps(
+                {"revision": revision, "messages": messages},
+                ensure_ascii=False,
+                default=str,
+            )
+            await client.set(
+                self._key(session_id, customer_id),
+                payload,
+                ex=settings.MEMORY_TTL_SECONDS,
+            )
         except Exception as exc:
             logger.warning("Failed to save Redis conversation memory: %s", exc)
 

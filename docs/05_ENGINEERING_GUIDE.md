@@ -188,7 +188,7 @@ Swagger 是最新 Schema 的最终参考；修改 API 时必须同步 Pydantic M
 
 - PostgreSQL/开发 SQLite 持久化 User、Ticket、Approval、AgentRun、AgentRunLink、AgentExecution 和 FeedbackEvent。
 - LangGraph Saver 保存 Graph State 正文；AgentExecution 只保存业务关联、执行状态、恢复租约和 Trace ID。
-- Redis 保存短期会话和最近消息；不可用时回退数据库。
+- Memory V1 以 `ConversationSession` / `ConversationMessage` / `ConversationMemorySnapshot` 为 SQL 事实源；Redis 只缓存最近 final 消息并携带 SQL revision，缓存丢失、过期或 revision 不一致时回退数据库。
 - ChromaDB 保存 Embedding 与文档 metadata，支持 `kb_version` 和 category filter。
 - 当前 AgentExecution、ToolActionControl、ToolOutboxEvent 等业务新表及 LangGraph Saver 表由启动期 setup/create_all 创建；生产上线前必须统一纳入受控 Alembic/DDL Migration。
 
@@ -219,6 +219,25 @@ OTEL_COLLECTOR_LANGSMITH_PROJECT=supportgpt-enterprise
 ```
 
 本地 Collector 不可达时 Backend 在 preflight 阶段跳过 exporter，避免重试刷屏。Collector 启动后需重启 Backend 恢复上报。遥测始终 fail-open，不影响业务主链。
+
+## Memory V1 运行规则
+
+- 新对话使用新 `session_id`；续问必须复用同一 `session_id` 和 `customer_id`。跨客户复用会话标识返回 `409`，且不创建孤儿 Ticket。
+- 每轮先读取上一 revision 的有界上下文，再追加 User 消息；最近消息、摘要、实体和上一轮路由分字段进入 `AgentState`。
+- 历史内容在每次读取时再次执行 PII 脱敏和 Prompt Injection 检测，并在 Prompt 中标记为不可信客户上下文。
+- 只有 final 消息可以被下一轮读取。待审草稿保存为 pending，approved/modified 后幂等转为 final，rejected 草稿永不进入 Prompt。
+- 动态订单、退款、物流状态必须重新调用 Tool 确认；Memory 只用于指代、Slot 续接和任务连贯。
+
+与 Memory 相关的可调参数：
+
+```dotenv
+MEMORY_ENABLED=true
+MEMORY_RECENT_MESSAGES=12
+MEMORY_CONTEXT_MAX_CHARS=4000
+MEMORY_SUMMARY_MAX_CHARS=1200
+MEMORY_SCAN_MESSAGES=48
+MEMORY_TTL_SECONDS=86400
+```
 
 ## 测试
 

@@ -42,7 +42,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 7. **回复生成与 QA**：使用知识库 citation 和 Tool Context 生成草稿，再评估 QA 分数、幻觉风险和输出泄露。
 8. **Risk Engine 与 Human-in-the-Loop**：统一输出 `risk_level`、`risk_score`、`risk_reasons`、是否人工处理及是否阻断自动化，并为高风险草稿创建审批记录。
 9. **工单状态机**：统一约束 `open`、`in_progress`、`pending_approval`、`resolved` 和 `closed` 的合法流转。
-10. **分层记忆**：SQL `SessionMemory` 保存持久化对话历史，Redis 作为可选短期快速存储，不可用时回退到 SQL。
+10. **Memory V1**：以结构化 Conversation/Message/Snapshot 作为 SQL 事实源，Redis 缓存最近 12 条 final 消息；有界历史、确定性摘要和业务实体已注入 Analyzer、Retriever、Resolver 与 QA。
 11. **可观测性**：使用 OpenTelemetry 统一采集 Trace 与 Metrics；Collector 将 Trace 转发 LangSmith，并通过 Prometheus exporter 提供指标，由 Grafana 展示。
 12. **离线评测适配**：提供 RAGAS、DeepEval 和本地确定性指标的统一评测入口。
 13. **Durable Execution**：使用 SQLite / PostgreSQL Checkpointer、稳定 `thread_id`、`AgentExecution` 业务元数据和数据库恢复租约，支持 `interrupt` / `Command(resume=...)`、重启恢复和幂等重试。
@@ -56,7 +56,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | Skill Framework | SkillDefinition、SkillRegistry | 版本化 Skill 协议、Intent 确定性选择、Tool Policy 与运行归因 |
 | LLM | Mock LLM、OpenAI、Azure OpenAI | 默认 Mock 保证离线可复现；通过 `BaseLLMProvider` 适配外部模型 |
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
-| 短期记忆 | Redis | 可选的会话历史快速存储，失败时不影响 SQL 持久化 |
+| Memory | SQLAlchemy Async、Redis | 追加为主的会话消息、摘要/实体 Snapshot、revision 缓存校验与多轮 Context Assembly |
 | RAG | ChromaDB、Embedding、Hybrid RAG | 知识库分块、版本/类别过滤、向量与词法混合召回、rerank |
 | 安全 | JWT、RBAC、Prompt Guardrails、Qwen3Guard-Gen-0.6B、Risk Engine | API 鉴权、工具权限、PII 脱敏、规则 + 语义的直接/间接 Prompt Injection 检测、Jailbreak、输出过滤和统一风险分级 |
 | 评测 | RAGAS、DeepEval、确定性 Security Evaluator、本地启发式指标 | RAG 质量、Agent 行为、安全检测混淆矩阵与阻断处置质量 |
@@ -89,7 +89,8 @@ FastAPI
   +--> SQLAlchemy Async --> SQLite / PostgreSQL
   |      |-- User
   |      |-- Ticket
-  |      |-- SessionMemory
+  |      |-- ConversationSession / ConversationMessage / MemorySnapshot
+  |      |-- SessionMemory（旧数据兼容迁移）
   |      |-- KnowledgeDoc
   |      |-- ResponseApproval
   |      `-- AgentExecution + LangGraph Checkpoint
@@ -210,10 +211,10 @@ resolved / closed --reopen--> in_progress
 | Guardrails | `src/guardrails/` | PII 脱敏、Prompt Injection、Jailbreak 和 Response Filter |
 | Risk Engine | `src/risk/engine.py` | 统一综合安全、业务、置信度、QA 和异常信号，输出风险等级与处置建议 |
 | RAG | `src/rag/` | 文档解析、分块、Embedding、版本管理、Hybrid Retrieval 和 citation |
-| 记忆 | `src/memory/redis_memory.py` | Redis 可选会话历史存储与降级 |
+| 记忆 | `src/memory/service.py`、`redis_memory.py` | 会话归属、有界 Context Assembly、实体/Snapshot、HITL 回写与 Redis 缓存 |
 | 审批 | `src/approval/workflows.py` | 创建待审批记录，处理通过、修改、拒绝和审批延迟 |
 | 工单状态机 | `src/tickets/state_machine.py` | 工单合法状态与动作约束 |
-| 数据模型 | `src/models/` | User、Ticket、SessionMemory、KnowledgeDoc、ResponseApproval、AgentRun/AgentSkillSelection、AgentExecution、Feedback 与 Tool Action/Audit |
+| 数据模型 | `src/models/` | User、Ticket、Conversation/Memory、KnowledgeDoc、ResponseApproval、AgentRun/AgentSkillSelection、AgentExecution、Feedback 与 Tool Action/Audit |
 | 评测 | `src/evaluation/` | RAGAS / DeepEval Adapter、本地指标与统一评测入口 |
 | 可观测 | `src/observability/` | Prometheus Metrics、token/成本估算和 OpenTelemetry Trace |
 | 部署 | `deployment/`、`monitoring/` | Docker、Docker Compose、Kubernetes、Prometheus 和 Grafana 模板 |
@@ -232,20 +233,20 @@ resolved / closed --reopen--> in_progress
 ### `/chat` 主链路
 
 1. Client 提交 `session_id`、`customer_id`、`message` 和 `kb_version`。
-2. API 为当次消息新建 `Ticket(status="open")` 并写入 SQL。
-3. API 查询或创建 `SessionMemory`，优先从 Redis 读取历史；Redis 无数据或不可用时使用 SQL 历史。
-4. API 以当前工单信息构造 `AgentState`并调用 `run_agent_workflow()`。
+2. API 在创建工单前校验 `session_id -> customer_id` 归属，然后以 Append-only 方式写入当前 User 消息。
+3. MemoryService 使用 SQL revision 校验 Redis Cache；Cache Miss/过期/不可用时回退 SQL，并组装最近消息、摘要、实体和上一轮 Intent。
+4. API 将有界 Memory Context 与当前工单共同写入 `AgentState`并调用 `run_agent_workflow()`。
 5. Analyzer 进行输入多层安全检测、PII 脱敏、工单分类和初始风险评估。
 6. Context Enrichment 并行执行 Tooling 与 Retriever：前者补充客户、订单和历史工单上下文，后者按知识库版本和部门检索 citation；两条分支分别扫描间接注入。
 7. 系统以风险只升不降的方式合并两条分支；任一分支命中安全威胁就清空受污染上下文并直接进入 Escalation。
-8. Resolver 合并 Knowledge Base Context 和 Structured Tool Context 生成回复草稿。
+8. Resolver 合并 Knowledge Base Context、Structured Tool Context 和带信任边界的 Conversation Context 生成回复草稿。
 9. QA 校验草稿，Risk Engine 更新输出风险，Escalation 计算 SLA 并决定是否升级。
 10. API 回写工单的情绪、优先级、部门和 SLA。
 11. Approval Gate 对普通请求直接结束；如果 `approval_required = true`，则在持久化 Checkpoint 后 `interrupt`。
 12. API 创建 `ResponseApproval(status="pending")` 和 `AgentExecution(status="interrupted")`，并通过状态机将工单转为 `pending_approval`。
-13. API 将当前用户消息和 AI 草稿写入 SQL 与可选 Redis，然后返回回复、`tool_context`、`tool_calls`、`citations`、升级原因、审批 ID 和成本元数据。
+13. 普通 Assistant 回复直接写为 final；待审草稿只写为 pending，不进入后续 Prompt，直到人工通过/修改后再幂等回写，拒绝则标记 rejected。
 
-**当前限制**：`/chat` 已读取并持久化多轮会话历史，但当前 `AgentState` 没有 `conversation_history` 字段，历史尚未注入 Analyzer 或 Resolver Prompt。因此只能表述为“实现会话历史存储与 Redis 降级”，不能表述为“已完成基于多轮历史的回复生成”。
+**当前限制**：Memory V1 是有界短期对话记忆，不是向量化长期记忆；实体提取仅覆盖明确订单号/运单号，用户端身份仍是 Demo 客户选择器，生产仍需真实登录与租户边界。
 
 ### 人工审批链路
 
@@ -350,7 +351,7 @@ resolved / closed --reopen--> in_progress
 - Tool 调用已持久化到 `tool_invocation_audits`，只保存 HMAC、字段名、脱敏结果、执行状态、身份与 Request/Trace 关联；Action 迁移以 Append-only Event 保存。
 - ChromaDB、知识库版本/类别过滤、Hybrid Retrieval、轻量 rerank 和 citation。
 - Mock / OpenAI / Azure OpenAI LLM Provider 适配。
-- SQLAlchemy 持久化模型、Redis 可选会话存储与 SQL 降级。
+- Memory V1：结构化会话表、追加为主的消息、确定性摘要/实体、会话归属、Redis revision Cache、多节点上下文注入和 HITL 最终回写。
 - Human-in-the-Loop 审批与工单状态机。
 - OpenTelemetry 统一 Trace / Metrics 采集、OTLP Collector、LangSmith Trace 后端和 Prometheus / Grafana 指标展示。
 - Docker Compose、Kubernetes manifests、分层 requirements、Python 3.11 GitHub Actions 全量 CI、两级 Evaluation Quality Gate 与 GHCR CD。
@@ -369,7 +370,7 @@ resolved / closed --reopen--> in_progress
 
 ### 部分完成
 
-- **多轮记忆**：已存储与降级，但尚未将历史注入 Agent Prompt。
+- **多轮记忆**：V1 已完成有界历史、实体续接、Prompt/Retrieval Context 和审批回写；尚无向量长期 Memory、语义摘要模型、多租户身份接入和专项多轮 Evaluation Gate。
 - **Tool Governance**：V2.2 治理闭环已实现，但当前退款写入、对账和补偿仍使用 Mock OMS 账本；真实 OMS 集成、跨服务契约验证和生产 Alembic Migration 尚未完成。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口、统一报告与两级 Quality Gate。2026-08-30 同一固定 Dataset 的 DeepSeek + Qwen 真实复测将 Case Pass Rate 从 `0.54` 提升到 `0.99`，平均耗时约 `1.62s`、P95 约 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。PR Gate 要求 Mock 确定性回放 100% 通过，Release Gate 固化当前真实模型质量和性能阈值；语义回答质量与人工标注仍是后续评测范围。

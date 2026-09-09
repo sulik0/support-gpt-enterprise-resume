@@ -57,6 +57,15 @@ _WARRANTY_ACTION = re.compile(
     r"申请保修|发起维修|维修我的|更换我的"
 )
 _FEEDBACK = re.compile(r"\bthank you\b|\bthanks\b|\bgreat service\b|谢谢|感谢")
+_CONTEXTUAL_CANCELLATION = re.compile(
+    r"\b(?:cancel|stop)\s+(?:it|that|this)\b|取消(?:它|这个|那个|刚才那个)|"
+    r"(?:那|那就|请)帮我取消"
+)
+_CONTEXTUAL_ORDER_STATUS = re.compile(
+    r"\b(?:where is|track|status of|what about)\s+(?:it|that|this)\b|"
+    r"(?:它|这个|那个|刚才那个).{0,8}(?:到哪|状态|物流)|"
+    r"(?:查|看).{0,6}(?:刚才|那个).{0,6}(?:订单|物流)?"
+)
 
 
 class TicketAnalyzerAgent:
@@ -106,6 +115,7 @@ class TicketAnalyzerAgent:
         # 3. 调用外部模型前先移除客户 PII。
         clean_description = anonymize_pii(original_text)
         clean_subject = anonymize_pii(subject)
+        memory_context = str(state.get("memory_prompt_context", ""))
         semantic_text = redact_text(
             f"Subject: {clean_subject}\nDescription: {clean_description}"
         )
@@ -135,12 +145,21 @@ class TicketAnalyzerAgent:
                 if semantic_result.degraded
                 else self._match_rule(clean_description or clean_subject)
             )
+            analysis = self._apply_memory_rule(
+                clean_description or clean_subject,
+                state,
+                analysis,
+            )
             strategy = "rule" if analysis else "llm"
             in_tok = 0
             out_tok = 0
             if analysis is None:
                 analysis, in_tok, out_tok = await llm_provider.analyze_ticket(
-                    f"Subject: {clean_subject}\nDescription: {clean_description}"
+                    self._classifier_input(
+                        clean_subject,
+                        clean_description,
+                        memory_context,
+                    )
                 )
 
             # 所有分类结果在进入 State 前统一收敛到 IntentType。
@@ -211,9 +230,9 @@ class TicketAnalyzerAgent:
         elif _API_INCIDENT.search(normalized):
             candidates.append(IntentType.OUTAGE_REPORT)
         else:
-            if _CANCELLATION_ACTION.search(normalized) and not _CANCELLATION_INFORMATION.search(
+            if _CANCELLATION_ACTION.search(
                 normalized
-            ):
+            ) and not _CANCELLATION_INFORMATION.search(normalized):
                 candidates.append(IntentType.ORDER_CANCELLATION)
             if _ORDER_STATUS.search(normalized):
                 candidates.append(IntentType.ORDER_STATUS)
@@ -253,6 +272,45 @@ class TicketAnalyzerAgent:
             return min(max(float(value), 0.0), 1.0)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _classifier_input(subject: str, description: str, memory_context: str) -> str:
+        """明确分隔历史和当前输入，当前任务始终拥有更高优先级。"""
+        current = f"Current Subject: {subject}\nCurrent Description: {description}"
+        return f"{memory_context}\n\n{current}" if memory_context else current
+
+    @staticmethod
+    def _apply_memory_rule(
+        text: str,
+        state: Dict[str, Any],
+        analysis: Dict[str, Any] | None,
+    ) -> Dict[str, Any] | None:
+        """仅对显式指代做确定性意图续接，不用历史覆盖新意图。"""
+        if analysis is None or analysis.get("intent") != IntentType.INFORMATION_REQUEST:
+            return analysis
+        normalized = " ".join(text.lower().split())
+        order_id = (state.get("memory_active_entities") or {}).get("order_id")
+        if not order_id:
+            return analysis
+        contextual_intent: IntentType | None = None
+        if _CONTEXTUAL_CANCELLATION.search(normalized):
+            contextual_intent = IntentType.ORDER_CANCELLATION
+        elif _CONTEXTUAL_ORDER_STATUS.search(normalized):
+            contextual_intent = IntentType.ORDER_STATUS
+        if contextual_intent is None:
+            return analysis
+        defaults = intent_defaults(contextual_intent)
+        return {
+            "intent": contextual_intent,
+            "priority": defaults.priority,
+            "department": defaults.department,
+            "sentiment": (
+                "negative"
+                if contextual_intent == IntentType.ORDER_CANCELLATION
+                else "neutral"
+            ),
+            "confidence_score": 0.95,
+        }
 
 
 ticket_analyzer_agent = TicketAnalyzerAgent()

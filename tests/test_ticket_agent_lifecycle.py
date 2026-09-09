@@ -161,7 +161,15 @@ async def test_public_support_request_returns_only_safe_answer(
     payload = response.json()
     assert payload["status"] == "answered"
     assert payload["response"] == "这是可直接展示给用户的回复。"
-    assert set(payload) == {"ticket_id", "status", "response", "message", "created_at"}
+    assert payload["session_id"]
+    assert set(payload) == {
+        "ticket_id",
+        "session_id",
+        "status",
+        "response",
+        "message",
+        "created_at",
+    }
 
 
 @pytest.mark.asyncio

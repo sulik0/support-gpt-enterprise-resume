@@ -27,6 +27,7 @@ class ResolutionAgent:
         description = state.get("description", "")
         citations = state.get("context_citations", [])
         tool_context = state.get("tool_context", {})
+        memory_context = str(state.get("memory_prompt_context", "")).strip()
 
         # 只向模型提供 Top RAG 证据和必要业务字段。
         kb_context = self._compact_rag_context(citations)
@@ -34,6 +35,10 @@ class ResolutionAgent:
         combined_context = (
             f"KB evidence:\n{kb_context}\n\nBusiness facts:\n{business_context}"
         )
+        if memory_context:
+            combined_context = (
+                f"{combined_context}\n\nConversation context:\n{memory_context}"
+            )
 
         try:
             # Generate the text from LLM provider
@@ -86,6 +91,9 @@ class ResolutionAgent:
             return "No relevant business facts."
         profile = tool_context.get("customer_profile") or {}
         compact = {
+            "resolved_request_entities": tool_context.get(
+                "resolved_request_entities", {}
+            ),
             "customer": {
                 "tier": profile.get("tier"),
                 "open_tickets_count": profile.get("open_tickets_count"),
@@ -113,7 +121,9 @@ class ResolutionAgent:
                 for ticket in (tool_context.get("past_tickets") or [])[:2]
             ],
         }
-        content = json.dumps(compact, default=str, ensure_ascii=False, separators=(",", ":"))
+        content = json.dumps(
+            compact, default=str, ensure_ascii=False, separators=(",", ":")
+        )
         return content[: settings.LLM_RESOLVER_MAX_TOOL_CHARS]
 
     @staticmethod

@@ -60,10 +60,10 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """定义客服对话入口的会话、客户和知识库参数。"""
 
-    session_id: str
-    customer_id: str
-    message: str
-    kb_version: str = Field(default="v1")
+    session_id: str = Field(..., min_length=1, max_length=100)
+    customer_id: str = Field(..., min_length=1, max_length=100)
+    message: str = Field(..., min_length=1, max_length=5000)
+    kb_version: str = Field(default="v1", max_length=50)
 
 
 class Citation(BaseModel):
@@ -134,6 +134,7 @@ class PublicSupportRequest(BaseModel):
     """定义用户咨询页面提交的最小请求。"""
 
     customer_id: str = Field(..., min_length=1, max_length=100)
+    session_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
     message: str = Field(..., min_length=2, max_length=5000)
     kb_version: str = Field(default="v1", max_length=50)
 
@@ -142,6 +143,7 @@ class PublicSupportResponse(BaseModel):
     """只向终端用户返回安全的处理状态与最终回复。"""
 
     ticket_id: int
+    session_id: str
     status: str
     response: Optional[str] = None
     message: str

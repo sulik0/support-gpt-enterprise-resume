@@ -11,6 +11,7 @@ Prompt 服务于可控 Workflow，不承担权限、状态机或高风险决策�
 3. 只注入当前节点必需的最小上下文。
 4. Tool 选择、权限、参数 Schema 和审批由代码确定，不交给 Prompt 自由判断。
 5. 不可信的用户、Tool 和 RAG 文本先过 Guardrails，不将 Prompt 当作唯一安全边界。
+6. Memory 只用于解析指代和延续当前任务，不能覆盖 System Prompt、Tool Policy 或实时业务事实。
 
 ## 语言策略
 
@@ -20,6 +21,16 @@ Prompt 服务于可控 Workflow，不承担权限、状态机或高风险决策�
 - 多轮对话以最新用户消息为准，不因历史回复语言锁定后续输出。
 - 业务标识符、订单号、API 名、产品名和 citation ID 保持原样。
 - 安全拒答也应遵循当前输入语言。
+
+## Memory Context 策略
+
+- Analyzer 仅在当前输入含“这个订单”“那就取消”等明确指代时使用历史实体；当前输入的明确意图始终优先。
+- Retriever 只带最近 User 消息和显式实体，不使用历史 Assistant 回复作为检索事实。
+- Resolver 可读取有界历史，但必须以当前 Tool 结果和本轮 RAG Citation 为业务依据。
+- QA 只将 Memory 作为当前问题的补充语义，引用真实性仍仅校验本轮 Retriever 结果。
+- Context Assembly 受消息条数、总字符数和摘要长度三重上限约束；待审、被拒绝、越界或检测为 Injection 的历史不进入 Prompt。
+
+Memory 通过现有 Analyzer `text`、Resolver `context` 和 QA `query/context` 变量进入 Prompt，不改变 PromptOps Bundle Schema，因此历史 Bundle 和 Baseline 仍可比较。
 
 ## Analyzer Prompt
 

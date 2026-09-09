@@ -339,20 +339,22 @@ Policy 在 Action 创建时冻结版本、Tool 版本、角色、风险、允许
 
 ### 8.1 Memory
 
-系统采用“SQL 持久化历史 + Redis 可选短期缓存”的双层记忆设计。
+系统已实现 Memory V1，采用“SQL 结构化事实源 + Redis 可选 revision Cache + 有界 Context Assembly”。
 
 | 维度 | 说明 |
 |---|---|
-| 职责 | 保存会话消息，支持 Redis 不可用时的持久化回退 |
-| 输入 | `session_id`、用户消息和 AI 回复 |
-| 输出 | 最近会话消息列表或 SQL 历史 |
-| Redis 策略 | 仅保存最近 12 条消息，TTL 为 24 小时 |
-| SQL 策略 | 保存完整 `SessionMemory` 历史，作为耐久兜底 |
-| 设计原因 | Redis 提供低延迟工作记忆，SQL 保证本地 Demo 与 Redis 故障时的可用性 |
+| 职责 | 校验 session/customer 归属，以追加为主保存消息，组装可注入 Agent 的安全上下文 |
+| 输入 | `session_id`、`customer_id`、当前消息、Ticket/审批关联 |
+| 输出 | `recent_turns`、`summary`、`active_entities`、上一轮 Intent/Department、Memory version/source |
+| Redis 策略 | 缓存最近 final 消息，TTL 24 小时；Cache 必须与 SQL revision 一致，否则直接回退 SQL |
+| SQL 策略 | `ConversationSession`、`ConversationMessage`、`ConversationMemorySnapshot` 为事实源；旧 `SessionMemory` 仅用于首读兼容迁移 |
+| 上下文策略 | 最近 12 条、默认 4000 字符预算；历史重新脱敏和 Injection 扫描，pending/rejected 草稿不进入 Prompt |
+| 节点消费 | Analyzer 用于显式指代和意图延续；Retriever 只取历史 User 问题和实体；Resolver 注入带信任边界的上下文；QA 使用已解析实体 |
+| 设计原因 | SQL 保证耐久和审计，Redis 降低热会话读取成本，有界组装控制 Token 和历史污染 |
 | 可替代方案 | 仅 SQL、仅 Redis、向量化长期记忆、事件流存储 |
-| 最终取舍 | 双层方案提高容错；当前没有向量记忆和摘要压缩逻辑 |
+| 最终取舍 | V1 优先可预测的短期/结构化 Memory，不为简历效果提前引入向量长期记忆 |
 
-**重要限制**：当前聊天流程会读取和写入多轮历史，但历史尚未注入 AgentState 或 Resolver Prompt。因此现阶段 Memory 是“存储与回退能力”，不是“多轮推理上下文能力”。
+**重要限制**：当前摘要和实体提取是确定性 V1，仅识别显式订单/运单标识；没有长期语义召回、用户偏好学习、独立多轮评测门禁或真实终端用户身份体系。Checkpoint 仍与用户 Memory 分离。
 
 ### 8.2 Checkpoint
 
@@ -439,7 +441,7 @@ Redis 是可选组件，不是启动前提。
 
 - **职责**：保存最近会话消息，减少重复读取 SQL 的需要。
 - **输入**：会话标识和消息列表。
-- **输出**：最近 12 条会话消息；无 Redis、连接失败或读取失败时返回空结果并回退 SQL。
+- **输出**：与 SQL revision 匹配的最近 final 消息；无 Redis、Cache Miss、版本落后或读取失败时回退 SQL。
 - **设计原因**：短期状态对延迟敏感，且不应让缓存故障阻断客服流程。
 - **可替代方案**：仅 SQL、内存缓存、Memcached。
 - **最终取舍**：采用 Redis + SQL，换取性能与耐久性；引入了缓存与数据库可能短暂不一致的复杂性。
@@ -525,7 +527,7 @@ flowchart TD
 |---|---|---|---|
 | 异步 I/O | FastAPI、AsyncSession、异步 Provider 接口 | 减少数据库与网络等待对请求线程的占用 | 部分本地 Adapter 与 Chroma 调用仍受单机资源约束 |
 | 数据库连接 | PostgreSQL 连接池、连接预检查与回收 | 降低重复建连成本，提高稳定性 | 尚未按负载调优池大小或做读写分离 |
-| 会话读取 | Redis 保存最近 12 条消息，SQL 兜底 | 降低热会话读取延迟 | 历史当前未注入生成，收益主要在存储读取路径 |
+| 会话读取 | Redis revision Cache + SQL 事实源 + 有界 Context | 降低热会话读取延迟并控制 Prompt Token | Memory 注入会增加少量 Token，需通过专项多轮评测持续校准 |
 | 检索规模 | Top 3 返回、候选扩展后轻量 rerank、版本和类别过滤 | 限制 Prompt 长度和检索成本 | 进程内词法搜索不适合大规模文档集合 |
 | LLM 成本 | 聚合 token、成本和延迟；默认 Mock LLM | 支持成本可见与离线开发 | 尚无缓存、批处理、模型路由或预算熔断 |
 | 安全前置 | 用户、Tool、RAG 三类信任边界执行规则 + Qwen3Guard 并提前短路 | 避免不必要的后续工具、检索和业务模型调用 | 增加分类延迟和可用性依赖；默认关闭，需用安全回归集完成阈值校准 |

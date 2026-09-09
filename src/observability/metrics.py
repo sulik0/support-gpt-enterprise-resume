@@ -81,6 +81,26 @@ TICKET_ESCALATIONS_TOTAL = meter.create_counter(
 ACTIVE_SESSIONS = meter.create_up_down_counter(
     "active_sessions_count", description="Number of active user sessions in memory"
 )
+MEMORY_CONTEXT_LOADS_TOTAL = meter.create_counter(
+    "memory_context_loads", description="Conversation memory context loads"
+)
+MEMORY_WRITES_TOTAL = meter.create_counter(
+    "memory_writes", description="Durable conversation message writes"
+)
+MEMORY_CONTEXT_MESSAGES = meter.create_histogram(
+    "memory_context_messages",
+    unit="{message}",
+    description="Messages selected for Agent context",
+)
+MEMORY_CONTEXT_CHARS = meter.create_histogram(
+    "memory_context_chars",
+    unit="{character}",
+    description="Conversation context characters",
+)
+MEMORY_FILTERED_MESSAGES_TOTAL = meter.create_counter(
+    "memory_filtered_messages",
+    description="Unsafe messages excluded from Agent context",
+)
 QA_SCORE_HISTOGRAM = meter.create_histogram(
     "qa_score_ratio", description="Distribution of quality assurance scores"
 )

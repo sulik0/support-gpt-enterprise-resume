@@ -27,6 +27,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | PromptOps / EvalOps | 内容 Hash 快照、请求级版本绑定、成对实验、staging/production 门禁晋级、显式回滚与发布审计 |
 | Feedback | AgentRun + FeedbackEvent + Trace 关联，脱敏 SFT/DPO 候选导出 |
 | Resilience | LLM/RAG/Tool 统一超时、有界 Retry、Circuit Breaker、Fallback 与风险降级 |
+| Memory | SQL 结构化会话为事实源、Redis revision Cache、有界上下文、实体续接与 HITL 结算 |
 | Frontend | 用户咨询页、客服审批后台、Agent 可观测页 |
 
 ## 快速启动
@@ -47,6 +48,8 @@ uvicorn src.main:app --reload
 
 默认使用 Mock LLM、SQLite 和本地 ChromaDB，Redis 未启动时可正常降级。
 LangGraph Checkpoint 默认启用：本地写入独立的 `.runtime/langgraph-checkpoints.sqlite`；使用 PostgreSQL DATABASE_URL 时自动切换到官方 PostgreSQL Saver。高风险请求返回审批草稿后 Workflow 保持暂停，人工审批会恢复原执行而不是重跑前置节点。
+
+Memory V1 在 `/chat` 和用户咨询页中按 `session_id + customer_id` 续接会话。SQL 保存结构化消息、摘要和显式业务实体，Redis 只是带 revision 的可选缓存；待审草稿不会进入后续 Prompt，仅在审批通过或人工修改后结算为 final 消息。
 
 Tool Outbox Worker 默认随 FastAPI 启动，也可独立运行：
 

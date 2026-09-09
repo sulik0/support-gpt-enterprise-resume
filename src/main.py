@@ -38,12 +38,11 @@ from src.auth.rbac import (
 from src.database import AsyncSessionLocal, engine, get_db, init_db
 from src.evaluation.framework import run_deeval_evaluation
 from src.feedback.service import feedback_service
-from src.memory.redis_memory import redis_memory
+from src.memory import MemoryContext, MemoryOwnershipError, memory_service
 from src.models.db_models import (
     AgentExecution,
     AgentRun,
     ResponseApproval,
-    SessionMemory,
     Ticket,
     User,
 )
@@ -242,6 +241,7 @@ async def _process_ticket_with_agent(
     kb_version: str,
     endpoint: str,
     session_id: str | None = None,
+    memory_context: MemoryContext | None = None,
     require_persisted_result: bool = False,
 ) -> tuple[dict, int | None, AgentRun | None]:
     """执行并持久化工单 Workflow，供创建工单和对话入口复用。"""
@@ -256,6 +256,7 @@ async def _process_ticket_with_agent(
         agent_output = await _run_workflow_with_tool_audit(
             db,
             {
+                **(memory_context.state_updates() if memory_context else {}),
                 "ticket_id": ticket.id,
                 "customer_id": ticket.customer_id,
                 "subject": ticket.subject,
@@ -305,6 +306,16 @@ async def _process_ticket_with_agent(
             checkpoint_id=agent_output.get("checkpoint_id"),
             trace_id=agent_output.get("trace_id"),
         )
+    if memory_context is not None:
+        await memory_service.record_assistant_result(
+            db,
+            context=memory_context,
+            content=agent_output.get("suggested_response", ""),
+            ticket_id=ticket.id,
+            approval_id=approval_id,
+            intent=agent_output.get("intent"),
+            department=agent_output.get("department"),
+        )
     await db.commit()
 
     if require_persisted_result:
@@ -347,6 +358,12 @@ async def _resume_approval_execution(
         return execution
 
     try:
+        await memory_service.finalize_approval(
+            db,
+            approval_id=approval.id,
+            status=approval.status,
+            final_response=approval.modified_response or approval.drafted_response,
+        )
         final_response = approval.modified_response or approval.drafted_response
         output = await resume_agent_workflow(
             checkpoint_thread_id=execution.id,
@@ -631,7 +648,19 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     Submit a conversational message. Runs the LangGraph multi-agent flow.
     Appends conversation exchanges to historical memory.
     """
-    # 1. Retrieve or create ticket log record
+    # 1. 创建工单前先校验会话归属，避免越权请求留下孤立工单。
+    try:
+        memory_context = await memory_service.load_context(
+            db,
+            session_id=req.session_id,
+            customer_id=req.customer_id,
+        )
+    except MemoryOwnershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    # 2. Retrieve or create ticket log record
     ticket = Ticket(
         customer_id=req.customer_id,
         subject="Active Chat Conversation",
@@ -642,43 +671,25 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(ticket)
 
-    # 2. Retrieve history memory from db
-    history_res = await db.execute(
-        select(SessionMemory).filter(SessionMemory.session_id == req.session_id)
+    # 3. 持久化 User 消息，Workflow 使用写入前的历史上下文。
+    memory_context = await memory_service.begin_turn(
+        db,
+        session_id=req.session_id,
+        customer_id=req.customer_id,
+        content=req.message,
+        ticket_id=ticket.id,
+        prior_context=memory_context,
     )
-    session_mem = history_res.scalars().first()
-    if not session_mem:
-        session_mem = SessionMemory(
-            session_id=req.session_id,
-            customer_id=req.customer_id,
-            conversation_history=[],
-        )
-        db.add(session_mem)
 
-    # Use Redis as short-term working memory when available; SQL remains durable history.
-    redis_history = await redis_memory.load_messages(req.session_id)
-    session_history = list(
-        redis_history if redis_history is not None else session_mem.conversation_history
-    )
-    session_history.append({"role": "user", "content": req.message})
-
-    # 3. 执行 Workflow，并持久化工单分析、审批与 Agent Run。
+    # 4. 执行 Workflow，并持久化工单分析、审批与 Agent Run。
     agent_output, approval_id, agent_run = await _process_ticket_with_agent(
         db=db,
         ticket=ticket,
         kb_version=req.kb_version,
         endpoint="/chat",
         session_id=req.session_id,
+        memory_context=memory_context,
     )
-
-    # Append assistant message
-    session_history.append(
-        {"role": "assistant", "content": agent_output.get("suggested_response", "")}
-    )
-    session_mem.conversation_history = session_history
-    await redis_memory.save_messages(req.session_id, session_history)
-
-    await db.commit()
 
     # Build schema output
     citations = [
@@ -1275,6 +1286,17 @@ async def create_public_support_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Support message cannot be empty.",
         )
+    session_id = req.session_id or str(uuid.uuid4())
+    try:
+        memory_context = await memory_service.load_context(
+            db,
+            session_id=session_id,
+            customer_id=req.customer_id,
+        )
+    except MemoryOwnershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     ticket = Ticket(
         customer_id=req.customer_id,
         subject=message.splitlines()[0][:80],
@@ -1285,12 +1307,21 @@ async def create_public_support_request(
     db.add(ticket)
     await db.commit()
     await db.refresh(ticket)
+    memory_context = await memory_service.begin_turn(
+        db,
+        session_id=session_id,
+        customer_id=req.customer_id,
+        content=message,
+        ticket_id=ticket.id,
+        prior_context=memory_context,
+    )
     agent_output, approval_id, _ = await _process_ticket_with_agent(
         db=db,
         ticket=ticket,
         kb_version=req.kb_version,
         endpoint="/support/requests",
-        session_id=f"public_ticket_{ticket.id}",
+        session_id=session_id,
+        memory_context=memory_context,
         require_persisted_result=True,
     )
     await db.refresh(ticket)
@@ -1298,6 +1329,7 @@ async def create_public_support_request(
     if approval_id:
         return PublicSupportResponse(
             ticket_id=ticket.id,
+            session_id=session_id,
             status="pending_human",
             response=None,
             message="您的问题需要人工客服进一步确认，我们已经为您转交处理。",
@@ -1305,6 +1337,7 @@ async def create_public_support_request(
         )
     return PublicSupportResponse(
         ticket_id=ticket.id,
+        session_id=session_id,
         status="answered",
         response=agent_output.get("suggested_response", ""),
         message="智能客服已完成处理。",

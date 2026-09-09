@@ -513,9 +513,9 @@ API 返回审批状态和最终选定内容。当前没有单独的“已发送�
 
 ### 79. 人工修改后的结果是否反馈模型？
 
-当前不会。人工修改结果保存到审批记录，但没有进入训练集、Prompt Few-shot、长期 Memory 或自动评测回路。
+会回写短期会话 Memory：approved 使用原草稿，modified 使用人工修改结果，rejected 草稿不进入后续 Prompt。这是审批结算，不等于在线学习。
 
-未来可以将经过脱敏和质量审核的修改记录用于 Golden Set 或 Prompt 优化，但必须处理隐私、授权、样本质量和数据版本。
+当前 Feedback Pipeline 可导出脱敏 SFT/DPO 候选，但人工修改尚未自动进入训练、Prompt Few-shot 或 Baseline，仍需要质量审核、授权和数据版本治理。
 
 ## 十二、Memory
 
@@ -523,17 +523,17 @@ API 返回审批状态和最终选定内容。当前没有单独的“已发送�
 
 需要，因为客户问题可能跨多轮沟通，客服也需要看到历史记录。但 Memory 要区分会话消息、历史工单和长期语义记忆，不能混为一谈。
 
-当前实现了会话历史存储和历史工单 Tool Context，但会话历史尚未注入本次 Agent 推理。
+当前已实现 Memory V1：结构化消息、有界历史、确定性摘要、显式订单/运单实体和上一轮路由结果已注入 `AgentState`，供 Analyzer、Retriever、Resolver 和 QA 按各自边界使用。
 
 ### 81. 短期 Memory 存什么？
 
-按 session_id 保存 user 与 assistant 消息。Redis 只保留最近 12 条，TTL 为 24 小时；SQL 保存持久化 conversation_history。
+按 `session_id + customer_id` 管理会话归属，SQL 逐条保存 user/assistant 消息，Snapshot 保存确定性摘要、实体、Slot 和上一轮路由。Redis 只缓存最近 12 条 final 消息，TTL 默认为 24 小时。
 
-当前不保存 Planner 状态、工具结果摘要或向量化长期记忆。Checkpoint 另由 LangGraph Saver 保存，它属于执行恢复状态，不属于用户 Memory。
+当前不保存工具结果快照、用户长期偏好或向量化长期记忆。Checkpoint 另由 LangGraph Saver 保存，它属于执行恢复状态，不属于用户 Memory。
 
 ### 82. Redis 如何保存会话？
 
-每个 session_id 对应一个消息列表 Key。保存时截取最近 12 条，先更新列表，再设置 24 小时过期。读取或连接失败时返回空结果，主流程回退 SQL。
+先对 `customer_id:session_id` 做 SHA256，避免原始标识进入 Redis Key。Value 是带 SQL revision 的 JSON，包含最近 final 消息；TTL 默认 24 小时。连接失败、Key 过期或 revision 落后都当作 Cache Miss，主流程回退 SQL 并重新刷新缓存。
 
 Redis 是可选缓存，不是唯一事实源。
 

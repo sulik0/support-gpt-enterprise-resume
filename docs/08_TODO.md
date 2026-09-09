@@ -41,6 +41,10 @@
 
 ## P1
 
+- [x] 实现 Memory V1：Conversation/Message/Snapshot 结构化持久化、追加为主的消息、Redis revision Cache、会话归属、有界 Context Assembly、实体续接和 HITL 回写。
+- [ ] 增加多轮 Dataset/Workflow Replay 与 Quality Gate，覆盖指代、Slot 延续、跨会话隔离、Memory Poisoning、Token 和延迟增量。
+- [ ] 将用户页 Demo 客户选择器替换为真实身份/租户绑定，再宣称生产级会话隔离。
+- [ ] 为 Conversation/Memory 表增加 Alembic Migration、保留期、删除请求和归档策略。
 - [ ] 建设 Dataset Registry、数据版本和不可变 Snapshot。
 - [ ] 增加 Train / Validation / Test 划分及数据泄漏检查。
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
@@ -69,6 +73,7 @@
 - [x] 2026-09-08 完成 231 条全量测试，并通过固定 100 条 Baseline 的 PR Agent Quality Gate；CI / Docker 使用 Python 3.11。
 - [ ] 旧的 Python 3.13 `.venv` 仍是混装环境，不再作为项目验收环境。
 - [ ] 当前新增表依赖 SQLAlchemy `create_all`，不等同于生产 Schema Migration。
+- [ ] Memory V1 的摘要/实体为确定性轻量实现，尚未建立长期语义 Memory；同 session 并发请求可安全追加，但两请求的起始上下文仍可能同时取到旧 revision。
 - [ ] Checkpoint 尚无 TTL/归档、旧 Graph 多版本恢复与定期清理；AgentExecution 和 Saver DDL 尚未纳入 Alembic/受控 Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
 - [ ] 反馈 Token 目前随 Agent 响应返回，前端仍需安全保存并只在评价提交时使用。

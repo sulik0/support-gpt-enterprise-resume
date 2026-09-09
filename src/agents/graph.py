@@ -66,6 +66,7 @@ class AgentState(TypedDict):
     human_decision: Optional[str]
     ticket_id: int
     customer_id: str
+    session_id: str
     subject: str
     description: str
     kb_version: str
@@ -84,6 +85,17 @@ class AgentState(TypedDict):
     skill_allowed_tools: List[str]
     skill_forbidden_tools: List[str]
     skill_rag_categories: List[str]
+    memory_recent_turns: List[Dict[str, str]]
+    memory_summary: str
+    memory_active_entities: Dict[str, str]
+    memory_resolved_slots: Dict[str, Any]
+    memory_last_intent: Optional[str]
+    memory_last_department: Optional[str]
+    memory_version: int
+    memory_source: str
+    memory_filtered_messages: int
+    memory_prompt_context: str
+    memory_retrieval_context: str
     security_threat_detected: bool
     security_risk_score: float
     security_source: Optional[str]
@@ -190,9 +202,7 @@ def _apply_resilience_events(
         "dependency_events": _unique_values(
             state.get("dependency_events", []), serialized
         ),
-        "fallbacks_used": _unique_values(
-            state.get("fallbacks_used", []), fallbacks
-        ),
+        "fallbacks_used": _unique_values(state.get("fallbacks_used", []), fallbacks),
     }
 
 
@@ -225,15 +235,11 @@ async def skill_selector_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(
         tracer, "agent.skill_selector", _trace_attrs(state, node="skill_selector")
     ) as span:
-        result = await _run_node(
-            "skill_selector", skill_selector_agent.select, state
-        )
+        result = await _run_node("skill_selector", skill_selector_agent.select, state)
         attrs = {
             "skill.name": result.get("skill_name", "unknown"),
             "skill.version": result.get("skill_version", "unknown"),
-            "skill.selection_strategy": result.get(
-                "selection_strategy", "unknown"
-            ),
+            "skill.selection_strategy": result.get("selection_strategy", "unknown"),
             "skill.registry_id": result.get("skill_registry_id", "unknown"),
         }
         set_span_attributes(span, attrs)
@@ -397,8 +403,7 @@ def _merge_context_results(
                 0,
             )
             + max(
-                retrieval_result.get("tokens_input", 0)
-                - state.get("tokens_input", 0),
+                retrieval_result.get("tokens_input", 0) - state.get("tokens_input", 0),
                 0,
             )
         ),
@@ -553,6 +558,10 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "skill.version": state.get("skill_version"),
         "skill.selection_strategy": state.get("selection_strategy"),
         "skill.registry_id": state.get("skill_registry_id"),
+        "memory.source": state.get("memory_source", "empty"),
+        "memory.version": state.get("memory_version", 0),
+        "memory.message_count": len(state.get("memory_recent_turns", [])),
+        "memory.filtered_count": state.get("memory_filtered_messages", 0),
         "risk.level": state.get("risk_level"),
         "risk.score": state.get("risk_score"),
         "risk.requires_human": state.get("risk_requires_human"),
@@ -678,6 +687,7 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "human_decision": None,
         "ticket_id": initial_state.get("ticket_id", 0),
         "customer_id": initial_state.get("customer_id", ""),
+        "session_id": initial_state.get("session_id", ""),
         "subject": initial_state.get("subject", ""),
         "description": initial_state.get("description", ""),
         "kb_version": initial_state.get("kb_version", "v1"),
@@ -696,6 +706,19 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "skill_allowed_tools": [],
         "skill_forbidden_tools": [],
         "skill_rag_categories": [],
+        "memory_recent_turns": list(initial_state.get("memory_recent_turns", [])),
+        "memory_summary": initial_state.get("memory_summary", ""),
+        "memory_active_entities": dict(initial_state.get("memory_active_entities", {})),
+        "memory_resolved_slots": dict(initial_state.get("memory_resolved_slots", {})),
+        "memory_last_intent": initial_state.get("memory_last_intent"),
+        "memory_last_department": initial_state.get("memory_last_department"),
+        "memory_version": int(initial_state.get("memory_version", 0)),
+        "memory_source": initial_state.get("memory_source", "empty"),
+        "memory_filtered_messages": int(
+            initial_state.get("memory_filtered_messages", 0)
+        ),
+        "memory_prompt_context": initial_state.get("memory_prompt_context", ""),
+        "memory_retrieval_context": initial_state.get("memory_retrieval_context", ""),
         "security_threat_detected": False,
         "security_risk_score": 0.0,
         "security_source": None,
@@ -781,9 +804,7 @@ async def _run_agent_workflow_pinned(initial_state: Dict[str, Any]) -> Dict[str,
                 set_agent_trace_id(final_output["trace_id"])
         try:
             request_status = (
-                "interrupted"
-                if final_output.get("workflow_interrupted")
-                else "success"
+                "interrupted" if final_output.get("workflow_interrupted") else "success"
             )
             AGENT_REQUESTS_TOTAL.add(1, {"status": request_status})
         except Exception:
@@ -816,9 +837,7 @@ async def _run_agent_workflow_pinned(initial_state: Dict[str, Any]) -> Dict[str,
         ),
         "skill.name": final_output.get("skill_name", "unselected"),
         "skill.version": final_output.get("skill_version", "unselected"),
-        "skill.selection_strategy": final_output.get(
-            "selection_strategy", "not_run"
-        ),
+        "skill.selection_strategy": final_output.get("selection_strategy", "not_run"),
         "skill.registry_id": final_output.get("skill_registry_id", "unselected"),
         "risk.level": final_output.get("risk_level", "low"),
         "risk.score": final_output.get("risk_score", 0.0),
@@ -826,9 +845,7 @@ async def _run_agent_workflow_pinned(initial_state: Dict[str, Any]) -> Dict[str,
         "risk.block_automation": final_output.get("risk_block_automation", False),
         "security.threat_detected": final_output.get("security_threat_detected", False),
         "security.source": final_output.get("security_source"),
-        "resilience.degradation_level": final_output.get(
-            "degradation_level", "none"
-        ),
+        "resilience.degradation_level": final_output.get("degradation_level", "none"),
         "resilience.event_count": len(final_output.get("dependency_events", [])),
         "resilience.fallback_count": len(final_output.get("fallbacks_used", [])),
     }
@@ -862,9 +879,7 @@ async def _run_agent_workflow_pinned(initial_state: Dict[str, Any]) -> Dict[str,
     )
     if final_output.get("workflow_interrupted"):
         try:
-            AGENT_WORKFLOW_INTERRUPTS_TOTAL.add(
-                1, {"type": "response_approval"}
-            )
+            AGENT_WORKFLOW_INTERRUPTS_TOTAL.add(1, {"type": "response_approval"})
         except Exception:
             logger.debug("Unable to record workflow interrupt metric")
     return final_output

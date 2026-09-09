@@ -162,16 +162,17 @@ Skill Framework V1 共有 **6 个 Skill**：`refund_support`、`order_support`�
 
 ## 12. Memory
 
-系统保存会话历史，但当前不具备“将完整多轮历史注入本次 Agent 推理”的能力。
+系统已实现 Memory V1：将有界多轮历史、确定性摘要、显式业务实体和上一轮路由结果注入当前 Agent Workflow。
 
 | 层次 | 当前事实 |
 |---|---|
-| SQL `SessionMemory` | 保存持久化会话消息，是 Redis 不可用时的兜底 |
-| Redis | 可选短期缓存，保存最近 12 条消息，TTL 为 24 小时 |
-| 当前业务使用 | 聊天流程会读取和写入历史消息 |
-| 当前限制 | 历史尚未注入 Analyzer 或 Resolver 的推理上下文 |
+| SQL | `ConversationSession` 绑定客户归属，`ConversationMessage` 以追加为主保存消息，`ConversationMemorySnapshot` 保存摘要/实体/上一轮路由 |
+| Redis | 可选缓存最近 12 条 final 消息，TTL 24 小时，必须与 SQL revision 一致 |
+| 节点使用 | Analyzer 做显式指代续接，Retriever 使用历史 User 问题/实体，Resolver 注入受限会话上下文，QA 校验解析实体 |
+| 安全 | 历史重新脱敏并检测 Injection；pending/rejected 草稿不进入 Prompt；Tool 仍重查实时业务事实 |
+| 当前限制 | 无向量长期记忆、用户偏好学习、真实多租户身份接入和多轮 Evaluation Gate |
 
-可以说“实现会话历史存储与 Redis 降级”；不能说“已实现基于多轮历史的 Agent 推理”或“已实现长期记忆”。
+可以说“已实现受控的多轮短期 Memory”；不能说“已实现向量长期记忆”、“已完成多租户隔离”或“已通过真实多轮业务指标验证”。
 
 ## 13. Prompt
 
@@ -225,8 +226,8 @@ Prompt Injection 不再只是英文关键词检测，当前实现为确定性多
 
 Redis 是可选组件，不是系统启动或处理工单的强依赖。
 
-- Redis 配置可用时，保存会话最近 12 条消息，TTL 为 24 小时。
-- Redis 未配置、连接失败、读取失败或保存失败时，主流程继续运行，历史读取回退到 SQL。
+- Redis 配置可用时，缓存会话最近 12 条 final 消息，TTL 为 24 小时，Key 不包含原始客户/会话标识。
+- Redis 未配置、连接失败、Cache Miss 或 revision 不一致时，主流程继续运行并回退 SQL。
 - Docker Compose 会启动 Redis；本地默认配置不要求 Redis。
 
 不能说 Redis 是唯一记忆存储、必须依赖 Redis，或 Redis 当前承担分布式锁、队列、Checkpoint、限流等职责。
@@ -342,7 +343,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 | Redis 不可用 | Redis 是可选组件 | 自动回退 SQL 历史 | 不要说 Redis 已高可用或具备集群容灾 |
 | 类别检索无结果 | 分类可能不完全匹配知识类别 | 保留版本，放宽类别回退一次 | 不要说已实现通用检索重试或生产级召回保证 |
 | 工具、LLM、RAG 或 QA 异常 | 外部能力或 Provider 可能失败 | 统一故障分类、有界 Retry、进程内 Circuit Breaker、LLM/RAG Fallback、安全降级与人工审批；高风险写调用不重试，专用 Tool Outbox 只 Retry 幂等对账 | 不要说已实现分布式 Breaker、通用消息平台或生产故障演练 |
-| 会话历史未进入推理 | 历史当前只保存和读取 | 将其作为后续改造项 | 不要说系统已经具备多轮上下文推理 |
+| Memory 上下文污染 | 历史可携带 PII、Injection 或未审草稿 | 重新脱敏/扫描，仅 final 消息入 Prompt，审批后幂等回写 | 不要把 Memory 当作可信指令或实时业务事实 |
 | Tool 高风险写入的不确定结果 | 写 Action、Outbox、调用审计和状态事件已持久化；不确定结果进入 `unknown` | 业务幂等键 + 自动 Reconciliation Worker 查询 Mock OMS，确认后补写状态；查询 Retry 耗尽进入 DLQ/人工 | 不要说已接真实 OMS、实现跨系统 exactly-once 或通用 Saga 平台 |
 | Collector 或下游不可用 | 应用通过 OTLP 统一上报 | 遥测 fail-open，业务继续；本地启动前检不可达时跳过 exporter，Collector 恢复后重启 Backend 恢复上报 | 不要说当前已有 Collector 高可用或 Trace 持久化兜底 |
 | Feedback 新表迁移 | 当前使用 SQLAlchemy `create_all` 创建新表 | 本地可直接运行；生产发布前补 Alembic migration | 不要说已经具备生产 Schema Migration |
@@ -373,7 +374,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 2. 所有 CRM、OMS、Ticketing、退款初筛和默认 LLM 均为 Mock，除非代码与凭据明确变为真实集成。
 3. Agent 数量固定表述为 6 个逻辑业务 Agent 节点 + Skill Selector + Approval Gate；Tool 数量固定表述为 5 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
 4. MCP 数量为 0；独立 TaskState、动态 Planner、自动 Reflection 和 pgvector 均未采用。Checkpoint 已实现，但只覆盖固定 Workflow 的审批暂停与恢复；Tool Outbox 是高风险写操作专用队列，不是通用 Agent 任务队列。
-5. Redis 是可选短期缓存，SQL 是持久化兜底；会话历史尚未注入 Agent 推理。
+5. Memory V1 以 SQL 结构化消息为事实源、Redis 为 revision Cache，有界历史已注入 Agent；它不等于向量长期记忆。
 6. ChromaDB 是当前向量数据库；Hybrid RAG 是当前检索方案。
 7. 项目没有真实生产上线数据、线上 KPI 或真实客户业务数据。
 8. 团队人数和个人贡献归属没有仓库事实依据，必须由回答者的真实经历补充，不能推测。

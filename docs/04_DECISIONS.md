@@ -494,15 +494,15 @@ ChromaDB 满足本地 Demo、版本过滤、向量召回和持久化的需求，
 
 ### 最终方案
 
-Redis 保存最近 12 条消息并设置 24 小时 TTL；SQL `SessionMemory` 保存持久化历史；Redis 不可用时自动使用 SQL。
+采用 Memory V1：SQL 的 `ConversationSession` / 追加为主的 `ConversationMessage` / `ConversationMemorySnapshot` 作为事实源，Redis 仅缓存最近 final 消息并设置 24 小时 TTL。每份 Cache 带 SQL revision，不一致即回退 SQL；旧 `SessionMemory` 数据在首次读取时兼容迁移。
 
 ### 为什么选择
 
-缓存不能成为客服主链路的强依赖，SQL 兜底满足可用性和本地运行要求。
+缓存不能成为客服主链路的强依赖；同时历史在注入 Analyzer/Retriever/Resolver/QA 前必须有界截取、PII 脱敏和 Prompt Injection 复检。
 
 ### 工程权衡
 
-当前会话历史尚未注入 Agent Prompt，因此这是存储与回退能力，不是完整的多轮推理记忆。
+V1 只实现有界短期 Memory 和确定性实体/摘要；不保存长期偏好，不做向量语义召回。待审草稿仅为 pending，审批通过/修改后才进入 final 历史，被拒绝草稿永不进入 Prompt。新表仍依赖 `create_all`，生产需 Alembic Migration。
 
 ## 决策 16：采用 LangGraph Checkpoint + Durable Execution
 

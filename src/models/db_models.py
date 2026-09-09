@@ -62,7 +62,7 @@ class Ticket(Base):
 
 
 class SessionMemory(Base):
-    """持久化会话标识及多轮对话历史，作为 Redis 降级存储。"""
+    """保留旧版 JSON 会话数据，供 Memory V1 首次访问时迁移。"""
 
     __tablename__ = "session_memories"
 
@@ -74,6 +74,104 @@ class SessionMemory(Base):
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
     )
+
+
+class ConversationSession(Base):
+    """绑定会话与客户归属，使用 revision 校验 Redis Cache。"""
+
+    __tablename__ = "conversation_sessions"
+
+    session_id = Column(String(100), primary_key=True)
+    customer_id = Column(String(100), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="active")
+    revision = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    messages = relationship(
+        "ConversationMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+    memory_snapshot = relationship(
+        "ConversationMemorySnapshot",
+        back_populates="session",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class ConversationMessage(Base):
+    """以追加为主保存消息；仅审批结算会更新 pending 记录。"""
+
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        Index(
+            "ix_conversation_message_lookup",
+            "session_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True)
+    session_id = Column(
+        String(100),
+        ForeignKey("conversation_sessions.session_id"),
+        nullable=False,
+        index=True,
+    )
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=True, index=True)
+    approval_id = Column(
+        Integer,
+        ForeignKey("response_approvals.id"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="final")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    session = relationship("ConversationSession", back_populates="messages")
+
+
+class ConversationMemorySnapshot(Base):
+    """保存确定性摘要、实体和上一轮路由结果。"""
+
+    __tablename__ = "conversation_memory_snapshots"
+
+    session_id = Column(
+        String(100),
+        ForeignKey("conversation_sessions.session_id"),
+        primary_key=True,
+    )
+    summary = Column(Text, nullable=False, default="")
+    active_entities = Column(JSON, nullable=False, default=dict)
+    resolved_slots = Column(JSON, nullable=False, default=dict)
+    last_intent = Column(String(100), nullable=True)
+    last_department = Column(String(100), nullable=True)
+    version = Column(Integer, nullable=False, default=0)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    session = relationship("ConversationSession", back_populates="memory_snapshot")
 
 
 class KnowledgeDoc(Base):
@@ -168,9 +266,7 @@ class AgentSkillSelection(Base):
 
     __tablename__ = "agent_skill_selections"
 
-    agent_run_id = Column(
-        String(36), ForeignKey("agent_runs.id"), primary_key=True
-    )
+    agent_run_id = Column(String(36), ForeignKey("agent_runs.id"), primary_key=True)
     skill_name = Column(String(100), nullable=False, index=True)
     skill_version = Column(String(50), nullable=False)
     selection_strategy = Column(String(50), nullable=False)

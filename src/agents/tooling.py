@@ -106,6 +106,14 @@ class ToolingAgent:
             profile = profile_call.get("result") or {}
             past_tickets = ticket_call.get("result") or []
             orders = order_call.get("result") if order_call else []
+            order_id = (state.get("memory_active_entities") or {}).get("order_id")
+            if order_id and orders:
+                # Memory 只调整展示优先级，Tool 仍以实时 OMS 结果为准。
+                orders = sorted(
+                    orders,
+                    key=lambda item: str(item.get("order_id", "")).upper()
+                    != str(order_id).upper(),
+                )
 
             public_tool_calls = [
                 {key: value for key, value in call.items() if key != "result"}
@@ -180,6 +188,9 @@ class ToolingAgent:
                 },
                 "recent_orders": orders[:3],
                 "past_tickets": past_tickets[:3],
+                "resolved_request_entities": dict(
+                    state.get("memory_active_entities") or {}
+                ),
                 "mocked": True,
                 "tool_policy": {
                     "operator_role": operator_role,

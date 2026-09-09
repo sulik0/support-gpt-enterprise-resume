@@ -18,9 +18,25 @@ const EXAMPLE_QUESTIONS = [
   'API 一直超时，应该如何排查？',
 ];
 
+function createSessionId() {
+  return globalThis.crypto?.randomUUID?.()
+    || `support-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function sessionForCustomer(customerId) {
+  const key = `supportgpt:session:${customerId}`;
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const created = createSessionId();
+  localStorage.setItem(key, created);
+  return created;
+}
+
 export default function CustomerSupportPage({ onStaffEntry }) {
   const [customerId, setCustomerId] = useState('cust_101');
+  const [sessionId, setSessionId] = useState(() => sessionForCustomer('cust_101'));
   const [message, setMessage] = useState('');
+  const [conversation, setConversation] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -31,10 +47,18 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     setSubmitting(true);
     setResult(null);
     setError('');
+    const userMessage = message.trim();
+    setConversation((current) => [...current, { role: 'user', content: userMessage }]);
     try {
-      setResult(await submitSupportRequest(customerId, message.trim()));
+      const nextResult = await submitSupportRequest(customerId, userMessage, sessionId);
+      setResult(nextResult);
+      setConversation((current) => [...current, {
+        role: nextResult.status === 'answered' ? 'assistant' : 'status',
+        content: nextResult.response || nextResult.message,
+      }]);
     } catch (requestError) {
       setError(requestError.message || '问题提交失败，请稍后重试。');
+      setConversation((current) => current.slice(0, -1));
     } finally {
       setSubmitting(false);
     }
@@ -44,6 +68,22 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     setMessage('');
     setResult(null);
     setError('');
+  }
+
+  function startNewConversation(nextCustomerId = customerId) {
+    const nextSessionId = createSessionId();
+    localStorage.setItem(`supportgpt:session:${nextCustomerId}`, nextSessionId);
+    setCustomerId(nextCustomerId);
+    setSessionId(nextSessionId);
+    setConversation([]);
+    resetConversation();
+  }
+
+  function switchCustomer(nextCustomerId) {
+    setCustomerId(nextCustomerId);
+    setSessionId(sessionForCustomer(nextCustomerId));
+    setConversation([]);
+    resetConversation();
   }
 
   return (
@@ -71,6 +111,16 @@ export default function CustomerSupportPage({ onStaffEntry }) {
         </div>
 
         <div className="support-card">
+          {!result && conversation.length > 0 && (
+            <div className="support-conversation" aria-label="当前对话记录">
+              {conversation.slice(-6).map((item, index) => (
+                <div className={`support-message ${item.role}`} key={`${item.role}-${index}`}>
+                  <span>{item.role === 'user' ? '您' : item.role === 'assistant' ? 'AI' : '状态'}</span>
+                  <p>{item.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
           {!result && (
             <form onSubmit={handleSubmit} className="support-form">
               <div className="support-form-heading">
@@ -80,7 +130,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
 
               <label className="customer-selector">
                 <span>演示客户</span>
-                <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} disabled={submitting}>
+                <select value={customerId} onChange={(event) => switchCustomer(event.target.value)} disabled={submitting}>
                   <option value="cust_101">简·多伊（VIP 客户）</option>
                   <option value="cust_102">约翰·史密斯（标准客户）</option>
                   <option value="cust_103">艾克米公司（企业客户）</option>
@@ -123,7 +173,8 @@ export default function CustomerSupportPage({ onStaffEntry }) {
               <span className="result-icon"><CheckCircle2 size={28} /></span>
               <div className="result-heading"><span>工单 #{result.ticket_id}</span><strong>智能客服已完成回复</strong></div>
               <div className="customer-answer"><Bot size={18} /><p>{result.response}</p></div>
-              <button type="button" className="support-secondary" onClick={resetConversation}>继续提问</button>
+              <button type="button" className="support-secondary" onClick={resetConversation}>继续追问</button>
+              <button type="button" className="support-secondary" onClick={() => startNewConversation()}>新对话</button>
             </section>
           )}
 
@@ -133,7 +184,8 @@ export default function CustomerSupportPage({ onStaffEntry }) {
               <div className="result-heading"><span>工单 #{result.ticket_id}</span><strong>已转交人工客服</strong></div>
               <p>{result.message}</p>
               <div className="human-review-note"><Headphones size={18} /><span>客服员工将在后台核对 AI 草稿、业务信息和风险原因后处理。</span></div>
-              <button type="button" className="support-secondary" onClick={resetConversation}>提交其他问题</button>
+              <button type="button" className="support-secondary" onClick={resetConversation}>继续追问</button>
+              <button type="button" className="support-secondary" onClick={() => startNewConversation()}>新对话</button>
             </section>
           )}
         </div>
