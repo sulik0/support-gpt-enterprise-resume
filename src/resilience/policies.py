@@ -20,6 +20,17 @@ def llm_policy(operation: str) -> ResiliencePolicy:
     )
 
 
+def decision_policy() -> ResiliencePolicy:
+    """DecisionProvider 失败时回退原有 LLM，不单独触发 HITL。"""
+    return ResiliencePolicy(
+        timeout_seconds=settings.JEV_TIMEOUT_SECONDS,
+        max_retries=settings.JEV_MAX_RETRIES,
+        circuit_failure_threshold=settings.RESILIENCE_CIRCUIT_FAILURE_THRESHOLD,
+        circuit_recovery_seconds=settings.RESILIENCE_CIRCUIT_RECOVERY_SECONDS,
+        failure_degradation=DegradationLevel.PARTIAL,
+    )
+
+
 def rag_policy() -> ResiliencePolicy:
     """检索失败允许用另一路候选集继续提供有限回答。"""
     return ResiliencePolicy(

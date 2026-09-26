@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     LLM_RESOLVER_MAX_RAG_CHARS: int = Field(default=5000, ge=500, le=20000)
     LLM_RESOLVER_MAX_TOOL_CHARS: int = Field(default=2500, ge=500, le=10000)
     LLM_QA_MAX_CONTEXT_CHARS: int = Field(default=4000, ge=500, le=20000)
+    # DecisionProvider 默认关闭，Jev 只处理封闭选项的语义决策。
+    DECISION_PROVIDER: str = Field(default="disabled", pattern="^(disabled|jev)$")
+    JEV_API_KEY: Optional[str] = Field(default=None)
+    JEV_BASE_URL: Optional[str] = Field(default=None)
+    JEV_MODEL: str = Field(default="jev-1.13.0", min_length=1, max_length=100)
+    JEV_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0.0, le=30.0)
+    JEV_MAX_RETRIES: int = Field(default=0, ge=0, le=2)
+    JEV_MAX_STATE_CHARS: int = Field(default=12000, ge=1000, le=100000)
+    JEV_INTENT_CONFIDENCE_THRESHOLD: float = Field(default=0.75, ge=0.0, le=1.0)
+    JEV_QA_CONFIDENCE_THRESHOLD: float = Field(default=0.75, ge=0.0, le=1.0)
+    JEV_NOUL_THRESHOLD: float = Field(default=0.7, ge=0.0, le=1.0)
     # Resilience 默认只执行一次有界 Retry，避免放大故障。
     RESILIENCE_ENABLED: bool = Field(default=True)
     RESILIENCE_LLM_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0.0)
@@ -176,6 +187,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM fallback requires model name, base URL and API key together."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_decision_provider(self):
+        """Jev 启用时必须显式提供密钥。"""
+        if self.DECISION_PROVIDER == "jev" and not str(self.JEV_API_KEY or "").strip():
+            raise ValueError("DECISION_PROVIDER=jev requires JEV_API_KEY.")
         return self
 
     @model_validator(mode="after")

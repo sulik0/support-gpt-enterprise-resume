@@ -22,6 +22,7 @@
 - Skill：`src/skills/` 管理 6 个版本化 Skill，选择快照进入 State/Checkpoint/Trace/AgentRun/Evaluation；ToolRegistry 在现有治理前再做 Skill Allowlist 校验。
 - Durable Execution：本地 AsyncSqliteSaver、PostgreSQL AsyncPostgresSaver；AgentExecution 关联工单/审批/Run/Trace，数据库恢复租约防重复，启动扫描补偿已决策但未完成的续跑。
 - LLM：默认 Mock，保留 `mock/openai/azure`；`openai` 为通用 OpenAI-compatible Provider。
+- DecisionProvider：`src/decision/` 封装可选 Jev System One。规则优先，Jev 只做 Analyzer 歧义分类和 QA 封闭评判；低置信度/不可用回退原 LLM，未接入离线 Judge。
 - 优化：Analyzer 规则优先，Analyzer/QA 可使用小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
 - RAG：ChromaDB + 关键词/向量 Hybrid Search + 轻量 rerank + version/category filter + citation。
 - Tool：Mock CRM/OMS/Ticket Adapter 通过 ToolRegistry 暴露；V2.2 为高风险写 Action 增加业务幂等、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿和 Policy 回放。
@@ -49,6 +50,7 @@
 11. 打开工单详情不得触发新 Workflow，只加载已保存 AgentRun 和 Approval。
 12. 需要审批的 Workflow 必须在 Approval Gate 暂停并使用原 thread_id 恢复；不得通过从头重跑模拟恢复。
 13. 高风险写 Tool 的 HTTP 执行接口只能原子写入 `queued + Outbox`；`unknown` 必须先对账，禁止将超时直接当作失败并重试写入。
+14. DecisionProvider 的输出不是授权。Skill、Tool 权限、Risk Engine 和 Approval Gate 不得改为 Jev 或 LLM 自由决定。
 
 ## 代码定位
 
@@ -61,6 +63,7 @@
 | 意图枚举 | `src/models/intents.py` |
 | Skill Framework | `src/skills/`、`src/agents/skill_selector.py` |
 | LLM Provider 与 Prompt | `src/llm/provider.py` |
+| DecisionProvider / Jev | `src/decision/` |
 | Tool Registry / Adapter | `src/tools/` |
 | RAG | `src/rag/` |
 | Guardrails / Risk | `src/guardrails/`、`src/risk/` |
@@ -89,6 +92,7 @@
 - Memory V1 已注入 Analyzer、Retriever、Resolver 和 QA；尚无向量长期记忆、真实用户/租户身份接入和多轮专项评测门禁。
 - Tool 调用已持久化脱敏审计；高风险写 Tool 必须经 `ToolAction` 状态机、职责分离审批和 Outbox Worker，Agent Workflow 不会自动执行。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未基于真实运营数据校准。
+- Jev DecisionProvider 默认关闭，尚无真实准确率/延迟校准，且按当前边界不接入离线 Evaluation Judge。
 - Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
 - Docker Compose/Kubernetes 是可复现模板，不代表生产上线。
 - Resilience 的通用 Circuit Breaker 仍为单进程 V1；Tool Governance V2.2 已有专用数据库 Outbox、Retry/DLQ、业务幂等和自动对账，但没有通用分布式消息平台，OMS 仍为 Mock。

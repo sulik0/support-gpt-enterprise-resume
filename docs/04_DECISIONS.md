@@ -840,6 +840,31 @@ V2.1 新建 `ToolAction`、Append-only `ToolActionEvent` 和 `ToolInvocationAudi
 
 Action 参数使用 Fernet 加密，HMAC 用于 payload 与 Policy 快照完整性校验，审计与 Outbox 不保存原始参数。数据库租约 + `version` Compare-and-Set 支持多 Worker 竞争，不额外引入 Redis 分布式锁；Retry/DLQ 复用 Outbox 表以降低基础设施成本。该设计提供 at-least-once 投递与业务幂等，不宣称跨系统 exactly-once。当前 OMS 是进程内 Mock，新表仍依赖 `create_all`，生产需补 Alembic Migration、真实 OMS 契约测试和数据保留策略。
 
+## 决策 27：封闭语义判断采用可回退的 DecisionProvider
+
+### 问题背景
+
+Analyzer 歧义分类和 QA Review 本质上是有限选项判断。直接使用 Chat LLM 会产生长 Prompt、JSON 解析和额外 Token，但完全交给外部决策模型又会引入可用性与阈值风险。
+
+### 候选方案
+
+- 继续使用 Analyzer / QA 轻量 Chat LLM。
+- 仅用确定性规则。
+- 直接将 Jev 嵌入各节点。
+- 增加可替换 `DecisionProvider`，规则优先并保留 LLM Fallback。
+
+### 最终方案
+
+建立 `DecisionProvider` 和领域 `DecisionService`。V1 通过 Jev System One HTTP API 合并提交版本化 `Choice / Score / Noul` 问题；Analyzer 只在规则无法确定时调用，QA 只在确定性校验无结论时调用。Jev 不可用、响应非法、State 超长或低置信度时，自动回退原有 LLM。
+
+### 为什么选择
+
+这个边界将“语义建议”和“业务授权”分离。Jev 只输出类型化信号，Intent Taxonomy、Skill Selector、Tool Governance、Risk Engine 与 Approval Gate 继续由确定性代码约束。
+
+### 工程权衡
+
+外部请求增加脱敏、限长、超时、Circuit Breaker、Trace 和 Metrics。为避免与当前 LangChain 的 `tenacity<9` 约束冲突，V1 使用已有 `httpx` 调用官方 System One HTTP 协议，不引入强制 `tenacity>=9` 的 SDK。当前默认关闭，需 Shadow 运行和人工校准后才能调整阈值；且按要求暂不接入离线 Evaluation Judge。
+
 ## 决策总览
 
 | 领域 | 最终决策 | 当前边界 |
@@ -848,6 +873,7 @@ Action 参数使用 Fernet 加密，HMAC 用于 payload 与 Policy 快照完整�
 | 状态 | 单一 AgentState + SQLite/PostgreSQL Checkpoint + AgentExecution | 无独立 TaskState；无 TTL/旧 Graph 兼容 |
 | 工具 | ToolRegistry + Mock Adapter + Tool Governance V2.2 | 无 MCP；写 Tool 仍为 Mock，但已有业务幂等、Outbox、自动对账、Retry/DLQ、补偿与 Policy 回放契约 |
 | 模型 | Mock 默认，OpenAI / Azure 可选 | 无真实生产模型效果承诺 |
+| 决策模型 | 规则 + 可选 Jev DecisionProvider + LLM Fallback | 默认关闭；未接入离线 Judge，未经真实数据校准 |
 | 安全 | 用户 / Tool / RAG 规则 + Qwen3Guard + Risk Engine，输出 Filter + QA | 语义安全默认关闭，尚无真实业务攻击集校准与生产可用性数据 |
 | RAG | ChromaDB Hybrid RAG | 无 pgvector、无生产搜索后端 |
 | 数据 | SQLite 本地、PostgreSQL Compose | 无迁移、读写分离、多租户 |

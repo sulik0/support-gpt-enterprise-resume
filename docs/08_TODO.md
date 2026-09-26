@@ -1,6 +1,6 @@
 # 项目任务清单
 
-> 最后更新：2026-09-08。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
+> 最后更新：2026-09-27。状态以代码、测试和 `03_INTERVIEW_CANON.md` 为准。
 
 ## P0
 
@@ -36,6 +36,7 @@
 - [x] 完成 Tool Governance V2.2：写 Action 业务幂等键、Transactional Outbox、异步 Worker、数据库租约/乐观抢占、unknown 自动对账、Retry/DLQ、状态事件补写、显式补偿和版本化 Policy 回放。
 - [x] 完成 LangGraph Checkpoint + Durable Execution V1：SQLite/PostgreSQL Saver、Approval Gate interrupt/resume、AgentExecution、数据库恢复租约、启动扫描和主管重试 API。
 - [x] 完成 Skill Framework V1：6 个版本化 Skill 覆盖 8 个 Intent，确定性 Selector、Registry Hash、Tool Allowlist，并关联 State/Checkpoint/OTel/AgentRun/Baseline。
+- [x] 完成 DecisionProvider V1：可选 Jev System One，Analyzer 歧义分类与 QA 类型化评判，包含脱敏、限长、Trace/Metrics、超时/熔断与低置信度 LLM Fallback。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 
@@ -50,6 +51,7 @@
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
 - [x] 增加 PromptOps / EvalOps V1：三个节点内容快照、ContextVar 版本绑定、运行/Trace 归因、当前/候选成对实验、证据校验、环境晋级和显式回滚。
 - [ ] 增加按会话灰度、线上 A/B、自动回滚和人工校准的语义发布门禁；V1 的 Mock 通过不代表 Prompt 语义质量通过。
+- [ ] 为 Jev DecisionProvider 增加 Shadow Mode 数据校准和故障率/置信度分布看板；暂不将 Jev 用作离线 Evaluation Judge。
 - [x] 基于首次真实 100 条 Baseline 完成归因修复，Case Pass 由 `0.54` 提升到 `0.99`，固化 Release Gate 阈值与已知失败 Case 白名单。
 - [ ] 增加 `ticket_status_events`；Tool Calling 持久化审计已在 V2.1 完成。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。

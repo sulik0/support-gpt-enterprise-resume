@@ -5,6 +5,7 @@ import time
 from typing import Dict, Any
 
 from src.config import settings
+from src.decision import decision_service
 from src.llm.provider import llm_provider
 from src.guardrails.response_filter import filter_response
 from src.observability.metrics import (
@@ -58,13 +59,36 @@ class QualityAssuranceAgent:
                 tool_context=tool_context,
                 context_texts=context_texts,
             )
+            decision_records = list(state.get("decision_records", []))
             if rule_result is None:
-                qa_eval, in_tok, out_tok = await llm_provider.evaluate_qa(
+                decision = await decision_service.judge_response(
                     query=query,
-                    context=context_texts,
+                    evidence=context_texts,
                     response=filtered_response_text,
                 )
-                strategy = "llm"
+                in_tok = decision.result.input_tokens
+                out_tok = decision.result.output_tokens
+                if decision.result.enabled:
+                    decision_records.append(
+                        decision.result.audit_record(
+                            accepted=decision.accepted,
+                            fallback_reason=decision.fallback_reason,
+                        )
+                    )
+                if decision.accepted and decision.evaluation is not None:
+                    qa_eval = dict(decision.evaluation)
+                    strategy = "jev"
+                else:
+                    qa_eval, llm_in_tok, llm_out_tok = (
+                        await llm_provider.evaluate_qa(
+                            query=query,
+                            context=context_texts,
+                            response=filtered_response_text,
+                        )
+                    )
+                    in_tok += llm_in_tok
+                    out_tok += llm_out_tok
+                    strategy = "llm"
             else:
                 qa_eval = rule_result
                 in_tok = 0
@@ -113,6 +137,7 @@ class QualityAssuranceAgent:
                 "response_grounded": response_grounded,
                 "response_requires_human": response_requires_human,
                 "qa_strategy": strategy,
+                "decision_records": decision_records,
                 "errors": state.get("errors", [])
                 + (
                     ["QA score alert: potential hallucination detected."]

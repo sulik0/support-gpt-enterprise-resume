@@ -133,6 +133,7 @@ class AgentState(TypedDict):
     degradation_reasons: List[str]
     dependency_events: List[Dict[str, Any]]
     fallbacks_used: List[str]
+    decision_records: List[Dict[str, Any]]
     workflow_path: List[str]
     errors: List[str]
 
@@ -214,7 +215,11 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
             "ticket_analyzer", ticket_analyzer_agent.analyze, state
         )
         set_span_attributes(
-            span, {"analyzer.strategy": result.get("analyzer_strategy", "unknown")}
+            span,
+            {
+                "analyzer.strategy": result.get("analyzer_strategy", "unknown"),
+                **_latest_decision_trace_attrs(result),
+            },
         )
         logger.info(
             "analyzer completed",
@@ -462,7 +467,13 @@ async def resolve_node(state: AgentState) -> Dict[str, Any]:
 async def qa_node(state: AgentState) -> Dict[str, Any]:
     with observed_span(tracer, "agent.qa", _trace_attrs(state, node="qa")) as span:
         result = await _run_node("qa", quality_assurance_agent.verify, state)
-        set_span_attributes(span, {"qa.strategy": result.get("qa_strategy", "unknown")})
+        set_span_attributes(
+            span,
+            {
+                "qa.strategy": result.get("qa_strategy", "unknown"),
+                **_latest_decision_trace_attrs(result),
+            },
+        )
         logger.info(
             "qa completed",
             extra={
@@ -572,6 +583,22 @@ def _trace_attrs(state: Dict[str, Any], node: str) -> Dict[str, Any]:
         "resilience.degradation_level": state.get("degradation_level", "none"),
         "resilience.event_count": len(state.get("dependency_events", [])),
         "resilience.fallback_count": len(state.get("fallbacks_used", [])),
+        "decision.record_count": len(state.get("decision_records", [])),
+    }
+
+
+def _latest_decision_trace_attrs(state: Dict[str, Any]) -> Dict[str, Any]:
+    """将最近决策的版本和回退原因关联到 Agent 节点。"""
+    records = state.get("decision_records", [])
+    if not records or not isinstance(records[-1], dict):
+        return {}
+    record = records[-1]
+    return {
+        "decision.provider": record.get("provider"),
+        "decision.model": record.get("model"),
+        "decision.question_set_version": record.get("question_set_version"),
+        "decision.accepted": record.get("accepted"),
+        "decision.fallback_reason": record.get("fallback_reason"),
     }
 
 
@@ -756,6 +783,7 @@ def build_ticket_state(initial_state: Dict[str, Any]) -> AgentState:
         "degradation_reasons": [],
         "dependency_events": [],
         "fallbacks_used": [],
+        "decision_records": [],
         "workflow_path": [],
         "errors": [],
     }

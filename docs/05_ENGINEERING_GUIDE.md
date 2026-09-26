@@ -105,6 +105,24 @@ LLM_QA_MODEL_NAME=qwen-turbo
 
 未配置 Fast Model 时自动回退主模型。Resolver 始终使用 `LLM_MODEL_NAME`。
 
+### DecisionProvider / Jev
+
+```dotenv
+DECISION_PROVIDER=jev
+JEV_API_KEY=<api-key>
+JEV_BASE_URL=https://api.typesafe.ai
+JEV_MODEL=jev-1.13.0
+JEV_TIMEOUT_SECONDS=3
+JEV_MAX_RETRIES=0
+JEV_INTENT_CONFIDENCE_THRESHOLD=0.75
+JEV_QA_CONFIDENCE_THRESHOLD=0.75
+JEV_NOUL_THRESHOLD=0.7
+```
+
+`DecisionProvider` 默认为 `disabled`。启用后，Analyzer 只在规则无法确定的歧义请求上调用 Jev；QA 只在确定性校验无法结论时调用。请求先脱敏、过滤密钥和业务标识，由 Resilience 统一处理超时、Retry 和 Circuit Breaker。Jev 不可用、响应非法或置信度不足时，分别回退原 Analyzer / QA LLM。
+
+Jev 只用于线上封闭决策；当前不作为 Baseline、Ragas 或 DeepEval 的离线 Judge。`Skill Selector`、Tool Allowlist / RBAC / Risk Policy 和 Approval Gate 仍为确定性代码。
+
 可选备用模型与 Resilience 配置：
 
 ```dotenv

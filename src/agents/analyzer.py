@@ -3,6 +3,7 @@ import re
 import time
 from typing import Any, Dict
 
+from src.decision import decision_service
 from src.guardrails.jailbreak_detection import detect_jailbreak
 from src.guardrails.pii_detection import anonymize_pii
 from src.guardrails.prompt_injection import analyze_prompt_injection
@@ -153,14 +154,33 @@ class TicketAnalyzerAgent:
             strategy = "rule" if analysis else "llm"
             in_tok = 0
             out_tok = 0
+            decision_records = list(state.get("decision_records", []))
             if analysis is None:
-                analysis, in_tok, out_tok = await llm_provider.analyze_ticket(
-                    self._classifier_input(
-                        clean_subject,
-                        clean_description,
-                        memory_context,
-                    )
+                classifier_input = self._classifier_input(
+                    clean_subject,
+                    clean_description,
+                    memory_context,
                 )
+                decision = await decision_service.classify_ticket(classifier_input)
+                in_tok += decision.result.input_tokens
+                out_tok += decision.result.output_tokens
+                if decision.result.enabled:
+                    decision_records.append(
+                        decision.result.audit_record(
+                            accepted=decision.accepted,
+                            fallback_reason=decision.fallback_reason,
+                        )
+                    )
+                if decision.accepted and decision.analysis is not None:
+                    analysis = dict(decision.analysis)
+                    strategy = "jev"
+                else:
+                    analysis, llm_in_tok, llm_out_tok = (
+                        await llm_provider.analyze_ticket(classifier_input)
+                    )
+                    in_tok += llm_in_tok
+                    out_tok += llm_out_tok
+                    strategy = "llm"
 
             # 所有分类结果在进入 State 前统一收敛到 IntentType。
             raw_intent = analysis.get("intent")
@@ -200,6 +220,7 @@ class TicketAnalyzerAgent:
                 "department": defaults.department,
                 "analyzer_confidence": analyzer_confidence,
                 "analyzer_strategy": strategy,
+                "decision_records": decision_records,
                 "errors": state.get("errors", []),
             }
             assessment = risk_engine.assess(next_state, stage="input")

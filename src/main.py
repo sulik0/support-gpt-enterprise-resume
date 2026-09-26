@@ -36,6 +36,7 @@ from src.auth.rbac import (
     require_manager,
 )
 from src.database import AsyncSessionLocal, engine, get_db, init_db
+from src.decision import close_decision_provider
 from src.evaluation.framework import run_deeval_evaluation
 from src.feedback.service import feedback_service
 from src.memory import MemoryContext, MemoryOwnershipError, memory_service
@@ -482,6 +483,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await tool_outbox_worker.stop()
+        await close_decision_provider()
         await shutdown_agent_checkpointing()
 
 

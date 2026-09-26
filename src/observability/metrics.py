@@ -21,6 +21,21 @@ LLM_COST_TOTAL = meter.create_counter(
 LLM_LATENCY_SECONDS = meter.create_histogram(
     "llm_latency_seconds", unit="s", description="LLM API latency"
 )
+DECISION_CALLS_TOTAL = meter.create_counter(
+    "decision_calls", description="Total typed decision model calls"
+)
+DECISION_CALL_DURATION_SECONDS = meter.create_histogram(
+    "decision_call_duration_seconds",
+    unit="s",
+    description="Typed decision model call duration",
+)
+DECISION_TOKENS_TOTAL = meter.create_counter(
+    "decision_tokens", unit="{token}", description="Decision model token usage"
+)
+DECISION_CONFIDENCE = meter.create_histogram(
+    "decision_confidence_ratio",
+    description="Confidence reported by typed decision models",
+)
 AGENT_EXECUTION_DURATION_SECONDS = meter.create_histogram(
     "agent_execution_duration_seconds", unit="s", description="Agent execution time"
 )

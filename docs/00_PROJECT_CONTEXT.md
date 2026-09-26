@@ -46,6 +46,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 11. **可观测性**：使用 OpenTelemetry 统一采集 Trace 与 Metrics；Collector 将 Trace 转发 LangSmith，并通过 Prometheus exporter 提供指标，由 Grafana 展示。
 12. **离线评测适配**：提供 RAGAS、DeepEval 和本地确定性指标的统一评测入口。
 13. **Durable Execution**：使用 SQLite / PostgreSQL Checkpointer、稳定 `thread_id`、`AgentExecution` 业务元数据和数据库恢复租约，支持 `interrupt` / `Command(resume=...)`、重启恢复和幂等重试。
+14. **DecisionProvider**：以可替换接口封装 Jev System One，只对 Analyzer 歧义请求和 QA 非确定场景输出类型化决策；低置信度或故障时回退原 LLM。
 
 ## 技术栈
 
@@ -55,6 +56,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 | Agent 编排 | LangGraph、LangGraph Checkpoint | 编排 Analyzer、Skill Selector、Tooling、Retriever、Resolver、QA、Escalation 和 Approval Gate，持久化暂停/恢复状态 |
 | Skill Framework | SkillDefinition、SkillRegistry | 版本化 Skill 协议、Intent 确定性选择、Tool Policy 与运行归因 |
 | LLM | Mock LLM、OpenAI、Azure OpenAI | 默认 Mock 保证离线可复现；通过 `BaseLLMProvider` 适配外部模型 |
+| 决策模型 | DecisionProvider、Jev System One | 可选封闭选项语义分类与 QA 评判，不授予 Tool 执行权 |
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
 | Memory | SQLAlchemy Async、Redis | 追加为主的会话消息、摘要/实体 Snapshot、revision 缓存校验与多轮 Context Assembly |
 | RAG | ChromaDB、Embedding、Hybrid RAG | 知识库分块、版本/类别过滤、向量与词法混合召回、rerank |
@@ -76,12 +78,12 @@ FastAPI
   |-- OpenTelemetry Trace + Metrics
   |
   +--> LangGraph Agent Workflow
-  |      |-- Analyzer + Guardrails
+  |      |-- Analyzer + Guardrails --> 规则 / DecisionProvider / LLM Fallback
   |      |-- Skill Selector --> SkillRegistry
   |      |-- Tooling --> ToolRegistry --> Mock CRM / OMS / Ticketing
   |      |-- Retriever --> ChromaDB Hybrid RAG
   |      |-- Resolver --> BaseLLMProvider --> Mock / OpenAI / Azure OpenAI
-  |      |-- QA --> LLM QA + Response Filter
+  |      |-- QA --> 规则 / DecisionProvider / LLM Fallback + Response Filter
   |      `-- Risk Engine --> Escalation --> Approval Gate
   |                                      |-- 普通请求 --> END
   |                                      `-- 高风险 --> Checkpoint / interrupt --> Human-in-the-Loop --> resume
@@ -119,7 +121,7 @@ LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为�
 - RAG 与回复：`context_citations`、`suggested_response`。
 - 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`semantic_guard_label`、`semantic_guard_categories`、`semantic_guard_checks`、`semantic_guard_degraded`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
 - 质量结果：`qa_score`、`hallucination_detected`、`citation_verified`、`errors`。
-- 性能策略：`analyzer_strategy`、`qa_strategy`，用于区分规则短路与 LLM 评估。
+- 性能策略：`analyzer_strategy`、`qa_strategy`，用于区分规则短路、Jev 决策与 LLM 评估；`decision_records` 保存问题集版本、模型、类型化结果、置信度和回退原因。
 - 闭环决策：`escalation_recommended`、`escalation_reason`、`approval_required`。
 - 持久执行：`checkpoint_namespace`、`durable_execution_enabled`、`execution_status`、`approval_status`、`human_decision`。
 - 成本与延迟：`tokens_input`、`tokens_output`、`cost_usd`、`latency_seconds`。
@@ -150,7 +152,7 @@ approval_gate
 1. **Analyzer**
    - 先执行多层 Prompt Injection 和 Jailbreak 检测。
    - 命中安全风险时写入 `errors`，设置紧急优先级和拒绝回复，不执行后续 Tooling、RAG、Resolver 和 QA。
-   - 正常请求先对 PII 脱敏；固定单意图且高置信度时使用规则输出必要字段，模糊或多意图时才调用 LLM。
+   - 正常请求先对 PII 脱敏；固定单意图且高置信度时使用规则，模糊或多意图在 Jev 启用时先进行封闭 Intent 决策，未启用、低置信度或故障时回退 Analyzer LLM。
 2. **Skill Selector**
    - 基于归一化 `IntentType` 使用确定性规则选择 Skill，V1 不调用 LLM。
    - 固定本次请求的 Skill 版本、Registry Hash、Tool 边界和缺失槽位，并写入 State、Trace 与 Metrics。
@@ -170,7 +172,7 @@ approval_gate
    - 将精简上下文交给 LLM Provider，只生成最终客服回复并限制输出 token。
 6. **QA**
    - 空回复、输出泄露或完全缺少依据等确定性失败优先使用规则判断，不调用 LLM。
-   - 其余请求使用可单独配置的轻量模型，仅返回 `score`、`hallucination_detected`、`citation_verified`。
+   - 其余请求在 Jev 启用时合并评判 Grounding、完成度、citation 与未授权承诺；低置信度或故障时回退现有轻量 LLM Judge。
    - 通过 Response Filter 删除内部指令或工作流泄露；命中时将 QA 分数降为 `0.5` 并标记幻觉。
 7. **Escalation**
    - 按优先级计算 SLA：urgent `2h`、high `12h`、medium `24h`、low `48h`。
@@ -208,6 +210,7 @@ resolved / closed --reopen--> in_progress
 | Tool Governance | `src/tools/governance.py`、`outbox.py`、`policy.py` | 高风险写 Action 的加密提议、职责分离审批、幂等 Outbox 执行、自动对账/补偿、Retry/DLQ 和 Policy 回放 |
 | Mock Adapter | `src/tools/crm.py`、`order_mgmt.py`、`ticketing.py` | 模拟 CRM、OMS 和历史工单系统 |
 | LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure，并支持 Analyzer/QA 独立 Fast Model 路由 |
+| DecisionProvider | `src/decision/` | 版本化封闭问题集、Jev System One Adapter、置信度门禁和 LLM Fallback 映射 |
 | Guardrails | `src/guardrails/` | PII 脱敏、Prompt Injection、Jailbreak 和 Response Filter |
 | Risk Engine | `src/risk/engine.py` | 统一综合安全、业务、置信度、QA 和异常信号，输出风险等级与处置建议 |
 | RAG | `src/rag/` | 文档解析、分块、Embedding、版本管理、Hybrid Retrieval 和 citation |

@@ -471,11 +471,26 @@ Redis 是可选组件，不是启动前提。
 | RAG 单路失败或类别无结果 | 向量路与词法路独立恢复，单路失败仍可用另一路候选；类别零召回时保留版本并放宽类别一次 | 避免 Embedding / Vector DB 成为单点，同时不破坏版本隔离 | 未引入外部搜索集群或持久化召回缓存 |
 | 工具超时或瞬时故障 | 低风险读 Tool 最多有界重试；高风险写 Tool 由 Outbox 单次投递，使用业务幂等键；超时转 `unknown` 并自动查询外部权威结果 | 平衡瞬时恢复与重复副作用风险 | `asyncio.to_thread` 超时不能强制终止线程，因此结果未知时绝不直接重试写入 |
 | LLM 超时、限流或 5xx | 禁用 SDK 隐式重试，统一有界 Retry；可选切换 `LLM_FALLBACK_*` 备用模型；仍失败时输出同语言安全提示并转人工 | 重试次数、成本和故障分类可观测 | 备用模型需独立配置，不保证不同模型回复完全一致 |
+| Jev 超时、不可用、低置信度或非法响应 | DecisionProvider 记录降级结果，Analyzer/QA 回退原有 LLM | 决策加速层不应成为主流程单点 | 不对低置信度结果自动放行；暂不用作离线 Judge |
 | QA 错误 | 将回复标记为低分与潜在幻觉 | 失败时采取保守策略，推动审批 | 自动放行会放大未知风险 |
 | 非法状态流转 | 返回 `409 Conflict` 并保持原状态 | 防止审批前关闭等业务错误 | 直接覆盖状态简单但不可审计、不可控 |
 | 数据库异常 | 请求事务回滚；高风险执行命令与 Action 状态通过 Transactional Outbox 原子落库 | 避免“状态已批但命令丢失” | 当前仅治理写 Tool 具备 Outbox/补偿契约，不是通用 Saga 平台 |
 
 **Retry 边界**：LLM、RAG 和低风险读 Tool 只对 `timeout / rate_limit / connection / server_error` 做有界 Retry。高风险写调用自身始终单次，只有幂等的“结果查询”进入 Outbox Retry Queue；耗尽后进入 DLQ。Outbox Worker 使用数据库租约和乐观 `version` 条件更新支持多实例竞争，但通用 Circuit Breaker 仍是单进程状态。
+
+### 12.1 DecisionProvider / Jev
+
+| 维度 | 设计 |
+|---|---|
+| 职责 | 将封闭选项语义决策从通用 Chat LLM 和业务权限层分离 |
+| 输入 | 脱敏且限长的工单/回复 State，以及版本化 `Choice / Score / Noul` 问题集 |
+| 输出 | 类型化结果、每题置信度、Token、耗时、模型和回退原因 |
+| 设计原因 | Analyzer 歧义分类和 QA Review 是封闭判断，无需让生成模型输出长 JSON |
+| 可替代方案 | 继续使用小型 Chat LLM、自托管分类器、纯规则 |
+| 最终选择 | 规则优先，可选 Jev，低置信度/故障回退现有 LLM |
+| 工程权衡 | 增加一个外部依赖和阈值校准工作；换取稳定 Schema、可单独观测与潜在的延迟/成本改善 |
+
+Jev 不得决定 Tool 权限、高风险 Action 执行、Risk 放行或人工审批。这些仍由 Skill Registry、Tool Policy、Risk Engine 和 Approval Gate 的确定性代码控制。
 
 ## 13. Risk Engine
 
@@ -562,6 +577,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | 扩展方向 | 当前扩展点 | 输入/输出契约 | 工程价值 |
 |---|---|---|---|
 | LLM Provider | `BaseLLMProvider` | 分析、生成、QA、Chat 的统一返回结构 | 可替换 Mock、OpenAI、Azure，并保持 Agent 不变；OpenAI-compatible 模式下 Analyzer/QA 可共用独立 Fast Model Client，Resolver 使用主模型 |
+| DecisionProvider | `DecisionProvider` | 封闭问题集与类型化决策结果 | 当前适配 Jev System One，可在不改动 Agent 权限边界的前提下替换决策模型 |
 | 业务系统 | ToolRegistry + Adapter | 工具定义、输入 Schema、输出 Schema、角色、超时、审计 | 可把 Mock CRM/OMS/Ticketing 替换为真实 Client |
 | 知识库版本 | 文档与向量 Metadata 的 `version` | 查询必须带版本，citation 返回版本 | 支持规则灰度、对比与回滚 |
 | 数据库 | SQLAlchemy Async URL 配置 | 统一 ORM 模型和 Session | 本地 SQLite 与 PostgreSQL 间切换 |
@@ -593,6 +609,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 | 检索 | ChromaDB Hybrid RAG | 兼顾语义与精确词，适合 Demo | 纯向量、生产搜索集群 |
 | 记忆 | SQL 持久化 + 可选 Redis | Redis 故障不阻断流程 | Redis 强依赖、向量长期记忆 |
 | 质量保障 | QA + Response Filter + HITL | 高风险回答优先保守处理 | 自动 Reflection 循环、全自动闭环 |
+| 封闭语义决策 | 规则 + 可选 Jev DecisionProvider + LLM Fallback | 类型稳定、可观测、故障不阻断 | 暂不将 Jev 用作离线 Judge，不让决策模型授权 Tool |
 | 恢复 | 有界 Retry/Circuit Breaker/Fallback + Checkpoint/HITL Durable Execution + Tool Outbox/Reconciliation | 恢复瞬时故障、审批断点和不确定写结果 | 无分布式 Breaker、通用任务队列、旧 Graph 兼容；Tool Queue/DLQ 只服务受治理写操作 |
 | 可观测 | OpenTelemetry + OTLP Collector | 统一采集 Trace / Metrics，转发 LangSmith 与 Prometheus | 应用直连多个后端会形成双轨并增加数据治理成本 |
 | 发布 | PR Mock Gate + 真实 LLM Release Gate + GHCR CD | 兼顾每次变更的确定性保护与发布前真实模型验证 | 不在每个 PR 调用付费模型，当前 CD 只发布镜像而不部署生产集群 |

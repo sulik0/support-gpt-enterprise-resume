@@ -94,6 +94,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | 向量数据库 | ChromaDB |
 | 检索 | Embedding、Hybrid RAG、BM25 风格词法打分、轻量 rerank |
 | LLM | Mock LLM、OpenAI-compatible（OpenAI / DeepSeek / Qwen / vLLM）、Azure OpenAI Provider |
+| 决策模型 | 可选 DecisionProvider + Jev System One（默认关闭） |
 | 安全 | JWT、RBAC、PII 脱敏、确定性 Prompt Injection 规则、Qwen3Guard-Gen-0.6B 语义分类、Jailbreak、Response Filter、独立 Risk Engine |
 | 审批与 Tool 治理 | Human-in-the-Loop、工单状态机、ToolAction 状态机、Transactional Outbox、业务幂等、自动对账、Retry/DLQ、补偿、Policy 回放 |
 | 可观测 | OpenTelemetry、LangSmith、Prometheus、Grafana |
@@ -107,12 +108,12 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 | Agent | 职责 |
 |---|---|
-| Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测、情绪/优先级/部门/意图/置信度分类和初始 Risk Engine 评估 |
+| Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测、规则优先的意图分类；歧义场景可用 Jev，再回退 LLM，最后执行初始 Risk Engine 评估 |
 | Skill Selector（控制节点） | 将统一 Intent 确定性选择为版本化 Skill，固定 Tool/RAG/槽位能力边界 |
 | Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文，并检查工具返回的间接注入 |
 | Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation，并在生成前检查文档间接注入 |
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
-| QA | 评估质量与幻觉风险，并执行输出泄露过滤 |
+| QA | 规则优先评估质量与幻觉风险；非确定场景可用 Jev 类型化评判，再回退 LLM，并执行输出泄露过滤 |
 | Escalation | 调用 Risk Engine 生成最终风险结论，计算 SLA，判断升级与人工审批需求 |
 | Approval Gate（控制节点） | 无需审批时结束；需要审批时 interrupt，人工决策后从原 Checkpoint Thread 恢复 |
 
@@ -182,9 +183,9 @@ CLI 可将当前/候选版本在相同 100 条 Baseline 上成对回放，生成
 
 | Prompt 阶段 | 当前约束 |
 |---|---|
-| Analyzer | 固定高置信度单意图优先规则；模糊或多意图才以脱敏工单调用 LLM，结构化输出必要分类字段；规则、Provider、State、Tool、Risk Engine 与 Evaluation 统一使用 8 项 `IntentType`，唯一兜底为 `information_request`，未知模型标签会降级并降低置信度 |
+| Analyzer | 固定高置信度单意图优先规则；模糊或多意图在 DecisionProvider 启用时先用 Jev 输出封闭 `IntentType`，低置信度或故障再调用原 LLM；规则、Provider、State、Tool、Risk Engine 与 Evaluation 统一使用 8 项 `IntentType`，唯一兜底为 `information_request` |
 | Resolver | 只依据 Top-2 citation 和必要 Tool 字段生成最终客服回复，限制输入字符数与输出 token |
-| QA | 确定性失败由规则短路；其余仅输出 score、hallucination_detected、citation_verified，可配置轻量模型 |
+| QA | 确定性失败由规则短路；其余可用 Jev 一次输出 Grounding、完成度、citation、未授权承诺和人工建议，低置信度或故障时回退轻量 LLM Judge |
 | 输出过滤 | 删除可能泄露内部角色、指令或工作流的内容 |
 
 OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider 用于离线可复现。可以表述 Prompt 已内容版本化、已有离线发布门禁；不能表述已灰度、已通过线上实验提升质量，也不能把 Mock 成对实验当作 Prompt 语义效果验证。
@@ -192,6 +193,8 @@ OpenAI 与 Azure OpenAI Provider 使用 `temperature=0.0`；默认 Mock Provider
 OpenAI-compatible Provider 支持主模型与 Fast Model 分离：Resolver 使用 `LLM_MODEL_NAME`，Analyzer 与 QA 优先使用 `LLM_FAST_MODEL_NAME`，并可通过节点级模型名覆盖。Fast Model 可配置独立 Base URL 与 API Key，例如接入 Qwen Turbo；未配置时回退主模型。
 
 LLM 已禁用 SDK 内建重试，由统一 Resilience Executor 执行超时、瞬时故障有界 Retry 和进程内 Circuit Breaker。可选通过 `LLM_FALLBACK_MODEL_NAME / BASE_URL / API_KEY` 切换独立 OpenAI-compatible 备用模型。默认 Retry 上限为 1，Auth、Validation 和 Malformed Response 不重试。
+
+DecisionProvider V1 位于 `src/decision/`，通过 Jev System One HTTP API 处理 `Choice / Score / Noul` 问题集。请求在出站前脱敏、过滤密钥/业务字段并限长；Trace、Metrics 和 `decision_records` 保存版本、置信度、Token、耗时与回退原因。Jev 结果不能绕过 Skill Selector、Tool Governance、Risk Engine 或 Approval Gate。当前默认关闭，未接入离线 Evaluation Judge，没有真实 Jev 效果数据。
 
 ## 14. 安全与 Risk Engine
 
@@ -349,6 +352,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 | Feedback 新表迁移 | 当前使用 SQLAlchemy `create_all` 创建新表 | 本地可直接运行；生产发布前补 Alembic migration | 不要说已经具备生产 Schema Migration |
 | 多层安全检测覆盖边界 | 确定性规范化、特征、启发式和编码载荷，再接 Qwen3Guard 语义分类 | 输入、Tool、RAG 命中 Unsafe 时阻断，Guard 失败时隔离外部上下文并转人工 | 不要说默认已启用 Guard 服务或已建成完整攻防平台 |
 | Risk Engine 阈值 | 默认阈值可通过环境变量配置，但尚无真实运营数据校准 | high / critical 保守转人工，安全威胁阻断自动化 | 不要说阈值已用生产样本训练或自适应调优 |
+| Jev DecisionProvider | 线上 Adapter、脱敏/限长、置信度门禁、Trace/Metrics 和 LLM Fallback 已实现 | 默认关闭，不可用时回退，业务授权仍为确定性策略 | 不要说已有生产准确率/延迟数据、已接入离线 Judge 或 Jev 可自主授权 Tool |
 
 ## 24. 未来规划
 
@@ -365,6 +369,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页只展�
 9. 为 OpenTelemetry Collector 增加 Jaeger、Tempo 或其他 APM exporter，并完善采样、容量与高可用设计。
 10. 将会话历史按受控方式注入 Agent 推理上下文，并补充隐私、长度控制和回归测试。
 11. 启用 Qwen3Guard Shadow Mode，建设安全样本库、策略版本与持久化安全事件，用真实数据校准语义结果与 Risk Engine 阈值。
+12. 以 Shadow Mode 校准 Jev 意图/QA 置信度阈值和故障率；离线 Jev Judge 暂不接入。
 
 ## 25. 长期一致性规则
 

@@ -17,6 +17,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | Skill Framework | 6 个版本化 Skill；Intent 确定性选择、Tool Allowlist、Trace/AgentRun/Evaluation 归因 |
 | Durable Execution | SQLite/PostgreSQL Checkpoint、interrupt/resume、AgentExecution、恢复租约与重启扫描 |
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
+| DecisionProvider | 可选 Jev System One；只处理 Analyzer 歧义分类和 QA 封闭语义评判，低置信度回退原 LLM |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
 | Tool Calling | 5 个 CRM / OMS / Ticket Mock Tool；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
 | Tool Governance | V2.2：业务幂等键、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿与 Policy 回放 |
@@ -81,6 +82,17 @@ LLM_MODEL_NAME=<model-name>
 Analyzer 和 QA 可配置 `LLM_FAST_*`、`LLM_ANALYZER_MODEL_NAME` 和 `LLM_QA_MODEL_NAME` 使用小模型。默认回复语言与用户当前输入一致，除非用户明确要求切换。
 
 可选配置 `LLM_FALLBACK_*` 指向独立备用模型。SDK 内建重试已关闭，由 Resilience 模块统一执行超时、有界 Retry 和 Circuit Breaker；仅低风险读 Tool 可自动重试。
+
+可选启用 Jev `DecisionProvider`：
+
+```dotenv
+DECISION_PROVIDER=jev
+JEV_API_KEY=<api-key>
+JEV_BASE_URL=https://api.typesafe.ai
+JEV_MODEL=jev-1.13.0
+```
+
+Jev 只返回 `Choice / Score / Noul` 封闭决策，不会直接选择或执行 Tool。规则仍然优先；Jev 超时、不可用、响应非法或低置信度时自动回退原 Analyzer / QA LLM。当前未将 Jev 接入离线 Evaluation Judge。
 
 ## 测试与评测
 
