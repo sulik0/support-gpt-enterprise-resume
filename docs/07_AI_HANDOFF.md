@@ -22,8 +22,8 @@
 - Skill：`src/skills/` 管理 6 个版本化 Skill，选择快照进入 State/Checkpoint/Trace/AgentRun/Evaluation；ToolRegistry 在现有治理前再做 Skill Allowlist 校验。
 - Durable Execution：本地 AsyncSqliteSaver、PostgreSQL AsyncPostgresSaver；AgentExecution 关联工单/审批/Run/Trace，数据库恢复租约防重复，启动扫描补偿已决策但未完成的续跑。
 - LLM：默认 Mock，保留 `mock/openai/azure`；`openai` 为通用 OpenAI-compatible Provider。
-- DecisionProvider：`src/decision/` 封装可选 Jev System One。规则优先，Jev 只做 Analyzer 歧义分类和 QA 封闭评判；低置信度/不可用回退原 LLM，未接入离线 Judge。
-- 优化：Analyzer 规则优先，Analyzer/QA 可使用小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
+- DecisionProvider：`src/decision/` 封装可选 Jev System One。启用后复核 Analyzer 规则候选并评判 QA 正向证据；低置信度/不可用时按规则或 LLM 分层回退，未接入离线 Judge。
+- 优化：Analyzer 保留规则候选与回退，Analyzer/QA 可使用 Jev 或小模型，Resolver 裁剪 Context，QA 仅返回最小 JSON。
 - RAG：ChromaDB + 关键词/向量 Hybrid Search + 轻量 rerank + version/category filter + citation。
 - Tool：Mock CRM/OMS/Ticket Adapter 通过 ToolRegistry 暴露；V2.2 为高风险写 Action 增加业务幂等、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿和 Policy 回放。
 - 故障治理：LLM/RAG/读 Tool 统一超时、有界 Retry、进程内 Circuit Breaker 与 Fallback；高风险写调用禁止重试，只 Retry 幂等对账查询。

@@ -485,9 +485,9 @@ Redis 是可选组件，不是启动前提。
 | 职责 | 将封闭选项语义决策从通用 Chat LLM 和业务权限层分离 |
 | 输入 | 脱敏且限长的工单/回复 State，以及版本化 `Choice / Score / Noul` 问题集 |
 | 输出 | 类型化结果、每题置信度、Token、耗时、模型和回退原因 |
-| 设计原因 | Analyzer 歧义分类和 QA Review 是封闭判断，无需让生成模型输出长 JSON |
+| 设计原因 | Analyzer 意图分类和 QA Review 是封闭判断，无需让生成模型输出长 JSON |
 | 可替代方案 | 继续使用小型 Chat LLM、自托管分类器、纯规则 |
-| 最终选择 | 规则优先，可选 Jev，低置信度/故障回退现有 LLM |
+| 最终选择 | 安全硬规则优先；Jev 复核 Analyzer/正向 QA 候选，规则或 LLM 分层回退 |
 | 工程权衡 | 增加一个外部依赖和阈值校准工作；换取稳定 Schema、可单独观测与潜在的延迟/成本改善 |
 
 Jev 不得决定 Tool 权限、高风险 Action 执行、Risk 放行或人工审批。这些仍由 Skill Registry、Tool Policy、Risk Engine 和 Approval Gate 的确定性代码控制。

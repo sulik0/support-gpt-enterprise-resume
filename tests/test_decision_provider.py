@@ -316,6 +316,73 @@ async def test_analyzer_uses_jev_for_ambiguous_intent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_analyzer_uses_jev_to_review_rule_candidate(monkeypatch):
+    result = _result("intent_classification", {})
+
+    async def decide(_text):
+        return TicketIntentDecision(
+            result=result,
+            accepted=True,
+            analysis={
+                "intent": IntentType.BILLING_DISPUTE,
+                "priority": "high",
+                "department": "billing",
+                "sentiment": "negative",
+                "confidence_score": 0.93,
+            },
+        )
+
+    async def unexpected_llm(_text):
+        raise AssertionError("accepted Jev decision must skip Analyzer LLM")
+
+    monkeypatch.setattr(
+        "src.agents.analyzer.decision_service.classify_ticket", decide
+    )
+    monkeypatch.setattr(
+        "src.agents.analyzer.llm_provider.analyze_ticket", unexpected_llm
+    )
+
+    state = await ticket_analyzer_agent.analyze(
+        {"subject": "Refund", "description": "I need a refund for this charge."}
+    )
+
+    assert state["analyzer_strategy"] == "jev"
+    assert state["intent"] is IntentType.BILLING_DISPUTE
+    assert state["decision_records"][0]["accepted"] is True
+
+
+@pytest.mark.asyncio
+async def test_analyzer_keeps_rule_candidate_when_jev_is_rejected(monkeypatch):
+    result = _result("intent_classification", {})
+
+    async def decide(_text):
+        return TicketIntentDecision(
+            result=result,
+            accepted=False,
+            fallback_reason="low_confidence",
+        )
+
+    async def unexpected_llm(_text):
+        raise AssertionError("a valid rule candidate must remain the fallback")
+
+    monkeypatch.setattr(
+        "src.agents.analyzer.decision_service.classify_ticket", decide
+    )
+    monkeypatch.setattr(
+        "src.agents.analyzer.llm_provider.analyze_ticket", unexpected_llm
+    )
+
+    state = await ticket_analyzer_agent.analyze(
+        {"subject": "Refund", "description": "I need a refund for this charge."}
+    )
+
+    assert state["analyzer_strategy"] == "rule"
+    assert state["intent"] is IntentType.BILLING_DISPUTE
+    assert state["decision_records"][0]["accepted"] is False
+    assert state["decision_records"][0]["fallback_reason"] == "low_confidence"
+
+
+@pytest.mark.asyncio
 async def test_qa_uses_jev_when_rules_are_inconclusive(monkeypatch):
     result = _result("response_judgment", {})
 
@@ -357,4 +424,48 @@ async def test_qa_uses_jev_when_rules_are_inconclusive(monkeypatch):
     assert state["qa_strategy"] == "jev"
     assert state["qa_score"] == 0.92
     assert state["risk_requires_human"] is False
+    assert state["decision_records"][0]["accepted"] is True
+
+
+@pytest.mark.asyncio
+async def test_qa_uses_jev_to_review_rule_grounded_response(monkeypatch):
+    result = _result("response_judgment", {})
+
+    async def decide(**_kwargs):
+        return QAReviewDecision(
+            result=result,
+            accepted=True,
+            evaluation={
+                "score": 0.91,
+                "hallucination_detected": False,
+                "citation_verified": True,
+                "response_grounded": True,
+                "response_requires_human": False,
+            },
+        )
+
+    async def unexpected_llm(**_kwargs):
+        raise AssertionError("accepted Jev decision must skip QA LLM")
+
+    monkeypatch.setattr(
+        "src.agents.quality_assurance.decision_service.judge_response", decide
+    )
+    monkeypatch.setattr(
+        "src.agents.quality_assurance.llm_provider.evaluate_qa", unexpected_llm
+    )
+
+    state = await quality_assurance_agent.verify(
+        {
+            "description": "Where is my order?",
+            "suggested_response": "The order is in transit [S1].",
+            "context_citations": [
+                Citation(source="order", text="The order is in transit.", score=0.9)
+            ],
+            "tool_context": {},
+            "errors": [],
+        }
+    )
+
+    assert state["qa_strategy"] == "jev"
+    assert state["qa_score"] == 0.91
     assert state["decision_records"][0]["accepted"] is True

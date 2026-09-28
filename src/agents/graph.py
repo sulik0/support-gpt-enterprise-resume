@@ -20,6 +20,7 @@ from src.config import settings
 from src.models.intents import DEFAULT_INTENT, IntentType
 from src.observability.cost_tracking import calculate_llm_cost
 from src.observability.metrics import (
+    AGENT_DECISION_STRATEGY_TOTAL,
     AGENT_NODE_DURATION_SECONDS,
     AGENT_NODE_EXECUTIONS_TOTAL,
     AGENT_REQUESTS_TOTAL,
@@ -176,6 +177,16 @@ async def _run_node(
             logger.debug("Unable to record metrics for Agent node %s", node)
 
 
+def _record_decision_strategy(node: str, strategy: str) -> None:
+    """记录 Analyzer/QA 路由比例，观测失败不影响主流程。"""
+    try:
+        AGENT_DECISION_STRATEGY_TOTAL.add(
+            1, {"node": node, "strategy": strategy or "unknown"}
+        )
+    except Exception:
+        logger.debug("Unable to record decision strategy for node %s", node)
+
+
 def _apply_resilience_events(
     state: Dict[str, Any], events: list[DependencyEvent]
 ) -> Dict[str, Any]:
@@ -220,6 +231,9 @@ async def analyze_node(state: AgentState) -> Dict[str, Any]:
                 "analyzer.strategy": result.get("analyzer_strategy", "unknown"),
                 **_latest_decision_trace_attrs(result),
             },
+        )
+        _record_decision_strategy(
+            "analyzer", result.get("analyzer_strategy", "unknown")
         )
         logger.info(
             "analyzer completed",
@@ -474,6 +488,7 @@ async def qa_node(state: AgentState) -> Dict[str, Any]:
                 **_latest_decision_trace_attrs(result),
             },
         )
+        _record_decision_strategy("qa", result.get("qa_strategy", "unknown"))
         logger.info(
             "qa completed",
             extra={

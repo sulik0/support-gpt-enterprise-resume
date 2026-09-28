@@ -844,18 +844,18 @@ Action 参数使用 Fernet 加密，HMAC 用于 payload 与 Policy 快照完整�
 
 ### 问题背景
 
-Analyzer 歧义分类和 QA Review 本质上是有限选项判断。直接使用 Chat LLM 会产生长 Prompt、JSON 解析和额外 Token，但完全交给外部决策模型又会引入可用性与阈值风险。
+Analyzer 意图分类和 QA Review 本质上是有限选项判断。直接使用 Chat LLM 会产生长 Prompt、JSON 解析和额外 Token，但完全交给外部决策模型又会引入可用性与阈值风险。
 
 ### 候选方案
 
 - 继续使用 Analyzer / QA 轻量 Chat LLM。
 - 仅用确定性规则。
 - 直接将 Jev 嵌入各节点。
-- 增加可替换 `DecisionProvider`，规则优先并保留 LLM Fallback。
+- 增加可替换 `DecisionProvider`，保留安全硬规则和分层 Fallback。
 
 ### 最终方案
 
-建立 `DecisionProvider` 和领域 `DecisionService`。V1 通过 Jev System One HTTP API 合并提交版本化 `Choice / Score / Noul` 问题；Analyzer 只在规则无法确定时调用，QA 只在确定性校验无结论时调用。Jev 不可用、响应非法、State 超长或低置信度时，自动回退原有 LLM。
+建立 `DecisionProvider` 和领域 `DecisionService`。V1 通过 Jev System One HTTP API 合并提交版本化 `Choice / Score / Noul` 问题；启用后，Analyzer 用 Jev 复核规则候选，QA 将正向 Grounding 与非确定校验交给 Jev。Jev 不可用、响应非法、State 超长或低置信度时，有可验证候选则回退规则，否则回退原有 LLM。
 
 ### 为什么选择
 

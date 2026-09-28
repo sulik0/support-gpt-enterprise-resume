@@ -36,7 +36,7 @@
 - [x] 完成 Tool Governance V2.2：写 Action 业务幂等键、Transactional Outbox、异步 Worker、数据库租约/乐观抢占、unknown 自动对账、Retry/DLQ、状态事件补写、显式补偿和版本化 Policy 回放。
 - [x] 完成 LangGraph Checkpoint + Durable Execution V1：SQLite/PostgreSQL Saver、Approval Gate interrupt/resume、AgentExecution、数据库恢复租约、启动扫描和主管重试 API。
 - [x] 完成 Skill Framework V1：6 个版本化 Skill 覆盖 8 个 Intent，确定性 Selector、Registry Hash、Tool Allowlist，并关联 State/Checkpoint/OTel/AgentRun/Baseline。
-- [x] 完成 DecisionProvider V1：可选 Jev System One，Analyzer 歧义分类与 QA 类型化评判，包含脱敏、限长、Trace/Metrics、超时/熔断与低置信度 LLM Fallback。
+- [x] 完成 DecisionProvider V1：可选 Jev System One，复核 Analyzer 规则候选与 QA 正向证据，包含脱敏、限长、Trace/Metrics、超时/熔断与规则/LLM 分层 Fallback。
 - [ ] 引入 Alembic，并为 Feedback Pipeline 新表生成生产 Migration。
 - [ ] 增加训练样本人工复核状态、删除请求和数据保留周期。
 

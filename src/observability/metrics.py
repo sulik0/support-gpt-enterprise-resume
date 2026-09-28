@@ -48,6 +48,9 @@ AGENT_REQUESTS_TOTAL = meter.create_counter(
 AGENT_NODE_EXECUTIONS_TOTAL = meter.create_counter(
     "agent_node_executions", description="Total Agent node executions"
 )
+AGENT_DECISION_STRATEGY_TOTAL = meter.create_counter(
+    "agent_decision_strategy", description="Analyzer and QA strategy decisions"
+)
 AGENT_NODE_DURATION_SECONDS = meter.create_histogram(
     "agent_node_duration_seconds",
     unit="s",

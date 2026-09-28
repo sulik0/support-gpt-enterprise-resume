@@ -46,7 +46,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 11. **可观测性**：使用 OpenTelemetry 统一采集 Trace 与 Metrics；Collector 将 Trace 转发 LangSmith，并通过 Prometheus exporter 提供指标，由 Grafana 展示。
 12. **离线评测适配**：提供 RAGAS、DeepEval 和本地确定性指标的统一评测入口。
 13. **Durable Execution**：使用 SQLite / PostgreSQL Checkpointer、稳定 `thread_id`、`AgentExecution` 业务元数据和数据库恢复租约，支持 `interrupt` / `Command(resume=...)`、重启恢复和幂等重试。
-14. **DecisionProvider**：以可替换接口封装 Jev System One，只对 Analyzer 歧义请求和 QA 非确定场景输出类型化决策；低置信度或故障时回退原 LLM。
+14. **DecisionProvider**：以可替换接口封装 Jev System One；启用后复核 Analyzer 规则候选，并承担 QA 正向 Grounding 与非确定评判，规则/LLM 作为分层回退。
 
 ## 技术栈
 
@@ -152,7 +152,7 @@ approval_gate
 1. **Analyzer**
    - 先执行多层 Prompt Injection 和 Jailbreak 检测。
    - 命中安全风险时写入 `errors`，设置紧急优先级和拒绝回复，不执行后续 Tooling、RAG、Resolver 和 QA。
-   - 正常请求先对 PII 脱敏；固定单意图且高置信度时使用规则，模糊或多意图在 Jev 启用时先进行封闭 Intent 决策，未启用、低置信度或故障时回退 Analyzer LLM。
+   - 正常请求先对 PII 脱敏并生成规则候选；Jev 启用时优先执行封闭 Intent 决策，低置信度或故障时，有候选则回退规则，无候选才回退 Analyzer LLM。
 2. **Skill Selector**
    - 基于归一化 `IntentType` 使用确定性规则选择 Skill，V1 不调用 LLM。
    - 固定本次请求的 Skill 版本、Registry Hash、Tool 边界和缺失槽位，并写入 State、Trace 与 Metrics。
@@ -172,7 +172,7 @@ approval_gate
    - 将精简上下文交给 LLM Provider，只生成最终客服回复并限制输出 token。
 6. **QA**
    - 空回复、输出泄露或完全缺少依据等确定性失败优先使用规则判断，不调用 LLM。
-   - 其余请求在 Jev 启用时合并评判 Grounding、完成度、citation 与未授权承诺；低置信度或故障时回退现有轻量 LLM Judge。
+   - 安全硬失败、澄清和安全限制回复仍由规则短路；正向 Grounding 候选和其余非确定请求在 Jev 启用时合并评判 Grounding、完成度、citation 与未授权承诺。Jev 不可用时，前者回退规则，后者回退轻量 LLM Judge。
    - 通过 Response Filter 删除内部指令或工作流泄露；命中时将 QA 分数降为 `0.5` 并标记幻觉。
 7. **Escalation**
    - 按优先级计算 SLA：urgent `2h`、high `12h`、medium `24h`、low `48h`。

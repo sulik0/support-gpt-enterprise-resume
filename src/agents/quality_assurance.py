@@ -50,8 +50,8 @@ class QualityAssuranceAgent:
         context_texts = self._compact_context(citations, tool_context)
 
         try:
-            # 确定性失败直接阻断，有证据的回复才交给轻量 Judge。
-            rule_result = self._rule_evaluation(
+            # 确定性安全结论直接短路，正向证据结论交给 Jev 复核。
+            rule_result, rule_terminal = self._rule_evaluation(
                 query=query,
                 raw_response=raw_response,
                 filtered_response=filtered_response_text,
@@ -60,7 +60,7 @@ class QualityAssuranceAgent:
                 context_texts=context_texts,
             )
             decision_records = list(state.get("decision_records", []))
-            if rule_result is None:
+            if not rule_terminal:
                 decision = await decision_service.judge_response(
                     query=query,
                     evidence=context_texts,
@@ -78,6 +78,10 @@ class QualityAssuranceAgent:
                 if decision.accepted and decision.evaluation is not None:
                     qa_eval = dict(decision.evaluation)
                     strategy = "jev"
+                elif rule_result is not None:
+                    # Jev 不可用时保留已有的可验证规则结论。
+                    qa_eval = rule_result
+                    strategy = "rule"
                 else:
                     qa_eval, llm_in_tok, llm_out_tok = (
                         await llm_provider.evaluate_qa(
@@ -90,6 +94,7 @@ class QualityAssuranceAgent:
                     out_tok += llm_out_tok
                     strategy = "llm"
             else:
+                assert rule_result is not None
                 qa_eval = rule_result
                 in_tok = 0
                 out_tok = 0
@@ -201,24 +206,30 @@ class QualityAssuranceAgent:
         citations: list[Any],
         tool_context: Dict[str, Any],
         context_texts: list[str],
-    ) -> Dict[str, Any] | None:
-        """先确定性处理泄露、澄清、安全限制和可验证证据。"""
+    ) -> tuple[Dict[str, Any] | None, bool]:
+        """返回规则结论及是否必须短路语义 Judge。"""
         if not raw_response.strip():
-            return {
-                "score": 0.0,
-                "hallucination_detected": True,
-                "citation_verified": False,
-                "response_grounded": False,
-                "response_requires_human": False,
-            }
+            return (
+                {
+                    "score": 0.0,
+                    "hallucination_detected": True,
+                    "citation_verified": False,
+                    "response_grounded": False,
+                    "response_requires_human": False,
+                },
+                True,
+            )
         if filtered_response != raw_response:
-            return {
-                "score": 0.5,
-                "hallucination_detected": True,
-                "citation_verified": False,
-                "response_grounded": False,
-                "response_requires_human": True,
-            }
+            return (
+                {
+                    "score": 0.5,
+                    "hallucination_detected": True,
+                    "citation_verified": False,
+                    "response_grounded": False,
+                    "response_requires_human": True,
+                },
+                True,
+            )
         citation_evidence = " ".join(
             str(
                 citation.get("text", "")
@@ -230,60 +241,78 @@ class QualityAssuranceAgent:
         if requires_authoritative_business_answer(
             query
         ) and not has_authoritative_business_evidence(query, citation_evidence):
-            return {
-                "score": 0.5,
-                "hallucination_detected": True,
-                "citation_verified": False,
-                "response_grounded": False,
-                "response_requires_human": True,
-            }
+            return (
+                {
+                    "score": 0.5,
+                    "hallucination_detected": True,
+                    "citation_verified": False,
+                    "response_grounded": False,
+                    "response_requires_human": True,
+                },
+                True,
+            )
         if cls._is_clarification(filtered_response):
-            return {
-                "score": 0.95,
-                "hallucination_detected": False,
-                "citation_verified": False,
-                "response_grounded": True,
-                "response_requires_human": False,
-            }
+            return (
+                {
+                    "score": 0.95,
+                    "hallucination_detected": False,
+                    "citation_verified": False,
+                    "response_grounded": True,
+                    "response_requires_human": False,
+                },
+                True,
+            )
         if cls._is_safe_limitation(filtered_response):
-            return {
-                "score": 0.9,
-                "hallucination_detected": False,
-                "citation_verified": False,
-                "response_grounded": True,
-                "response_requires_human": requires_authoritative_business_answer(
-                    query
-                ),
-            }
+            return (
+                {
+                    "score": 0.9,
+                    "hallucination_detected": False,
+                    "citation_verified": False,
+                    "response_grounded": True,
+                    "response_requires_human": requires_authoritative_business_answer(
+                        query
+                    ),
+                },
+                True,
+            )
         if cls._missing_requested_order_supported(
             query, filtered_response, tool_context
         ):
-            return {
-                "score": 0.95,
-                "hallucination_detected": False,
-                "citation_verified": False,
-                "response_grounded": True,
-                "response_requires_human": False,
-            }
+            return (
+                {
+                    "score": 0.95,
+                    "hallucination_detected": False,
+                    "citation_verified": False,
+                    "response_grounded": True,
+                    "response_requires_human": False,
+                },
+                True,
+            )
         if cls._has_grounding_support(filtered_response, citations, tool_context):
-            return {
-                "score": 0.95,
-                "hallucination_detected": False,
-                "citation_verified": cls._has_valid_citation_reference(
-                    filtered_response, citations
-                ),
-                "response_grounded": True,
-                "response_requires_human": False,
-            }
+            return (
+                {
+                    "score": 0.95,
+                    "hallucination_detected": False,
+                    "citation_verified": cls._has_valid_citation_reference(
+                        filtered_response, citations
+                    ),
+                    "response_grounded": True,
+                    "response_requires_human": False,
+                },
+                False,
+            )
         if not context_texts:
-            return {
-                "score": 0.45,
-                "hallucination_detected": True,
-                "citation_verified": False,
-                "response_grounded": False,
-                "response_requires_human": False,
-            }
-        return None
+            return (
+                {
+                    "score": 0.45,
+                    "hallucination_detected": True,
+                    "citation_verified": False,
+                    "response_grounded": False,
+                    "response_requires_human": False,
+                },
+                True,
+            )
+        return None, False
 
     @staticmethod
     def _is_clarification(response: str) -> bool:

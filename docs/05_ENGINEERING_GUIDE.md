@@ -119,7 +119,14 @@ JEV_QA_CONFIDENCE_THRESHOLD=0.75
 JEV_NOUL_THRESHOLD=0.7
 ```
 
+<details>
+<summary>历史 V1 初始路由</summary>
+
 `DecisionProvider` 默认为 `disabled`。启用后，Analyzer 只在规则无法确定的歧义请求上调用 Jev；QA 只在确定性校验无法结论时调用。请求先脱敏、过滤密钥和业务标识，由 Resilience 统一处理超时、Retry 和 Circuit Breaker。Jev 不可用、响应非法或置信度不足时，分别回退原 Analyzer / QA LLM。
+
+</details>
+
+当前路由已调整为：Analyzer 对正常请求优先用 Jev 复核规则候选；QA 保留空回复、泄露、无权威证据等硬规则，将正向 Grounding 候选和其余非确定结论交给 Jev。Jev 不可用或置信度不足时，有可验证候选则回退规则，否则回退原 LLM。
 
 Jev 只用于线上封闭决策；当前不作为 Baseline、Ragas 或 DeepEval 的离线 Judge。`Skill Selector`、Tool Allowlist / RBAC / Risk Policy 和 Approval Gate 仍为确定性代码。
 

@@ -108,12 +108,12 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 | Agent | 职责 |
 |---|---|
-| Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测、规则优先的意图分类；歧义场景可用 Jev，再回退 LLM，最后执行初始 Risk Engine 评估 |
+| Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测；规则生成候选，Jev 启用时优先复核，再按规则/LLM 分层回退，最后执行初始 Risk Engine 评估 |
 | Skill Selector（控制节点） | 将统一 Intent 确定性选择为版本化 Skill，固定 Tool/RAG/槽位能力边界 |
 | Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文，并检查工具返回的间接注入 |
 | Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation，并在生成前检查文档间接注入 |
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
-| QA | 规则优先评估质量与幻觉风险；非确定场景可用 Jev 类型化评判，再回退 LLM，并执行输出泄露过滤 |
+| QA | 安全硬失败由规则短路；正向 Grounding 和非确定场景由 Jev 类型化评判，再按规则/LLM 分层回退，并执行输出泄露过滤 |
 | Escalation | 调用 Risk Engine 生成最终风险结论，计算 SLA，判断升级与人工审批需求 |
 | Approval Gate（控制节点） | 无需审批时结束；需要审批时 interrupt，人工决策后从原 Checkpoint Thread 恢复 |
 
@@ -183,7 +183,7 @@ CLI 可将当前/候选版本在相同 100 条 Baseline 上成对回放，生成
 
 | Prompt 阶段 | 当前约束 |
 |---|---|
-| Analyzer | 固定高置信度单意图优先规则；模糊或多意图在 DecisionProvider 启用时先用 Jev 输出封闭 `IntentType`，低置信度或故障再调用原 LLM；规则、Provider、State、Tool、Risk Engine 与 Evaluation 统一使用 8 项 `IntentType`，唯一兜底为 `information_request` |
+| Analyzer | 规则先生成高置信度候选；DecisionProvider 启用时由 Jev 优先输出封闭 `IntentType`，低置信度或故障时有候选则回退规则，无候选再调用原 LLM；各层统一使用 8 项 `IntentType` |
 | Resolver | 只依据 Top-2 citation 和必要 Tool 字段生成最终客服回复，限制输入字符数与输出 token |
 | QA | 确定性失败由规则短路；其余可用 Jev 一次输出 Grounding、完成度、citation、未授权承诺和人工建议，低置信度或故障时回退轻量 LLM Judge |
 | 输出过滤 | 删除可能泄露内部角色、指令或工作流的内容 |

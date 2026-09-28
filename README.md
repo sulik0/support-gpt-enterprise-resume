@@ -17,7 +17,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | Skill Framework | 6 个版本化 Skill；Intent 确定性选择、Tool Allowlist、Trace/AgentRun/Evaluation 归因 |
 | Durable Execution | SQLite/PostgreSQL Checkpoint、interrupt/resume、AgentExecution、恢复租约与重启扫描 |
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
-| DecisionProvider | 可选 Jev System One；只处理 Analyzer 歧义分类和 QA 封闭语义评判，低置信度回退原 LLM |
+| DecisionProvider | 可选 Jev System One；复核 Analyzer 规则候选并评判 QA 正向证据，规则/LLM 作为分层回退 |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
 | Tool Calling | 5 个 CRM / OMS / Ticket Mock Tool；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
 | Tool Governance | V2.2：业务幂等键、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿与 Policy 回放 |
@@ -92,7 +92,7 @@ JEV_BASE_URL=https://api.typesafe.ai
 JEV_MODEL=jev-1.13.0
 ```
 
-Jev 只返回 `Choice / Score / Noul` 封闭决策，不会直接选择或执行 Tool。规则仍然优先；Jev 超时、不可用、响应非法或低置信度时自动回退原 Analyzer / QA LLM。当前未将 Jev 接入离线 Evaluation Judge。
+Jev 只返回 `Choice / Score / Noul` 封闭决策，不会直接选择或执行 Tool。启用后，Analyzer 使用 Jev 复核规则候选；QA 保留安全硬门禁，将正向 Grounding 和非确定结论交给 Jev。Jev 低置信度或不可用时，有可验证规则候选则回退规则，否则回退原 LLM。当前未将 Jev 接入离线 Evaluation Judge。
 
 ## 测试与评测
 
