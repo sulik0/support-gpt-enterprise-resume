@@ -241,9 +241,11 @@ export default function CustomerSupportPage({ onStaffEntry }) {
           <span><Sparkles size={20} /></span>
           <div><strong>SupportGPT</strong><small>智能客户服务</small></div>
         </div>
-        <button type="button" className="staff-entry" onClick={onStaffEntry}>
-          <Headphones size={16} /> 客服员工入口 <ArrowRight size={15} />
-        </button>
+        {onStaffEntry && (
+          <button type="button" className="staff-entry" onClick={onStaffEntry}>
+            <Headphones size={16} /> 客服员工入口 <ArrowRight size={15} />
+          </button>
+        )}
       </header>
 
       <section className="customer-hero">

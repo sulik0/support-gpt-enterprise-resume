@@ -1,3 +1,4 @@
+import base64
 import os
 from typing import Optional
 
@@ -20,6 +21,28 @@ class Settings(BaseSettings):
     JWT_SECRET: str = Field(default="super-secret-jwt-key-change-in-production-123456")
     JWT_ALGORITHM: str = Field(default="HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60)
+    STAFF_SELF_REGISTRATION_ENABLED: bool = Field(default=False)
+
+    # Public Demo Security
+    CORS_ALLOWED_ORIGINS: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000"
+    )
+    TRUST_PROXY_HEADERS: bool = Field(default=False)
+    PUBLIC_DEMO_ISOLATION_ENABLED: bool = Field(default=True)
+    PUBLIC_DEMO_PROFILE_IDS: str = Field(default="cust_101,cust_102,cust_103")
+    PUBLIC_VISITOR_SECRET: Optional[str] = Field(default=None)
+    PUBLIC_VISITOR_COOKIE_NAME: str = Field(default="supportgpt_visitor")
+    PUBLIC_VISITOR_COOKIE_MAX_AGE_SECONDS: int = Field(
+        default=2592000, ge=3600, le=31536000
+    )
+    PUBLIC_RATE_LIMIT_ENABLED: bool = Field(default=True)
+    PUBLIC_CHAT_RATE_LIMIT_PER_MINUTE: int = Field(default=5, ge=1, le=1000)
+    PUBLIC_CHAT_RATE_LIMIT_PER_DAY: int = Field(default=50, ge=1, le=100000)
+    PUBLIC_READ_RATE_LIMIT_PER_MINUTE: int = Field(default=30, ge=1, le=5000)
+    PUBLIC_FEEDBACK_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1, le=1000)
+    AUTH_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1, le=1000)
+    RATE_LIMIT_REDIS_PREFIX: str = Field(default="supportgpt:rate-limit")
+    MAX_REQUEST_BODY_BYTES: int = Field(default=65536, ge=4096, le=10485760)
 
     # Database & Cache
     # Default to sqlite in-memory or file for easy local run without postgres, override via env
@@ -201,6 +224,70 @@ class Settings(BaseSettings):
         """避免 Retry 上限小于初始退避，导致无效配置。"""
         if self.TOOL_OUTBOX_RETRY_MAX_SECONDS < self.TOOL_OUTBOX_RETRY_BASE_SECONDS:
             raise ValueError("Tool Outbox max retry delay must be >= base delay.")
+        return self
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """返回去重后的 CORS 白名单，不接受隐式通配符。"""
+        return list(
+            dict.fromkeys(
+                origin.strip().rstrip("/")
+                for origin in self.CORS_ALLOWED_ORIGINS.split(",")
+                if origin.strip()
+            )
+        )
+
+    @property
+    def public_demo_profile_ids(self) -> set[str]:
+        """返回公开 Demo 允许使用的虚构客户画像。"""
+        return {
+            profile.strip()
+            for profile in self.PUBLIC_DEMO_PROFILE_IDS.split(",")
+            if profile.strip()
+        }
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        """生产环境拒绝默认密钥和宽松的公网配置。"""
+        if self.APP_ENV.lower() not in {"production", "prod"}:
+            return self
+
+        errors: list[str] = []
+        if self.DEBUG:
+            errors.append("DEBUG must be false")
+        if (
+            len(self.JWT_SECRET) < 32
+            or self.JWT_SECRET == "super-secret-jwt-key-change-in-production-123456"
+        ):
+            errors.append("JWT_SECRET must be a unique secret of at least 32 characters")
+        if not self.PUBLIC_VISITOR_SECRET or len(self.PUBLIC_VISITOR_SECRET) < 32:
+            errors.append("PUBLIC_VISITOR_SECRET must contain at least 32 characters")
+        if not self.PUBLIC_DEMO_ISOLATION_ENABLED:
+            errors.append("PUBLIC_DEMO_ISOLATION_ENABLED must remain enabled")
+        if not self.PUBLIC_RATE_LIMIT_ENABLED:
+            errors.append("PUBLIC_RATE_LIMIT_ENABLED must remain enabled")
+        if self.STAFF_SELF_REGISTRATION_ENABLED:
+            errors.append("STAFF_SELF_REGISTRATION_ENABLED must remain disabled")
+        if not self.cors_allowed_origins or "*" in self.cors_allowed_origins:
+            errors.append("CORS_ALLOWED_ORIGINS must contain explicit origins")
+        elif any(
+            not origin.startswith("https://") for origin in self.cors_allowed_origins
+        ):
+            errors.append("production CORS origins must use HTTPS")
+        if self.JWT_ALGORITHM != "HS256":
+            errors.append("JWT_ALGORITHM must be HS256")
+        if not self.public_demo_profile_ids:
+            errors.append("PUBLIC_DEMO_PROFILE_IDS must not be empty")
+        try:
+            key = base64.urlsafe_b64decode(
+                str(self.TOOL_ACTION_ENCRYPTION_KEY or "").encode("ascii")
+            )
+            if len(key) != 32:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            errors.append("TOOL_ACTION_ENCRYPTION_KEY must be a dedicated Fernet key")
+        if errors:
+            raise ValueError("Unsafe production configuration: " + "; ".join(errors))
         return self
 
     # Feedback Pipeline

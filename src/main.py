@@ -4,7 +4,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,7 +30,6 @@ from src.approval.workflows import human_it_loop_service
 from src.auth.jwt import create_access_token, get_password_hash, verify_password
 from src.auth.rbac import (
     get_current_user,
-    get_optional_current_user,
     require_admin,
     require_agent,
     require_manager,
@@ -105,6 +104,7 @@ from src.observability.tracing import (
     reset_request_id,
     set_span_attributes,
 )
+from src.security import public_access_service, public_rate_limiter
 from src.tickets.state_machine import TicketAction, ticket_state_machine
 from src.tools.crm import crm_tool
 from src.tools.audit import tool_audit_repository
@@ -484,6 +484,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await tool_outbox_worker.stop()
+        await public_rate_limiter.close()
         await close_decision_provider()
         await shutdown_agent_checkpointing()
 
@@ -493,16 +494,51 @@ app = FastAPI(
     version="1.0.0",
     description="Enterprise Customer Support AI Copilot Platform",
     lifespan=lifespan,
+    docs_url=None if settings.APP_ENV.lower() in {"production", "prod"} else "/docs",
+    redoc_url=None if settings.APP_ENV.lower() in {"production", "prod"} else "/redoc",
+    openapi_url=(
+        None if settings.APP_ENV.lower() in {"production", "prod"} else "/openapi.json"
+    ),
 )
 
 # Configure CORS for Frontend connectivity
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """为公网响应增加基础浏览器安全策略。"""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    content={"detail": "Request body is too large."},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Invalid Content-Length header."},
+            )
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith(("/auth", "/support", "/feedback")):
+        response.headers["Cache-Control"] = "no-store"
+    if settings.APP_ENV.lower() in {"production", "prod"}:
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    return response
 
 
 # --- Observability Request Latency Middleware ---
@@ -594,11 +630,16 @@ instrument_dependencies(app, engine)
 
 
 # --- AUTH ENDPOINTS ---
-@app.post(
-    "/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
-)
-async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
-    # Check if username exists
+async def _create_staff_user(user_in: UserCreate, db: AsyncSession) -> User:
+    """集中创建员工账号，避免公开注册与管理接口逻辑漂移。"""
+    if (
+        settings.APP_ENV.lower() in {"production", "prod"}
+        and len(user_in.password) < 12
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Production staff passwords must contain at least 12 characters.",
+        )
     existing = await db.execute(select(User).filter(User.username == user_in.username))
     if existing.scalars().first():
         raise HTTPException(
@@ -617,10 +658,39 @@ async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db))
     return new_user
 
 
+@app.post(
+    "/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
+async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+    if not settings.STAFF_SELF_REGISTRATION_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return await _create_staff_user(user_in, db)
+
+
+@app.post(
+    "/auth/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_staff_user(
+    user_in: UserCreate,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """只允许管理员创建 agent、manager 或 admin 账号。"""
+    return await _create_staff_user(user_in, db)
+
+
 @app.post("/auth/token", response_model=Token)
 async def login_for_access_token(
-    form_data: LoginRequest, db: AsyncSession = Depends(get_db)
+    form_data: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
 ):
+    await public_rate_limiter.enforce(
+        scope="staff-login",
+        identities=public_access_service.login_identity(request, form_data.username),
+        limit=settings.AUTH_RATE_LIMIT_PER_MINUTE,
+        window_seconds=60,
+    )
     result = await db.execute(select(User).filter(User.username == form_data.username))
     user = result.scalars().first()
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -646,7 +716,11 @@ async def health_check():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_session(
+    req: ChatRequest,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Submit a conversational message. Runs the LangGraph multi-agent flow.
     Appends conversation exchanges to historical memory.
@@ -733,7 +807,9 @@ async def chat_session(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
 @app.post("/summarize-ticket", response_model=TicketSummaryResponse)
 async def summarize_ticket(
-    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+    req: SuggestResponseRequest,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
 ):
     """Analyze a ticket description and summarize key issues."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
@@ -765,7 +841,9 @@ async def summarize_ticket(
 
 @app.post("/suggest-response", response_model=SuggestResponseResponse)
 async def suggest_response(
-    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+    req: SuggestResponseRequest,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
 ):
     """Provide a response suggestion with citations and QA verification details."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
@@ -825,7 +903,9 @@ async def suggest_response(
 
 @app.post("/analyze-sentiment", response_model=TicketSentimentResponse)
 async def analyze_sentiment(
-    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+    req: SuggestResponseRequest,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
 ):
     """Evaluate customer ticket tone and urgency levels."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
@@ -853,7 +933,9 @@ async def analyze_sentiment(
 
 @app.post("/recommend-escalation", response_model=TicketEscalationResponse)
 async def recommend_escalation(
-    req: SuggestResponseRequest, db: AsyncSession = Depends(get_db)
+    req: SuggestResponseRequest,
+    current_user: User = Depends(require_agent),
+    db: AsyncSession = Depends(get_db),
 ):
     """SLA routing prediction."""
     ticket_res = await db.execute(select(Ticket).filter(Ticket.id == req.ticket_id))
@@ -913,12 +995,10 @@ async def get_customer_context(
 async def evaluate_response(
     req: EvaluateResponseRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(require_agent),
 ):
     """Run evaluation scores comparing drafted answers against context."""
-    if req.agent_run_id and (
-        current_user is None or current_user.role not in {"admin", "manager"}
-    ):
+    if req.agent_run_id and current_user.role not in {"admin", "manager"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Manager role is required to link evaluation feedback.",
@@ -952,9 +1032,19 @@ async def evaluate_response(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_user_feedback(
-    req: UserFeedbackRequest, db: AsyncSession = Depends(get_db)
+    req: UserFeedbackRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ):
     """采集用户评分，并关联对应 Agent Run 与 OpenTelemetry Trace。"""
+    visitor_id = public_access_service.visitor_id(request, response)
+    await public_rate_limiter.enforce(
+        scope="public-feedback",
+        identities=public_access_service.rate_limit_identities(request, visitor_id),
+        limit=settings.PUBLIC_FEEDBACK_RATE_LIMIT_PER_MINUTE,
+        window_seconds=60,
+    )
     event = await feedback_service.record_user_feedback(
         db,
         agent_run_id=req.agent_run_id,
@@ -1319,11 +1409,21 @@ def _public_review_feedback(agent_output: dict) -> tuple[str, str, str]:
 
 @app.get("/support/history", response_model=PublicConversationHistoryResponse)
 async def get_public_support_history(
+    request: Request,
+    response: Response,
     customer_id: str = Query(min_length=1, max_length=100),
     session_id: list[str] = Query(),
     db: AsyncSession = Depends(get_db),
 ):
     """返回演示客户最近七天可公开展示的对话历史。"""
+    public_access_service.validate_profile(customer_id)
+    visitor_id = public_access_service.visitor_id(request, response)
+    await public_rate_limiter.enforce(
+        scope="public-history",
+        identities=public_access_service.rate_limit_identities(request, visitor_id),
+        limit=settings.PUBLIC_READ_RATE_LIMIT_PER_MINUTE,
+        window_seconds=60,
+    )
     session_ids = list(
         dict.fromkeys(item.strip() for item in session_id if item.strip())
     )
@@ -1334,10 +1434,14 @@ async def get_public_support_history(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Provide between 1 and 50 valid session_id values.",
         )
+    internal_session_ids = [
+        public_access_service.scoped_session_id(visitor_id, item)
+        for item in session_ids
+    ]
     window_start, messages = await memory_service.load_public_history(
         db,
         customer_id=customer_id,
-        session_ids=session_ids,
+        session_ids=internal_session_ids,
         window_days=7,
     )
     return PublicConversationHistoryResponse(
@@ -1354,9 +1458,27 @@ async def get_public_support_history(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_public_support_request(
-    req: PublicSupportRequest, db: AsyncSession = Depends(get_db)
+    req: PublicSupportRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ):
     """接收用户咨询，只返回可公开的回复或转人工状态。"""
+    public_access_service.validate_profile(req.customer_id)
+    visitor_id = public_access_service.visitor_id(request, response)
+    identities = public_access_service.rate_limit_identities(request, visitor_id)
+    await public_rate_limiter.enforce(
+        scope="public-chat-minute",
+        identities=identities,
+        limit=settings.PUBLIC_CHAT_RATE_LIMIT_PER_MINUTE,
+        window_seconds=60,
+    )
+    await public_rate_limiter.enforce(
+        scope="public-chat-day",
+        identities=identities,
+        limit=settings.PUBLIC_CHAT_RATE_LIMIT_PER_DAY,
+        window_seconds=86400,
+    )
     message = req.message.strip()
     if not message:
         raise HTTPException(
@@ -1364,10 +1486,13 @@ async def create_public_support_request(
             detail="Support message cannot be empty.",
         )
     session_id = req.session_id or str(uuid.uuid4())
+    internal_session_id = public_access_service.scoped_session_id(
+        visitor_id, session_id
+    )
     try:
         memory_context = await memory_service.load_context(
             db,
-            session_id=session_id,
+            session_id=internal_session_id,
             customer_id=req.customer_id,
         )
     except MemoryOwnershipError as exc:
@@ -1386,7 +1511,7 @@ async def create_public_support_request(
     await db.refresh(ticket)
     memory_context = await memory_service.begin_turn(
         db,
-        session_id=session_id,
+        session_id=internal_session_id,
         customer_id=req.customer_id,
         content=message,
         ticket_id=ticket.id,
@@ -1397,7 +1522,7 @@ async def create_public_support_request(
         ticket=ticket,
         kb_version=req.kb_version,
         endpoint="/support/requests",
-        session_id=session_id,
+        session_id=internal_session_id,
         memory_context=memory_context,
         require_persisted_result=True,
     )

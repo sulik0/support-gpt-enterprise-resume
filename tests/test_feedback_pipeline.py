@@ -10,7 +10,7 @@ from src.models.db_models import AgentRun, FeedbackEvent, Ticket
 
 @pytest.mark.asyncio
 async def test_chat_run_and_user_feedback_are_trace_linked(
-    client: AsyncClient, db_session
+    client: AsyncClient, db_session, agent_headers: dict[str, str]
 ):
     health = await client.get("/health")
     assert health.status_code == 200
@@ -18,6 +18,7 @@ async def test_chat_run_and_user_feedback_are_trace_linked(
 
     chat = await client.post(
         "/chat",
+        headers=agent_headers,
         json={
             "session_id": "feedback-session",
             "customer_id": "cust_101",
@@ -74,13 +75,16 @@ async def test_chat_run_and_user_feedback_are_trace_linked(
             "agent_run_id": run_id,
         },
     )
-    assert untrusted_evaluation.status_code == 403
+    assert untrusted_evaluation.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_user_feedback_is_idempotent_and_token_scoped(client: AsyncClient):
+async def test_user_feedback_is_idempotent_and_token_scoped(
+    client: AsyncClient, agent_headers: dict[str, str]
+):
     chat = await client.post(
         "/chat",
+        headers=agent_headers,
         json={
             "session_id": "owned-session",
             "customer_id": "cust_101",
@@ -133,6 +137,7 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
 
     chat = await client.post(
         "/chat",
+        headers=headers,
         json={
             "session_id": "training-session",
             "customer_id": "cust_101",

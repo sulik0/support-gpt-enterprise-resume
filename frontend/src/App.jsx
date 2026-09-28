@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AUTH_EXPIRED_EVENT, fetchHealth, fetchReviewQueue, login, register, logout } from './api/client';
+import { AUTH_EXPIRED_EVENT, fetchHealth, fetchReviewQueue, login, logout } from './api/client';
 import CustomerSupportPage from './components/CustomerSupportPage';
 import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 
 export default function App() {
+  const staffEntryEnabled = import.meta.env.VITE_STAFF_ENTRY_ENABLED !== 'false';
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('token')));
   const [entryMode, setEntryMode] = useState(() => (
     window.location.hash === '#support' ? 'customer' : localStorage.getItem('token') ? 'staff' : 'customer'
@@ -96,19 +97,6 @@ export default function App() {
     }
   }
 
-  async function handleRegister() {
-    if (!loginUser || !loginPass) {
-      alert('请先填写用户名和密码。');
-      return;
-    }
-    try {
-      await register(loginUser, loginPass, 'agent');
-      setAuthNotice(`客服账号 ${loginUser} 已注册，请登录。`);
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
   function handleLogout() {
     logout();
     setIsAuthenticated(false);
@@ -132,10 +120,10 @@ export default function App() {
   }), [tickets]);
 
   if (entryMode === 'customer') {
-    return <CustomerSupportPage onStaffEntry={() => {
+    return <CustomerSupportPage onStaffEntry={staffEntryEnabled ? () => {
       window.location.hash = 'staff';
       setEntryMode('staff');
-    }} />;
+    } : null} />;
   }
 
   if (!isAuthenticated) {
@@ -162,10 +150,7 @@ export default function App() {
           </form>
 
           <div className="staff-register">
-            <span>首次使用可注册演示账号</span>
-            <div>
-              <button onClick={handleRegister} className="btn btn-secondary">注册客服演示账号</button>
-            </div>
+            <span>后台账号由管理员统一创建，不开放公开注册。</span>
           </div>
         </div>
       </div>

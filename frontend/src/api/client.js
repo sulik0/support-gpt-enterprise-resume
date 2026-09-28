@@ -61,18 +61,6 @@ export function logout() {
   localStorage.removeItem('username');
 }
 
-export async function register(username, password, role = 'agent') {
-  const response = await fetch(`${BASE_URL}/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, role }),
-  });
-  if (!response.ok) {
-    throw new Error('注册失败，用户名可能已存在或输入不符合要求');
-  }
-  return response.json();
-}
-
 export async function fetchTickets() {
   const response = await authenticatedFetch(`${BASE_URL}/tickets`, {
     headers: getHeaders(),
@@ -92,6 +80,7 @@ export async function fetchReviewQueue() {
 export async function submitSupportRequest(customerId, message, sessionId, kbVersion = 'v1') {
   const response = await fetch(`${BASE_URL}/support/requests`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ customer_id: customerId, message, session_id: sessionId, kb_version: kbVersion }),
   });
@@ -102,7 +91,10 @@ export async function submitSupportRequest(customerId, message, sessionId, kbVer
 export async function fetchSupportHistory(customerId, sessionIds, signal) {
   const params = new URLSearchParams({ customer_id: customerId });
   sessionIds.forEach((sessionId) => params.append('session_id', sessionId));
-  const response = await fetch(`${BASE_URL}/support/history?${params}`, { signal });
+  const response = await fetch(`${BASE_URL}/support/history?${params}`, {
+    credentials: 'include',
+    signal,
+  });
   if (!response.ok) throw await apiError(response, '加载最近对话失败');
   return response.json();
 }
@@ -172,6 +164,7 @@ export async function fetchCustomerContext(customerId, signal) {
 export async function submitUserFeedback(agentRunId, feedbackToken, rating, comment, idempotencyKey) {
   const response = await fetch(`${BASE_URL}/feedback/user`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       agent_run_id: agentRunId,

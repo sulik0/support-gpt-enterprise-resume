@@ -1,3 +1,4 @@
+import os
 import random
 import uuid
 from locust import HttpUser, task, between
@@ -10,25 +11,22 @@ class SupportGPTExtendedUser(HttpUser):
 
     def on_start(self):
         """Pre-configure session identity credentials."""
-        self.customer_id = f"cust_load_{random.randint(100, 999)}"
+        self.customer_id = random.choice(("cust_101", "cust_102", "cust_103"))
         self.session_id = str(uuid.uuid4())
         self.token = ""
         self.headers = {}
         self.user_setup()
 
     def user_setup(self):
-        """Prepare JWT auth headers for simulating support agents."""
-        username = f"agent_{uuid.uuid4().hex[:6]}"
-        # Register and login agent to support authentication-locked approvals testing
+        """使用预创建的压测账号，禁止压测绕过生产注册策略。"""
+        username = os.getenv("LOAD_TEST_USERNAME", "")
+        password = os.getenv("LOAD_TEST_PASSWORD", "")
+        if not username or not password:
+            return
         try:
-            self.client.post("/auth/register", json={
-                "username": username,
-                "password": "loadtestpassword",
-                "role": "agent"
-            })
             login_res = self.client.post("/auth/token", json={
                 "username": username,
-                "password": "loadtestpassword"
+                "password": password,
             })
             if login_res.status_code == 200:
                 self.token = login_res.json()["access_token"]
@@ -50,7 +48,9 @@ class SupportGPTExtendedUser(HttpUser):
             "Can I change my account preferences verification email?",
             "What is the billing window limit?"
         ]
-        self.client.post("/chat", json={
+        if not self.headers:
+            return
+        self.client.post("/chat", headers=self.headers, json={
             "session_id": self.session_id,
             "customer_id": self.customer_id,
             "message": random.choice(questions),
@@ -60,10 +60,12 @@ class SupportGPTExtendedUser(HttpUser):
     @task(2)
     def list_tickets_and_profiles(self):
         """Retrieve historical cases and order summaries."""
-        self.client.get("/tickets")
+        if not self.headers:
+            return
+        self.client.get("/tickets", headers=self.headers)
         self.client.post("/customer-context", json={
             "customer_id": self.customer_id
-        })
+        }, headers=self.headers)
 
     @task(1)
     def process_pending_approvals(self):

@@ -21,6 +21,9 @@ os.environ["TOOL_OUTBOX_WORKER_ENABLED"] = "false"
 os.environ["TOOL_RECONCILIATION_DELAY_SECONDS"] = "0"
 os.environ["TOOL_POLICY_VERSION"] = "tool-policy-v2.2-test"
 os.environ["OTEL_ENABLED"] = "false"
+os.environ["STAFF_SELF_REGISTRATION_ENABLED"] = "true"
+os.environ["PUBLIC_DEMO_ISOLATION_ENABLED"] = "false"
+os.environ["PUBLIC_RATE_LIMIT_ENABLED"] = "false"
 
 from src.database import Base, get_db
 from src.main import app

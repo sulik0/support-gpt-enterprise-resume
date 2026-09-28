@@ -143,6 +143,7 @@ async def test_approval_api_completes_persisted_durable_execution(
 ):
     chat = await client.post(
         "/chat",
+        headers=agent_headers,
         json={
             "session_id": "durable-approval-session",
             "customer_id": "cust_101",

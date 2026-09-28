@@ -269,28 +269,36 @@ async def test_remaining_fastapi_routes(
 
     # 3. Summarize ticket
     sum_res = await client.post(
-        "/summarize-ticket", json={"ticket_id": ticket_id, "kb_version": "v1"}
+        "/summarize-ticket",
+        json={"ticket_id": ticket_id, "kb_version": "v1"},
+        headers=agent_headers,
     )
     assert sum_res.status_code == 200
     assert sum_res.json()["ticket_id"] == ticket_id
 
     # 4. Suggest response
     sug_res = await client.post(
-        "/suggest-response", json={"ticket_id": ticket_id, "kb_version": "v1"}
+        "/suggest-response",
+        json={"ticket_id": ticket_id, "kb_version": "v1"},
+        headers=agent_headers,
     )
     assert sug_res.status_code == 200
     assert sug_res.json()["ticket_id"] == ticket_id
 
     # 5. Analyze sentiment
     sent_res = await client.post(
-        "/analyze-sentiment", json={"ticket_id": ticket_id, "kb_version": "v1"}
+        "/analyze-sentiment",
+        json={"ticket_id": ticket_id, "kb_version": "v1"},
+        headers=agent_headers,
     )
     assert sent_res.status_code == 200
     assert sent_res.json()["ticket_id"] == ticket_id
 
     # 6. Recommend escalation
     esc_res = await client.post(
-        "/recommend-escalation", json={"ticket_id": ticket_id, "kb_version": "v1"}
+        "/recommend-escalation",
+        json={"ticket_id": ticket_id, "kb_version": "v1"},
+        headers=agent_headers,
     )
     assert esc_res.status_code == 200
     assert esc_res.json()["ticket_id"] == ticket_id

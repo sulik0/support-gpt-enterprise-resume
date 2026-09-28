@@ -9,7 +9,7 @@ class UserCreate(BaseModel):
     """定义用户注册时提交的账号、密码和角色。"""
 
     username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=6, max_length=128)
     role: str = Field(default="agent", pattern="^(admin|manager|agent)$")
 
 
@@ -30,8 +30,8 @@ class UserResponse(BaseModel):
 class LoginRequest(BaseModel):
     """定义用户登录凭据。"""
 
-    username: str
-    password: str
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class Token(BaseModel):

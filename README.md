@@ -70,6 +70,19 @@ npm run dev
 
 打开 [http://127.0.0.1:3000](http://127.0.0.1:3000)。
 
+公网 Demo 默认关闭员工自助注册，公开入口只保留 `/support/*` 和一次性用户评价。生产启动会校验 JWT、Tool 加密、访客签名密钥和 CORS 白名单；可先在本地安全旋转密钥：
+公开构建还应设置 `VITE_STAFF_ENTRY_ENABLED=false`，隐藏员工入口；后端 RBAC 仍是真正的安全边界。
+
+```bash
+python scripts/generate_production_secrets.py --env-file .env --confirm
+```
+
+关闭公开注册后，首个管理员使用服务端脚本创建，后续账号由 admin 通过受保护的 `POST /auth/users` 创建：
+
+```bash
+python scripts/create_staff_user.py admin --role admin
+```
+
 ### 真实 LLM
 
 ```dotenv
@@ -182,5 +195,6 @@ Collector 未启动时后端会 fail-open，不影响 Agent 主流程。
 - CRM、OMS、Ticketing 和默认 LLM 是 Mock Adapter，架构保留替换边界，但不得表述为已接入真实企业系统。
 - V2.2 的退款幂等、对账和补偿由 Mock OMS 账本验证；生产接入仍需由真实 OMS 明确实现相同契约，并补 Alembic Migration。
 - Docker Compose 和 Kubernetes 是可复现部署模板，不代表已生产上线。
+- 公网限流在 Redis 不可用时会降级到单进程内存；多副本上线前必须使用共享 Redis 并校准可信代理头。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未用真实客服数据校准。
 - Feedback Pipeline 当前只导出脱敏训练候选，尚未执行 SFT/DPO 训练和自动发布。

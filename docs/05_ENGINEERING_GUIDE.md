@@ -178,17 +178,27 @@ QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
 
 风险阈值由 `RISK_MEDIUM_THRESHOLD`、`RISK_HIGH_THRESHOLD`、`RISK_CRITICAL_THRESHOLD`、`RISK_LOW_CONFIDENCE_THRESHOLD` 和 `RISK_QA_SCORE_THRESHOLD` 配置。安全检测不得因外部 Guard 服务不可用而使主 API 失败；降级场景会隔离不可信上下文并转人工。
 
+公网 Demo 额外遵循以下边界：
+
+- `STAFF_SELF_REGISTRATION_ENABLED=false`，生产不允许自助创建员工账号；首个 admin 由 `scripts/create_staff_user.py` 初始化。
+- `CORS_ALLOWED_ORIGINS` 只填写已部署前端的完整 Origin，生产禁止 `*`，Swagger/OpenAPI 自动关闭。
+- `PUBLIC_VISITOR_SECRET` 签发 `HttpOnly + Secure + SameSite=None` 匿名 Cookie，后端由访客身份派生内部 Session ID，不同浏览器不会共享演示对话。
+- `/support/requests`、`/support/history`、`/feedback/user` 和登录接口执行 Redis 分布式限流，Redis 故障时降级为有界进程内计数。
+- `/chat`、回复建议、情感分析、升级判断和在线 Evaluation 都是员工内部接口，必须通过 RBAC。
+- 生产启动会拒绝默认/弱 JWT Secret、缺失的 Fernet Tool Key、缺失的访客密钥、开启自助注册或通配 CORS。
+
 ## 主要 API
 
 | 路径 | 用途 | 权限 |
 |---|---|---|
-| `POST /auth/register` | 注册用户 | 公开 |
+| `POST /auth/register` | 仅测试/显式开启时自助注册 | 生产关闭 |
+| `POST /auth/users` | 创建员工账号 | `admin` |
 | `POST /auth/token` | 获取 JWT | 公开 |
 | `GET /auth/users/me` | 查询当前用户 | 登录 |
 | `GET /health` | 健康检查 | 公开 |
 | `GET /support/history?customer_id=...&session_id=...` | 按一个或多个已知 Session 查询最近 7 天安全历史 | 公开演示入口 |
 | `POST /support/requests` | 用户提交客服问题 | 公开演示入口 |
-| `POST /chat` | 执行对话 Workflow | 按当前路由约束 |
+| `POST /chat` | 执行内部对话 Workflow | `agent+` |
 | `POST /tickets` | 创建工单并持久化 AgentRun | 登录 |
 | `GET /tickets` | 查询工单 | 登录 |
 | `GET /staff/review-queue` | 待审批工单 | 客服员工 |
@@ -206,7 +216,7 @@ QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
 | `POST /feedback/user` | 提交一次性用户评价 | `agent_run_id + feedback_token` |
 | `GET /feedback/runs/{agent_run_id}` | 查看 Run 与反馈关联 | `manager/admin` |
 | `GET /observability/runs` | 分页查询 Agent Run 摘要；可传 `ticket_id` 精确筛选 | `manager/admin` |
-| `POST /evaluate-response` | 运行单次评估 | 关联 Run 时需 `manager/admin` |
+| `POST /evaluate-response` | 运行单次评估 | `agent+`；关联 Run 时需 `manager/admin` |
 
 Swagger 是最新 Schema 的最终参考；修改 API 时必须同步 Pydantic Model、测试和本文档。
 

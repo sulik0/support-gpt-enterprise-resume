@@ -33,7 +33,7 @@ async def test_copilot_service_routes(
         "message": "I want a refund for my charge.",
         "kb_version": "v1",
     }
-    chat_res = await client.post("/chat", json=chat_payload)
+    chat_res = await client.post("/chat", json=chat_payload, headers=agent_headers)
     assert chat_res.status_code == 200
     data = chat_res.json()
     assert data["session_id"] == "sess_test"
@@ -56,7 +56,9 @@ async def test_copilot_service_routes(
         ],
         "response": "Corporate policy states refunds must be requested within 30 days.",
     }
-    eval_res = await client.post("/evaluate-response", json=eval_payload)
+    eval_res = await client.post(
+        "/evaluate-response", json=eval_payload, headers=agent_headers
+    )
     assert eval_res.status_code == 200
     eval_data = eval_res.json()
     assert eval_data["passed_evaluation"] is True
@@ -65,7 +67,7 @@ async def test_copilot_service_routes(
 
 @pytest.mark.asyncio
 async def test_chat_request_emits_correlated_application_logs(
-    client: AsyncClient, caplog
+    client: AsyncClient, caplog, agent_headers: dict[str, str]
 ):
     application_logger = logging.getLogger("supportgpt")
     application_logger.addHandler(caplog.handler)
@@ -73,7 +75,7 @@ async def test_chat_request_emits_correlated_application_logs(
         with caplog.at_level(logging.INFO, logger="supportgpt"):
             response = await client.post(
                 "/chat",
-                headers={"X-Request-ID": "chat-log-test"},
+                headers={**agent_headers, "X-Request-ID": "chat-log-test"},
                 json={
                     "session_id": "sess_log_test",
                     "customer_id": "cust_101",
@@ -122,7 +124,7 @@ async def test_human_in_loop_approvals(client: AsyncClient):
         "message": "I need a billing refund.",
         "kb_version": "v1",
     }
-    chat_res = await client.post("/chat", json=chat_payload)
+    chat_res = await client.post("/chat", json=chat_payload, headers=headers)
     approval_id = chat_res.json()["approval_id"]
 
     # 3. Retrieve pending approvals list
