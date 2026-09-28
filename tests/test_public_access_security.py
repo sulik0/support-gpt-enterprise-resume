@@ -1,4 +1,5 @@
 import datetime
+import json
 
 import pytest
 from cryptography.fernet import Fernet
@@ -10,12 +11,19 @@ from src.security import public_access_service, public_rate_limiter
 
 
 @pytest.mark.asyncio
-async def test_staff_self_registration_can_be_disabled(client, monkeypatch):
+@pytest.mark.parametrize("role", ["manager", "admin"])
+async def test_staff_self_registration_can_be_disabled(
+    client, monkeypatch, role
+):
     monkeypatch.setattr(settings, "STAFF_SELF_REGISTRATION_ENABLED", False)
 
     response = await client.post(
         "/auth/register",
-        json={"username": "public_admin", "password": "password", "role": "admin"},
+        json={
+            "username": f"public_{role}",
+            "password": "password",
+            "role": role,
+        },
     )
 
     assert response.status_code == 404
@@ -44,7 +52,14 @@ async def test_internal_llm_endpoints_require_staff_authentication(
 ):
     response = await client.post(path, json=payload)
 
-    assert response.status_code in {401, 403}
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_agent_cannot_call_manager_api(client, agent_headers):
+    response = await client.get("/observability/runs", headers=agent_headers)
+
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -136,6 +151,48 @@ async def test_public_history_is_isolated_by_signed_visitor(
 
 
 @pytest.mark.asyncio
+async def test_tampered_visitor_cookie_cannot_read_original_session(
+    client, db_session, monkeypatch
+):
+    monkeypatch.setattr(settings, "PUBLIC_DEMO_ISOLATION_ENABLED", True)
+    monkeypatch.setattr(settings, "PUBLIC_VISITOR_SECRET", "s" * 48)
+    visitor_id = "signed_visitor_identity_123456"
+    session_id = "private-session"
+    internal_session_id = public_access_service.scoped_session_id(
+        visitor_id, session_id
+    )
+    db_session.add(
+        ConversationSession(
+            session_id=internal_session_id,
+            customer_id="cust_101",
+        )
+    )
+    db_session.add(
+        ConversationMessage(
+            id="private-message",
+            session_id=internal_session_id,
+            role="user",
+            content="visitor A private content",
+            status="final",
+            created_at=datetime.datetime.utcnow(),
+        )
+    )
+    await db_session.commit()
+    signed = public_access_service._signed(visitor_id)
+    replacement = "0" if signed[-1] != "0" else "1"
+    client.cookies.set(settings.PUBLIC_VISITOR_COOKIE_NAME, signed[:-1] + replacement)
+
+    response = await client.get(
+        "/support/history",
+        params={"customer_id": "cust_101", "session_id": session_id},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["messages"] == []
+    assert response.cookies[settings.PUBLIC_VISITOR_COOKIE_NAME] != signed
+
+
+@pytest.mark.asyncio
 async def test_public_demo_rejects_unknown_customer_profile(client, monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_DEMO_ISOLATION_ENABLED", True)
 
@@ -169,6 +226,109 @@ async def test_rate_limiter_blocks_after_configured_limit(monkeypatch):
 
     assert error.value.status_code == 429
     assert error.value.headers["Retry-After"]
+
+
+@pytest.mark.asyncio
+async def test_public_support_endpoint_returns_429_when_flooded(client, monkeypatch):
+    monkeypatch.setattr(settings, "PUBLIC_RATE_LIMIT_ENABLED", True)
+    monkeypatch.setattr(settings, "PUBLIC_CHAT_RATE_LIMIT_PER_MINUTE", 1)
+    monkeypatch.setattr(settings, "PUBLIC_CHAT_RATE_LIMIT_PER_DAY", 100)
+    monkeypatch.setattr(settings, "REDIS_URL", None)
+    await public_rate_limiter.reset_for_tests()
+
+    first = await client.post(
+        "/support/requests",
+        json={"customer_id": "cust_101", "message": "How do I update settings?"},
+    )
+    second = await client.post(
+        "/support/requests",
+        json={"customer_id": "cust_101", "message": "One more request"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 429
+    assert second.headers["retry-after"]
+
+
+@pytest.mark.asyncio
+async def test_redis_failure_uses_in_memory_rate_limit(monkeypatch):
+    monkeypatch.setattr(settings, "PUBLIC_RATE_LIMIT_ENABLED", True)
+    monkeypatch.setattr(settings, "REDIS_URL", "redis://127.0.0.1:1/0")
+    await public_rate_limiter.close()
+    public_rate_limiter._redis_failed = False
+    await public_rate_limiter.reset_for_tests()
+
+    await public_rate_limiter.enforce(
+        scope="redis-shutdown-test",
+        identities=("same-client",),
+        limit=1,
+        window_seconds=60,
+    )
+    with pytest.raises(HTTPException) as error:
+        await public_rate_limiter.enforce(
+            scope="redis-shutdown-test",
+            identities=("same-client",),
+            limit=1,
+            window_seconds=60,
+        )
+
+    assert public_rate_limiter._redis_failed is True
+    assert error.value.status_code == 429
+    public_rate_limiter._redis_failed = False
+
+
+@pytest.mark.asyncio
+async def test_oversized_public_request_is_rejected_before_agent(
+    client, monkeypatch
+):
+    agent_called = False
+
+    async def should_not_run(**_kwargs):
+        nonlocal agent_called
+        agent_called = True
+        raise AssertionError("Agent must not run for oversized bodies")
+
+    monkeypatch.setattr("src.main._process_ticket_with_agent", should_not_run)
+    body = json.dumps(
+        {"customer_id": "cust_101", "message": "x" * 70000}
+    ).encode("utf-8")
+
+    response = await client.post(
+        "/support/requests",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert agent_called is False
+
+
+@pytest.mark.asyncio
+async def test_llm_timeout_returns_safe_public_degradation(
+    client, monkeypatch
+):
+    from src.llm.provider import llm_provider
+
+    async def timeout(**_kwargs):
+        raise TimeoutError("private-upstream.internal secret diagnostic")
+
+    monkeypatch.setattr(llm_provider, "generate_resolution", timeout)
+
+    response = await client.post(
+        "/support/requests",
+        json={
+            "customer_id": "cust_101",
+            "message": "请说明如何修改账户偏好设置。",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "pending_human"
+    assert payload["handling_reason"] == "processing_exception"
+    assert "暂时不可用" in payload["response"]
+    assert "private-upstream" not in response.text
+    assert "Traceback" not in response.text
 
 
 def test_production_rejects_default_jwt_secret():

@@ -7,6 +7,11 @@ import argparse
 import asyncio
 import getpass
 import os
+import sys
+from pathlib import Path
+
+# 允许按 README 从仓库根目录直接执行该脚本。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select
 

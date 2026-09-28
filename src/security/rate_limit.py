@@ -82,6 +82,13 @@ class PublicRateLimiter:
                 return int(value)
             except Exception as exc:
                 self._redis_failed = True
+                failed_client = self._redis
+                self._redis = None
+                if failed_client is not None:
+                    try:
+                        await failed_client.aclose()
+                    except Exception:
+                        pass
                 logger.warning(
                     "rate limiter redis unavailable; using in-memory fallback",
                     extra={"error_type": exc.__class__.__name__},

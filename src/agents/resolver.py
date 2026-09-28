@@ -60,11 +60,25 @@ class ResolutionAgent:
             return {**state, "suggested_response": response_text}
 
         except Exception as e:
-            logger.error(f"Error formulating resolution in resolver: {e}")
+            error_type = e.__class__.__name__
+            logger.error(
+                "resolver generation failed",
+                extra={"error_type": error_type},
+            )
             return {
                 **state,
-                "errors": state.get("errors", []) + [f"Resolver agent error: {str(e)}"],
+                "errors": state.get("errors", [])
+                + [f"Resolver dependency failure: {error_type}"],
                 "suggested_response": self._failure_response(description),
+                "degradation_level": "human_required",
+                "degradation_reasons": list(
+                    dict.fromkeys(
+                        [
+                            *state.get("degradation_reasons", []),
+                            "llm.generate_resolution:failed",
+                        ]
+                    )
+                ),
             }
 
     @staticmethod
