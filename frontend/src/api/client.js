@@ -99,6 +99,14 @@ export async function submitSupportRequest(customerId, message, sessionId, kbVer
   return response.json();
 }
 
+export async function fetchSupportHistory(customerId, sessionIds, signal) {
+  const params = new URLSearchParams({ customer_id: customerId });
+  sessionIds.forEach((sessionId) => params.append('session_id', sessionId));
+  const response = await fetch(`${BASE_URL}/support/history?${params}`, { signal });
+  if (!response.ok) throw await apiError(response, '加载最近对话失败');
+  return response.json();
+}
+
 export async function createTicket(customerId, subject, description, kbVersion = 'v1') {
   const response = await authenticatedFetch(`${BASE_URL}/tickets`, {
     method: 'POST',

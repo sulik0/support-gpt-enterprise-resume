@@ -33,7 +33,7 @@
 - 评测：Ragas + DeepEval + 确定性 Agent/Security Evaluator，固定 100 条 Baseline 支持真实 Workflow Replay。
 - PromptOps / EvalOps V1：`src/promptops/` 管理模板快照、运行绑定和实验晋级；CLI 为 `scripts/promptops.py`。默认 Prompt 内容保持原样，production 不接受 Mock、过时版本、未提交代码或新增失败 Case。操作流程见 `06_PROMPTS.md`。
 - 反馈：AgentRun、FeedbackEvent 和 AgentRunLink 关联 Trace、用户评价、人工修正与 Evaluation。
-- 前端：连续会话式用户咨询页 + 客服审批后台 + Agent 可观测页。用户端始终显示正常回复或安全的风险/异常处理状态，用户评分直接写入 Feedback Pipeline；审批明确区分原样批准、人工修改和拒绝。打开工单详情只读持久化结果，不重复调用 Agent。
+- 前端：连续会话式用户咨询页 + 客服审批后台 + Agent 可观测页。用户端以浏览器已知 Session 列表加载最近 7 天安全历史，始终显示正常回复或安全的风险/异常处理状态，用户评分直接写入 Feedback Pipeline；审批明确区分原样批准、人工修改和拒绝。打开工单详情只读持久化结果，不重复调用 Agent。
 
 ## 必须保持的设计
 

@@ -62,6 +62,7 @@ from src.models.schemas import (
     FeedbackEventResponse,
     LoginRequest,
     OrderInfo,
+    PublicConversationHistoryResponse,
     PublicSupportRequest,
     PublicSupportResponse,
     ResponseApprovalRequest,
@@ -1313,6 +1314,37 @@ def _public_review_feedback(agent_output: dict) -> tuple[str, str, str]:
         "manual_review",
         "我已经收到您的问题。该请求需要人工客服进一步确认，工单已进入处理队列。",
         "客服人员会核对 AI 草稿和相关业务信息后继续处理。",
+    )
+
+
+@app.get("/support/history", response_model=PublicConversationHistoryResponse)
+async def get_public_support_history(
+    customer_id: str = Query(min_length=1, max_length=100),
+    session_id: list[str] = Query(),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回演示客户最近七天可公开展示的对话历史。"""
+    session_ids = list(
+        dict.fromkeys(item.strip() for item in session_id if item.strip())
+    )
+    if not session_ids or len(session_ids) > 50 or any(
+        len(item) > 100 for item in session_ids
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide between 1 and 50 valid session_id values.",
+        )
+    window_start, messages = await memory_service.load_public_history(
+        db,
+        customer_id=customer_id,
+        session_ids=session_ids,
+        window_days=7,
+    )
+    return PublicConversationHistoryResponse(
+        customer_id=customer_id,
+        window_days=7,
+        window_start=window_start,
+        messages=messages,
     )
 
 

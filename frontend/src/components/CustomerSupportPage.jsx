@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -12,7 +12,7 @@ import {
   Sparkles,
   Star,
 } from 'lucide-react';
-import { submitSupportRequest, submitUserFeedback } from '../api/client';
+import { fetchSupportHistory, submitSupportRequest, submitUserFeedback } from '../api/client';
 
 const EXAMPLE_QUESTIONS = [
   '我的订单还没有收到，能帮我查一下吗？',
@@ -30,13 +30,67 @@ function createSessionId() {
     || `support-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function rememberSession(customerId, sessionId) {
+  const key = `supportgpt:sessions:${customerId}`;
+  let sessions = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(key) || '[]');
+    if (Array.isArray(stored)) sessions = stored.filter((item) => typeof item === 'string');
+  } catch {
+    sessions = [];
+  }
+  const next = [...sessions.filter((item) => item !== sessionId), sessionId].slice(-50);
+  localStorage.setItem(key, JSON.stringify(next));
+  return next;
+}
+
+function knownSessions(customerId) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(`supportgpt:sessions:${customerId}`) || '[]');
+    return Array.isArray(stored) ? stored.filter((item) => typeof item === 'string').slice(-50) : [];
+  } catch {
+    return [];
+  }
+}
+
 function sessionForCustomer(customerId) {
   const key = `supportgpt:session:${customerId}`;
   const existing = localStorage.getItem(key);
-  if (existing) return existing;
+  if (existing) {
+    rememberSession(customerId, existing);
+    return existing;
+  }
   const created = createSessionId();
   localStorage.setItem(key, created);
+  rememberSession(customerId, created);
   return created;
+}
+
+function normalizeUtc(value) {
+  if (!value) return null;
+  return /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`;
+}
+
+function historyDay(value) {
+  const normalized = normalizeUtc(value);
+  if (!normalized) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date(normalized));
+}
+
+function historyTime(value) {
+  const normalized = normalizeUtc(value);
+  if (!normalized) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(normalized));
 }
 
 export default function CustomerSupportPage({ onStaffEntry }) {
@@ -44,6 +98,8 @@ export default function CustomerSupportPage({ onStaffEntry }) {
   const [sessionId, setSessionId] = useState(() => sessionForCustomer('cust_101'));
   const [message, setMessage] = useState('');
   const [conversation, setConversation] = useState([WELCOME_MESSAGE]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -51,6 +107,39 @@ export default function CustomerSupportPage({ onStaffEntry }) {
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackState, setFeedbackState] = useState('idle');
   const [feedbackError, setFeedbackError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadHistory(customerId, controller.signal);
+    return () => controller.abort();
+  }, [customerId]);
+
+  async function loadHistory(currentCustomerId, signal) {
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const history = await fetchSupportHistory(
+        currentCustomerId,
+        knownSessions(currentCustomerId),
+        signal,
+      );
+      if (signal?.aborted) return;
+      const messages = history.messages.map((item) => ({
+        id: item.id,
+        role: item.role,
+        content: item.content,
+        ticketId: item.ticket_id,
+        createdAt: item.created_at,
+      }));
+      setConversation(messages.length ? messages : [WELCOME_MESSAGE]);
+    } catch (requestError) {
+      if (requestError.name === 'AbortError') return;
+      setHistoryError(requestError.message || '最近七天的对话记录暂时无法加载。');
+      setConversation([WELCOME_MESSAGE]);
+    } finally {
+      if (!signal?.aborted) setHistoryLoading(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -60,8 +149,13 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     setError('');
     resetFeedback();
     const userMessage = message.trim();
+    const submittedAt = new Date().toISOString();
     setMessage('');
-    setConversation((current) => [...current, { role: 'user', content: userMessage }]);
+    setConversation((current) => [...current, {
+      role: 'user',
+      content: userMessage,
+      createdAt: submittedAt,
+    }]);
     try {
       const nextResult = await submitSupportRequest(customerId, userMessage, sessionId);
       setResult(nextResult);
@@ -69,6 +163,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
         role: nextResult.status === 'answered' ? 'assistant' : 'status',
         content: nextResult.response || nextResult.message || '您的问题已收到，我们正在继续处理。',
         ticketId: nextResult.ticket_id,
+        createdAt: new Date().toISOString(),
       }]);
     } catch (requestError) {
       const errorMessage = requestError.message || '问题提交失败，请稍后重试。';
@@ -76,6 +171,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
       setConversation((current) => [...current, {
         role: 'error',
         content: '抱歉，本次请求暂时未能完成。您的问题仍保留在当前对话中，请稍后重试；如持续失败，请联系人工客服。',
+        createdAt: new Date().toISOString(),
       }]);
     } finally {
       setSubmitting(false);
@@ -113,9 +209,15 @@ export default function CustomerSupportPage({ onStaffEntry }) {
   function startNewConversation(nextCustomerId = customerId) {
     const nextSessionId = createSessionId();
     localStorage.setItem(`supportgpt:session:${nextCustomerId}`, nextSessionId);
+    rememberSession(nextCustomerId, nextSessionId);
     setCustomerId(nextCustomerId);
     setSessionId(nextSessionId);
-    setConversation([WELCOME_MESSAGE]);
+    setConversation((current) => [...current, {
+      id: `new-session-${nextSessionId}`,
+      role: 'status',
+      content: '已开始新对话。最近七天的历史记录仍保留在当前窗口中。',
+      createdAt: new Date().toISOString(),
+    }]);
     setMessage('');
     setResult(null);
     setError('');
@@ -160,16 +262,16 @@ export default function CustomerSupportPage({ onStaffEntry }) {
           <div className="support-chat-toolbar">
             <div className="support-form-heading">
               <span className="support-bot"><Bot size={21} /></span>
-              <div><strong>SupportGPT 智能客服</strong><small>在线 · 通常几秒内回复</small></div>
+              <div><strong>SupportGPT 智能客服</strong><small>在线 · 已同步最近 7 天对话</small></div>
             </div>
-            <button type="button" className="support-new-session" onClick={() => startNewConversation()} disabled={submitting}>
+            <button type="button" className="support-new-session" onClick={() => startNewConversation()} disabled={submitting || historyLoading}>
               <RefreshCw size={14} /> 新对话
             </button>
           </div>
 
           <label className="customer-selector support-customer-selector">
             <span>当前演示客户</span>
-            <select value={customerId} onChange={(event) => switchCustomer(event.target.value)} disabled={submitting}>
+            <select value={customerId} onChange={(event) => switchCustomer(event.target.value)} disabled={submitting || historyLoading}>
               <option value="cust_101">简·多伊（VIP 客户）</option>
               <option value="cust_102">约翰·史密斯（标准客户）</option>
               <option value="cust_103">艾克米公司（企业客户）</option>
@@ -177,21 +279,40 @@ export default function CustomerSupportPage({ onStaffEntry }) {
           </label>
 
           <div className="support-conversation" aria-label="当前对话记录" aria-live="polite">
-            {conversation.slice(-12).map((item, index) => (
-              <div className={`support-message ${item.role}`} key={`${item.role}-${item.ticketId || index}-${index}`}>
-                <span>{item.role === 'user' ? '您' : item.role === 'assistant' ? 'AI' : item.role === 'error' ? '异常' : '状态'}</span>
-                <div>
-                  <p>{item.content}</p>
-                  {item.ticketId && <small>工单 #{item.ticketId}</small>}
-                </div>
-              </div>
-            ))}
+            {historyLoading ? (
+              <div className="support-history-loading"><RefreshCw className="spin" size={16} /> 正在加载最近 7 天的对话记录……</div>
+            ) : conversation.map((item, index) => {
+              const day = historyDay(item.createdAt);
+              const previousDay = index > 0 ? historyDay(conversation[index - 1].createdAt) : '';
+              return (
+                <React.Fragment key={item.id || `${item.role}-${item.ticketId || 'local'}-${index}`}>
+                  {day && day !== previousDay && <div className="support-history-day"><span>{day}</span></div>}
+                  <div className={`support-message ${item.role}`}>
+                    <span>{item.role === 'user' ? '您' : item.role === 'assistant' ? 'AI' : item.role === 'error' ? '异常' : '状态'}</span>
+                    <div>
+                      <p>{item.content}</p>
+                      {(item.ticketId || item.createdAt) && (
+                        <small>{item.ticketId ? `工单 #${item.ticketId}` : ''}{item.ticketId && item.createdAt ? ' · ' : ''}{historyTime(item.createdAt)}</small>
+                      )}
+                    </div>
+                  </div>
+                </React.Fragment>
+              );
+            })}
             {submitting && (
               <div className="support-message status support-typing">
                 <span>AI</span><p><RefreshCw className="spin" size={13} /> 正在查询业务信息并生成回复……</p>
               </div>
             )}
           </div>
+
+          {historyError && (
+            <div className="support-history-error" role="alert">
+              <AlertTriangle size={16} />
+              <span>{historyError}</span>
+              <button type="button" onClick={() => loadHistory(customerId)}>重试</button>
+            </div>
+          )}
 
           {result?.status === 'pending_human' && (
             <div className={`support-status-panel ${result.handling_reason || 'manual_review'}`} role="status">
@@ -246,7 +367,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
               <div className="question-examples">
                 <span>您可以这样问</span>
                 <div>{EXAMPLE_QUESTIONS.map((question) => (
-                  <button type="button" key={question} onClick={() => setMessage(question)} disabled={submitting}>{question}</button>
+                  <button type="button" key={question} onClick={() => setMessage(question)} disabled={submitting || historyLoading}>{question}</button>
                 ))}</div>
               </div>
             )}
@@ -258,7 +379,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
                 onChange={(event) => setMessage(event.target.value)}
                 placeholder="继续描述问题或补充订单号等信息……"
                 maxLength={5000}
-                disabled={submitting}
+                disabled={submitting || historyLoading}
                 required
               />
               <small>{message.length} / 5000</small>
@@ -266,7 +387,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
 
             {error && <div className="support-error" role="alert">{error}</div>}
 
-            <button className="support-submit" type="submit" disabled={submitting || !message.trim()}>
+            <button className="support-submit" type="submit" disabled={submitting || historyLoading || !message.trim()}>
               {submitting
                 ? <><RefreshCw className="spin" size={17} /> 正在处理…</>
                 : <><Send size={17} /> 发送问题</>}

@@ -51,7 +51,7 @@ npm run dev
 
 默认地址为 `http://127.0.0.1:3000`。前端包含：
 
-- 用户咨询页：使用连续会话提交问题；正常结果展示 Agent 回复，风险、质量或依赖异常展示安全的人工介入说明；自动回复后可提交一次性评分和文字评价。
+- 用户咨询页：使用连续会话提交问题，并用当前浏览器保存的 Session ID 列表查询最近 7 天安全历史；正常结果展示 Agent 回复，风险、质量或依赖异常展示安全的人工介入说明；自动回复后可提交一次性评分和文字评价。
 - 客服后台：只处理异常、待审批和需要人工修改的工单，支持原样批准、人工修改和拒绝。
 - Agent 可观测页：仅 `manager/admin` 可访问 Agent Run 摘要，支持按工单编号精确查询并以北京时间展示运行时间，可继续跳转 LangSmith Project。
 
@@ -179,6 +179,7 @@ QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
 | `POST /auth/token` | 获取 JWT | 公开 |
 | `GET /auth/users/me` | 查询当前用户 | 登录 |
 | `GET /health` | 健康检查 | 公开 |
+| `GET /support/history?customer_id=...&session_id=...` | 按一个或多个已知 Session 查询最近 7 天安全历史 | 公开演示入口 |
 | `POST /support/requests` | 用户提交客服问题 | 公开演示入口 |
 | `POST /chat` | 执行对话 Workflow | 按当前路由约束 |
 | `POST /tickets` | 创建工单并持久化 AgentRun | 登录 |

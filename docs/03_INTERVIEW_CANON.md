@@ -316,7 +316,7 @@ LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有�
 
 OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工具调用、RAG 查询与回退、审批创建和审批处理。
 
-React 前端已拆分为用户咨询页与客服员工后台。用户页采用连续会话交互，展示正常回复以及风险核验、质量复核、处理异常或普通人工确认状态；员工后台仅加载待审批异常工单。`manager/admin` 还可分页或按工单编号查询 Agent Run，查看北京时间、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
+React 前端已拆分为用户咨询页与客服员工后台。用户页采用连续会话交互，并以当前浏览器保存的 Session ID 列表为能力凭据，从 SQL 查询最近 7 天历史；仅返回最终用户/Assistant 消息，待审或拒绝的草稿被替换为安全状态文案。员工后台仅加载待审批异常工单。`manager/admin` 还可分页或按工单编号查询 Agent Run，查看北京时间、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
 
 ### 当前没有的性能数据
 

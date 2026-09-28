@@ -1,5 +1,7 @@
 """Memory V1 的持久化、隔离、安全过滤和多轮续接测试。"""
 
+import datetime
+
 import pytest
 from sqlalchemy import func, select
 
@@ -233,6 +235,114 @@ async def test_public_support_session_is_stable_and_owned(client, db_session):
         ).scalars()
     )
     assert messages
+
+
+@pytest.mark.asyncio
+async def test_public_history_returns_one_week_across_sessions_without_drafts(
+    client, db_session
+):
+    now = datetime.datetime.utcnow()
+    db_session.add_all(
+        [
+            ConversationSession(
+                session_id="history-session-a", customer_id="history-customer"
+            ),
+            ConversationSession(
+                session_id="history-session-b", customer_id="history-customer"
+            ),
+            ConversationSession(
+                session_id="history-other", customer_id="other-customer"
+            ),
+        ]
+    )
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ConversationMessage(
+                id="history-old",
+                session_id="history-session-a",
+                role="user",
+                content="八天前的消息",
+                status="final",
+                created_at=now - datetime.timedelta(days=8),
+            ),
+            ConversationMessage(
+                id="history-user",
+                session_id="history-session-a",
+                role="user",
+                content="查询最近订单",
+                status="final",
+                created_at=now - datetime.timedelta(days=2),
+            ),
+            ConversationMessage(
+                id="history-answer",
+                session_id="history-session-a",
+                role="assistant",
+                content="订单正在配送中。",
+                status="final",
+                created_at=(
+                    now - datetime.timedelta(days=2) + datetime.timedelta(seconds=5)
+                ),
+            ),
+            ConversationMessage(
+                id="history-pending",
+                session_id="history-session-b",
+                role="assistant",
+                content="不得公开的待审批草稿",
+                status="pending",
+                created_at=now - datetime.timedelta(hours=1),
+            ),
+            ConversationMessage(
+                id="history-other-message",
+                session_id="history-other",
+                role="user",
+                content="其他客户消息",
+                status="final",
+                created_at=now - datetime.timedelta(hours=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/support/history",
+        params=[
+            ("customer_id", "history-customer"),
+            ("session_id", "history-session-a"),
+            ("session_id", "history-session-b"),
+        ],
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["window_days"] == 7
+    assert [item["id"] for item in payload["messages"]] == [
+        "history-user",
+        "history-answer",
+        "history-pending",
+    ]
+    assert payload["messages"][-1]["role"] == "status"
+    assert payload["messages"][-1]["status"] == "pending"
+    assert "不得公开的待审批草稿" not in str(payload)
+    assert "其他客户消息" not in str(payload)
+    assert "八天前的消息" not in str(payload)
+
+    scoped_response = await client.get(
+        "/support/history",
+        params={
+            "customer_id": "history-customer",
+            "session_id": "history-session-a",
+        },
+    )
+    assert [item["id"] for item in scoped_response.json()["messages"]] == [
+        "history-user",
+        "history-answer",
+    ]
+
+    missing_session = await client.get(
+        "/support/history", params={"customer_id": "history-customer"}
+    )
+    assert missing_session.status_code == 422
 
 
 @pytest.mark.asyncio

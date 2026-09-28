@@ -243,6 +243,59 @@ class ConversationMemoryService:
             )
             return context
 
+    async def load_public_history(
+        self,
+        db: AsyncSession,
+        *,
+        customer_id: str,
+        session_ids: list[str],
+        window_days: int = 7,
+    ) -> tuple[datetime.datetime, list[dict[str, Any]]]:
+        """读取客户时间窗口内的公开历史，待审草稿只转换为安全状态。"""
+        window_start = datetime.datetime.utcnow() - datetime.timedelta(
+            days=window_days
+        )
+        result = await db.execute(
+            select(ConversationMessage)
+            .join(
+                ConversationSession,
+                ConversationSession.session_id == ConversationMessage.session_id,
+            )
+            .where(
+                ConversationSession.customer_id == customer_id,
+                ConversationMessage.session_id.in_(session_ids),
+                ConversationMessage.created_at >= window_start,
+                ConversationMessage.role.in_(_ALLOWED_ROLES),
+            )
+            .order_by(
+                ConversationMessage.created_at.asc(),
+                ConversationMessage.id.asc(),
+            )
+        )
+        messages: list[dict[str, Any]] = []
+        for record in result.scalars().all():
+            role = record.role
+            content = record.content
+            if record.status == "pending" and role == "assistant":
+                role = "status"
+                content = "该问题正在等待人工客服确认，工单已保留，请勿重复提交。"
+            elif record.status == "rejected" and role == "assistant":
+                role = "status"
+                content = "本次自动回复未通过人工审核，客服人员将重新核对并继续处理。"
+            elif record.status != _FINAL_STATUS:
+                continue
+            messages.append(
+                {
+                    "id": record.id,
+                    "ticket_id": record.ticket_id,
+                    "role": role,
+                    "status": record.status,
+                    "content": self._safe_content(content),
+                    "created_at": record.created_at,
+                }
+            )
+        return window_start, messages
+
     async def record_assistant_result(
         self,
         db: AsyncSession,

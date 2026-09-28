@@ -153,6 +153,26 @@ class PublicSupportResponse(BaseModel):
     feedback_token: Optional[str] = None
 
 
+class PublicConversationMessageResponse(BaseModel):
+    """用户端可见的历史消息，不包含待审草稿正文。"""
+
+    id: str
+    ticket_id: Optional[int] = None
+    role: str
+    status: str
+    content: str
+    created_at: datetime
+
+
+class PublicConversationHistoryResponse(BaseModel):
+    """返回指定演示客户最近七天的安全会话历史。"""
+
+    customer_id: str
+    window_days: int = 7
+    window_start: datetime
+    messages: List[PublicConversationMessageResponse]
+
+
 class TicketResponse(BaseModel):
     """定义包含状态、分析结果和时间信息的工单响应。"""
 
