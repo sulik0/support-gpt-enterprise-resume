@@ -28,7 +28,9 @@ ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 ENV APP_ENV=production
 
+RUN mkdir -p /app/data
+
 EXPOSE 8000
 
 # Run FastAPI backend
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
