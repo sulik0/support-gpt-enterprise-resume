@@ -147,6 +147,7 @@ class PublicSupportResponse(BaseModel):
     status: str
     response: Optional[str] = None
     message: str
+    handling_reason: Optional[str] = None
     created_at: datetime
     agent_run_id: Optional[str] = None
     feedback_token: Optional[str] = None

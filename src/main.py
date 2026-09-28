@@ -1273,6 +1273,43 @@ async def retry_tool_outbox_event(
 
 
 # --- GENERAL TICKETING APIS ---
+def _public_review_feedback(agent_output: dict) -> tuple[str, str, str]:
+    """将内部风险原因转换为可安全展示给用户的处理说明。"""
+    degradation = str(agent_output.get("degradation_level", "none")).lower()
+    if agent_output.get("errors") or degradation in {"human_required", "failed"}:
+        return (
+            "processing_exception",
+            "我已经收到您的问题，但部分处理服务暂时不可用。工单已保留并转交人工客服，您无需重复提交。",
+            "系统会保留当前工单，由人工客服核对业务信息后继续处理。",
+        )
+    if (
+        agent_output.get("security_threat_detected")
+        or agent_output.get("risk_requires_human")
+        or str(agent_output.get("risk_level", "low")).lower() in {"high", "critical"}
+    ):
+        return (
+            "risk_review",
+            "我已经收到您的请求。由于该问题涉及敏感或高风险操作，自动处理已暂停并转交人工客服进行安全核验。",
+            "为保护您的账户和业务权益，客服人员确认后会继续处理。",
+        )
+    if (
+        agent_output.get("hallucination_detected")
+        or agent_output.get("response_requires_human")
+        or float(agent_output.get("qa_score", 1.0))
+        < settings.RISK_QA_SCORE_THRESHOLD
+    ):
+        return (
+            "quality_review",
+            "我已完成初步查询，但当前结果的依据或置信度不足。为避免提供不准确的信息，工单已转交人工客服复核。",
+            "人工客服会结合业务记录和服务政策确认后回复。",
+        )
+    return (
+        "manual_review",
+        "我已经收到您的问题。该请求需要人工客服进一步确认，工单已进入处理队列。",
+        "客服人员会核对 AI 草稿和相关业务信息后继续处理。",
+    )
+
+
 @app.post(
     "/support/requests",
     response_model=PublicSupportResponse,
@@ -1329,12 +1366,16 @@ async def create_public_support_request(
     await db.refresh(ticket)
 
     if approval_id:
+        handling_reason, public_response, public_message = _public_review_feedback(
+            agent_output
+        )
         return PublicSupportResponse(
             ticket_id=ticket.id,
             session_id=session_id,
             status="pending_human",
-            response=None,
-            message="您的问题需要人工客服进一步确认，我们已经为您转交处理。",
+            response=public_response,
+            message=public_message,
+            handling_reason=handling_reason,
             created_at=ticket.created_at,
             agent_run_id=agent_run.id if agent_run else None,
             feedback_token=(
@@ -1347,6 +1388,7 @@ async def create_public_support_request(
         status="answered",
         response=agent_output.get("suggested_response", ""),
         message="智能客服已完成处理。",
+        handling_reason=None,
         created_at=ticket.created_at,
         agent_run_id=agent_run.id if agent_run else None,
         feedback_token=(

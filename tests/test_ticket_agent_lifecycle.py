@@ -170,6 +170,7 @@ async def test_public_support_request_returns_only_safe_answer(
         "status",
         "response",
         "message",
+        "handling_reason",
         "created_at",
         "agent_run_id",
         "feedback_token",
@@ -194,7 +195,9 @@ async def test_public_support_request_hides_draft_and_enters_staff_queue(
     client: AsyncClient, monkeypatch
 ):
     async def fake_workflow(state):
-        return _public_workflow_output(state, approval_required=True)
+        output = _public_workflow_output(state, approval_required=True)
+        output.update({"risk_level": "high", "risk_requires_human": True})
+        return output
 
     monkeypatch.setattr("src.main.run_agent_workflow", fake_workflow)
     response = await client.post(
@@ -205,7 +208,10 @@ async def test_public_support_request_hides_draft_and_enters_staff_queue(
     assert response.status_code == 201
     payload = response.json()
     assert payload["status"] == "pending_human"
-    assert payload["response"] is None
+    assert payload["handling_reason"] == "risk_review"
+    assert payload["response"]
+    assert payload["response"] != "这是可直接展示给用户的回复。"
+    assert "安全核验" in payload["response"]
 
     register = await client.post(
         "/auth/register",

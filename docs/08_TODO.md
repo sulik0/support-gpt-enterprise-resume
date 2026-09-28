@@ -22,7 +22,7 @@
 - [x] 在 Dataset + Workflow Replay 中增加安全混淆矩阵、Precision / Recall / F1 / 误报率和安全处置正确率。
 - [x] 将业务回归 Baseline 扩展到 100 条，增加多语言、安全攻击与安全 hard negative 覆盖。
 - [x] 增加真实 LLM Regression 专用入口、smoke/full 套件、Dry Run、付费确认、调用预算和 Token/成本归因。
-- [x] 拆分用户咨询页与客服员工后台；普通问题自动回复，异常请求进入受 RBAC 保护的人工审批队列。
+- [x] 拆分用户咨询页与客服员工后台；用户端采用连续会话展示正常回复或安全的风险/异常状态，异常请求进入受 RBAC 保护的人工审批队列。
 - [x] 建立统一 `IntentType`，让规则、LLM Provider、AgentState、Tooling、Risk Engine 和 Agent Evaluation 共用同一套意图枚举与兜底策略。
 - [x] 实现 Baseline Workflow Replay V1：固定 100 条完整 Ticket State 回放、六项确定性行为指标、逐 Case 结果和 OTel Trace 同源性能汇总。
 - [x] 建立 Evaluation Report 生命周期：清理旧 `report_*.json`、单条评测最多保留 20 份、Baseline 使用时间戳快照与 latest 普通文件副本，并固化完整实验配置。

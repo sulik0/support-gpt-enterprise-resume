@@ -288,7 +288,7 @@ CI/CD 采用两级门禁：PR/Push 强制使用 Mock Provider 回放固定 100 �
 
 第一阶段已实现线上反馈采集和训练候选沉淀：
 
-- 用户咨询页通过 `POST /support/requests` 创建唯一工单并立即执行 Workflow；普通请求只返回安全回复，需要审批时只返回转人工状态，不向用户暴露 Tool、QA、风险或 Trace 字段。
+- 用户咨询页通过 `POST /support/requests` 创建唯一工单并立即执行 Workflow；普通请求返回安全回复，需要审批时返回安全的占位回复和人工介入类别，不向用户暴露 Tool、QA、内部风险规则、Trace 或未经审批的草稿。
 - 客服员工后台通过受 RBAC 保护的 `GET /staff/review-queue` 仅加载待审批工单；打开详情调用 `GET /tickets/{ticket_id}/agent-result` 读取最新持久化结果，不会重新执行 Agent，也不会新增 Ticket、AgentRun 或审批记录。
 - 用户通过 `agent_run_id + feedback_token` 提交评分；数据库只保存 Token 的 SHA-256 摘要，每个 Run 只接受一条不可变用户反馈。
 - 人工审批的通过、修改和拒绝结果自动写入 `FeedbackEvent`；人工修改可形成 SFT 与 DPO 候选。
@@ -316,7 +316,7 @@ LLM 延迟、Agent 执行次数和活跃会话指标已定义，但当前没有�
 
 OpenTelemetry Span 覆盖 HTTP 请求、Agent Workflow、各 Agent 节点、工具调用、RAG 查询与回退、审批创建和审批处理。
 
-React 前端已拆分为用户咨询页与客服员工后台。用户页只展示自动回复或转人工状态；员工后台仅加载待审批异常工单。`manager/admin` 还可查看 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
+React 前端已拆分为用户咨询页与客服员工后台。用户页采用连续会话交互，展示正常回复以及风险核验、质量复核、处理异常或普通人工确认状态；员工后台仅加载待审批异常工单。`manager/admin` 还可查看 Agent Run、Workflow Path、Trace ID、延迟、Token、QA、Tool 和 citation 摘要，并跳转配置的 LangSmith Project。前端不保存 LangSmith API Key，当前也不从 LangSmith API 回读 Span。
 
 ### 当前没有的性能数据
 

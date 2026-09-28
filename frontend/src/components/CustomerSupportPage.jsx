@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
   Bot,
   CheckCircle2,
@@ -19,6 +20,11 @@ const EXAMPLE_QUESTIONS = [
   'API 一直超时，应该如何排查？',
 ];
 
+const WELCOME_MESSAGE = {
+  role: 'assistant',
+  content: '您好，我是 SupportGPT 智能客服。请告诉我您遇到的问题，我会直接回复处理结果；需要人工确认时也会明确告知您。',
+};
+
 function createSessionId() {
   return globalThis.crypto?.randomUUID?.()
     || `support-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -37,7 +43,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
   const [customerId, setCustomerId] = useState('cust_101');
   const [sessionId, setSessionId] = useState(() => sessionForCustomer('cust_101'));
   const [message, setMessage] = useState('');
-  const [conversation, setConversation] = useState([]);
+  const [conversation, setConversation] = useState([WELCOME_MESSAGE]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -54,27 +60,26 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     setError('');
     resetFeedback();
     const userMessage = message.trim();
+    setMessage('');
     setConversation((current) => [...current, { role: 'user', content: userMessage }]);
     try {
       const nextResult = await submitSupportRequest(customerId, userMessage, sessionId);
       setResult(nextResult);
       setConversation((current) => [...current, {
         role: nextResult.status === 'answered' ? 'assistant' : 'status',
-        content: nextResult.response || nextResult.message,
+        content: nextResult.response || nextResult.message || '您的问题已收到，我们正在继续处理。',
+        ticketId: nextResult.ticket_id,
       }]);
     } catch (requestError) {
-      setError(requestError.message || '问题提交失败，请稍后重试。');
-      setConversation((current) => current.slice(0, -1));
+      const errorMessage = requestError.message || '问题提交失败，请稍后重试。';
+      setError(errorMessage);
+      setConversation((current) => [...current, {
+        role: 'error',
+        content: '抱歉，本次请求暂时未能完成。您的问题仍保留在当前对话中，请稍后重试；如持续失败，请联系人工客服。',
+      }]);
     } finally {
       setSubmitting(false);
     }
-  }
-
-  function resetConversation() {
-    setMessage('');
-    setResult(null);
-    setError('');
-    resetFeedback();
   }
 
   function resetFeedback() {
@@ -110,15 +115,21 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     localStorage.setItem(`supportgpt:session:${nextCustomerId}`, nextSessionId);
     setCustomerId(nextCustomerId);
     setSessionId(nextSessionId);
-    setConversation([]);
-    resetConversation();
+    setConversation([WELCOME_MESSAGE]);
+    setMessage('');
+    setResult(null);
+    setError('');
+    resetFeedback();
   }
 
   function switchCustomer(nextCustomerId) {
     setCustomerId(nextCustomerId);
     setSessionId(sessionForCustomer(nextCustomerId));
-    setConversation([]);
-    resetConversation();
+    setConversation([WELCOME_MESSAGE]);
+    setMessage('');
+    setResult(null);
+    setError('');
+    resetFeedback();
   }
 
   return (
@@ -146,118 +157,122 @@ export default function CustomerSupportPage({ onStaffEntry }) {
         </div>
 
         <div className="support-card">
-          {!result && conversation.length > 0 && (
-            <div className="support-conversation" aria-label="当前对话记录">
-              {conversation.slice(-6).map((item, index) => (
-                <div className={`support-message ${item.role}`} key={`${item.role}-${index}`}>
-                  <span>{item.role === 'user' ? '您' : item.role === 'assistant' ? 'AI' : '状态'}</span>
+          <div className="support-chat-toolbar">
+            <div className="support-form-heading">
+              <span className="support-bot"><Bot size={21} /></span>
+              <div><strong>SupportGPT 智能客服</strong><small>在线 · 通常几秒内回复</small></div>
+            </div>
+            <button type="button" className="support-new-session" onClick={() => startNewConversation()} disabled={submitting}>
+              <RefreshCw size={14} /> 新对话
+            </button>
+          </div>
+
+          <label className="customer-selector support-customer-selector">
+            <span>当前演示客户</span>
+            <select value={customerId} onChange={(event) => switchCustomer(event.target.value)} disabled={submitting}>
+              <option value="cust_101">简·多伊（VIP 客户）</option>
+              <option value="cust_102">约翰·史密斯（标准客户）</option>
+              <option value="cust_103">艾克米公司（企业客户）</option>
+            </select>
+          </label>
+
+          <div className="support-conversation" aria-label="当前对话记录" aria-live="polite">
+            {conversation.slice(-12).map((item, index) => (
+              <div className={`support-message ${item.role}`} key={`${item.role}-${item.ticketId || index}-${index}`}>
+                <span>{item.role === 'user' ? '您' : item.role === 'assistant' ? 'AI' : item.role === 'error' ? '异常' : '状态'}</span>
+                <div>
                   <p>{item.content}</p>
+                  {item.ticketId && <small>工单 #{item.ticketId}</small>}
                 </div>
-              ))}
+              </div>
+            ))}
+            {submitting && (
+              <div className="support-message status support-typing">
+                <span>AI</span><p><RefreshCw className="spin" size={13} /> 正在查询业务信息并生成回复……</p>
+              </div>
+            )}
+          </div>
+
+          {result?.status === 'pending_human' && (
+            <div className={`support-status-panel ${result.handling_reason || 'manual_review'}`} role="status">
+              {result.handling_reason === 'processing_exception' ? <AlertTriangle size={18} /> : <Clock3 size={18} />}
+              <div>
+                <strong>{result.handling_reason === 'risk_review' ? '该请求需要安全核验'
+                  : result.handling_reason === 'processing_exception' ? '部分处理环节出现异常'
+                    : result.handling_reason === 'quality_review' ? '回复需要质量复核' : '已转交人工客服'}</strong>
+                <span>{result.message}</span>
+              </div>
             </div>
           )}
-          {!result && (
-            <form onSubmit={handleSubmit} className="support-form">
-              <div className="support-form-heading">
-                <span className="support-bot"><Bot size={21} /></span>
-                <div><strong>向智能客服提问</strong><small>通常几秒内完成处理</small></div>
-              </div>
 
-              <label className="customer-selector">
-                <span>演示客户</span>
-                <select value={customerId} onChange={(event) => switchCustomer(event.target.value)} disabled={submitting}>
-                  <option value="cust_101">简·多伊（VIP 客户）</option>
-                  <option value="cust_102">约翰·史密斯（标准客户）</option>
-                  <option value="cust_103">艾克米公司（企业客户）</option>
-                </select>
-              </label>
-
-              <label className="support-message-field">
-                <span>请描述您的问题</span>
+          {result?.status === 'answered' && result.agent_run_id && result.feedback_token && (
+            feedbackState === 'submitted' ? (
+              <div className="feedback-success" role="status"><CheckCircle2 size={17} /> 感谢您的评价，将用于改进服务质量。</div>
+            ) : (
+              <form className="support-feedback support-feedback-compact" onSubmit={handleFeedback}>
+                <strong>这次回答对您有帮助吗？</strong>
+                <div className="feedback-rating" aria-label="回答评分">
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <button
+                      type="button"
+                      key={rating}
+                      className={feedbackRating >= rating ? 'active' : ''}
+                      onClick={() => setFeedbackRating(rating)}
+                      aria-label={`${rating} 分`}
+                      aria-pressed={feedbackRating === rating}
+                      disabled={feedbackState === 'submitting'}
+                    >
+                      <Star size={18} fill={feedbackRating >= rating ? 'currentColor' : 'none'} />
+                    </button>
+                  ))}
+                </div>
                 <textarea
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  placeholder="例如：我的订单已经一周没有更新物流信息，请帮我查询……"
-                  maxLength={5000}
-                  disabled={submitting}
-                  required
+                  value={feedbackComment}
+                  onChange={(event) => setFeedbackComment(event.target.value)}
+                  placeholder="可选：告诉我们哪里做得好或需要改进"
+                  maxLength={2000}
+                  disabled={feedbackState === 'submitting'}
                 />
-                <small>{message.length} / 5000</small>
-              </label>
+                {feedbackError && <span className="feedback-error" role="alert">{feedbackError}</span>}
+                <button type="submit" className="support-secondary" disabled={!feedbackRating || feedbackState === 'submitting'}>
+                  {feedbackState === 'submitting' ? '提交中……' : '提交评价'}
+                </button>
+              </form>
+            )
+          )}
 
+          <form onSubmit={handleSubmit} className="support-form support-composer">
+            {conversation.length === 1 && (
               <div className="question-examples">
-                <span>常见问题</span>
+                <span>您可以这样问</span>
                 <div>{EXAMPLE_QUESTIONS.map((question) => (
                   <button type="button" key={question} onClick={() => setMessage(question)} disabled={submitting}>{question}</button>
                 ))}</div>
               </div>
+            )}
 
-              {error && <div className="support-error" role="alert">{error}</div>}
+            <label className="support-message-field">
+              <span>输入您的问题</span>
+              <textarea
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="继续描述问题或补充订单号等信息……"
+                maxLength={5000}
+                disabled={submitting}
+                required
+              />
+              <small>{message.length} / 5000</small>
+            </label>
 
-              <button className="support-submit" type="submit" disabled={submitting || !message.trim()}>
-                {submitting
-                  ? <><RefreshCw className="spin" size={17} /> 智能客服正在处理…</>
-                  : <><Send size={17} /> 提交问题</>}
-              </button>
-              <p className="support-privacy"><ShieldCheck size={13} /> 系统会对敏感信息进行脱敏，并对回复执行安全校验。</p>
-            </form>
-          )}
+            {error && <div className="support-error" role="alert">{error}</div>}
 
-          {result?.status === 'answered' && (
-            <section className="support-result answered" aria-live="polite">
-              <span className="result-icon"><CheckCircle2 size={28} /></span>
-              <div className="result-heading"><span>工单 #{result.ticket_id}</span><strong>智能客服已完成回复</strong></div>
-              <div className="customer-answer"><Bot size={18} /><p>{result.response}</p></div>
-              {result.agent_run_id && result.feedback_token && (
-                feedbackState === 'submitted' ? (
-                  <div className="feedback-success" role="status"><CheckCircle2 size={17} /> 感谢您的评价，将用于改进服务质量。</div>
-                ) : (
-                  <form className="support-feedback" onSubmit={handleFeedback}>
-                    <strong>这次回答对您有帮助吗？</strong>
-                    <div className="feedback-rating" aria-label="回答评分">
-                      {[1, 2, 3, 4, 5].map((rating) => (
-                        <button
-                          type="button"
-                          key={rating}
-                          className={feedbackRating >= rating ? 'active' : ''}
-                          onClick={() => setFeedbackRating(rating)}
-                          aria-label={`${rating} 分`}
-                          aria-pressed={feedbackRating === rating}
-                          disabled={feedbackState === 'submitting'}
-                        >
-                          <Star size={18} fill={feedbackRating >= rating ? 'currentColor' : 'none'} />
-                        </button>
-                      ))}
-                    </div>
-                    <textarea
-                      value={feedbackComment}
-                      onChange={(event) => setFeedbackComment(event.target.value)}
-                      placeholder="可选：告诉我们哪里做得好或需要改进"
-                      maxLength={2000}
-                      disabled={feedbackState === 'submitting'}
-                    />
-                    {feedbackError && <span className="feedback-error" role="alert">{feedbackError}</span>}
-                    <button type="submit" className="support-secondary" disabled={!feedbackRating || feedbackState === 'submitting'}>
-                      {feedbackState === 'submitting' ? '提交中……' : '提交评价'}
-                    </button>
-                  </form>
-                )
-              )}
-              <button type="button" className="support-secondary" onClick={resetConversation}>继续追问</button>
-              <button type="button" className="support-secondary" onClick={() => startNewConversation()}>新对话</button>
-            </section>
-          )}
-
-          {result?.status === 'pending_human' && (
-            <section className="support-result pending" aria-live="polite">
-              <span className="result-icon"><Clock3 size={28} /></span>
-              <div className="result-heading"><span>工单 #{result.ticket_id}</span><strong>已转交人工客服</strong></div>
-              <p>{result.message}</p>
-              <div className="human-review-note"><Headphones size={18} /><span>客服员工将在后台核对 AI 草稿、业务信息和风险原因后处理。</span></div>
-              <button type="button" className="support-secondary" onClick={resetConversation}>继续追问</button>
-              <button type="button" className="support-secondary" onClick={() => startNewConversation()}>新对话</button>
-            </section>
-          )}
+            <button className="support-submit" type="submit" disabled={submitting || !message.trim()}>
+              {submitting
+                ? <><RefreshCw className="spin" size={17} /> 正在处理…</>
+                : <><Send size={17} /> 发送问题</>}
+            </button>
+            <p className="support-privacy"><ShieldCheck size={13} /> 敏感信息会被脱敏；风险或处理异常会明确反馈并转交人工。</p>
+          </form>
         </div>
       </section>
 
