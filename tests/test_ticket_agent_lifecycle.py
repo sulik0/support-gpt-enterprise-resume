@@ -162,6 +162,8 @@ async def test_public_support_request_returns_only_safe_answer(
     assert payload["status"] == "answered"
     assert payload["response"] == "这是可直接展示给用户的回复。"
     assert payload["session_id"]
+    assert payload["agent_run_id"]
+    assert payload["feedback_token"]
     assert set(payload) == {
         "ticket_id",
         "session_id",
@@ -169,7 +171,22 @@ async def test_public_support_request_returns_only_safe_answer(
         "response",
         "message",
         "created_at",
+        "agent_run_id",
+        "feedback_token",
     }
+
+    feedback = await client.post(
+        "/feedback/user",
+        json={
+            "agent_run_id": payload["agent_run_id"],
+            "feedback_token": payload["feedback_token"],
+            "rating": 5,
+            "comment": "这次回答对我有帮助。",
+            "idempotency_key": "public-support-feedback-0001",
+        },
+    )
+    assert feedback.status_code == 201
+    assert feedback.json()["agent_run_id"] == payload["agent_run_id"]
 
 
 @pytest.mark.asyncio

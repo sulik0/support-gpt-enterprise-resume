@@ -61,10 +61,19 @@ function SummaryCard({ icon, label, value, hint }) {
 }
 
 function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
+  useEffect(() => {
+    if (!run && !loading) return undefined;
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [loading, onClose, run]);
+
   if (!run && !loading) return null;
   return (
     <div className="obs-detail-backdrop" onClick={onClose}>
-      <aside className="obs-detail-panel" onClick={(event) => event.stopPropagation()}>
+      <aside className="obs-detail-panel" role="dialog" aria-modal="true" aria-label="Agent Run 详情" onClick={(event) => event.stopPropagation()}>
         <div className="obs-detail-header">
           <div>
             <span className="obs-eyebrow">Agent Run</span>
@@ -113,6 +122,8 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
                 <div><dt>模型</dt><dd>{run.model_provider} / {run.model_name}</dd></div>
                 <div><dt>Prompt</dt><dd>{run.prompt_version}</dd></div>
                 <div><dt>Workflow</dt><dd>{run.workflow_version}</dd></div>
+                <div><dt>Skill</dt><dd>{run.skill_selection ? `${run.skill_selection.skill_name} / ${run.skill_selection.skill_version}` : '-'}</dd></div>
+                <div><dt>Skill 路由</dt><dd>{run.skill_selection?.selection_strategy || '-'}</dd></div>
                 <div><dt>知识库</dt><dd>{run.kb_version}</dd></div>
                 <div><dt>延迟</dt><dd>{run.latency_seconds.toFixed(3)}s</dd></div>
                 <div><dt>Token</dt><dd>{run.tokens_input + run.tokens_output}</dd></div>
@@ -241,9 +252,9 @@ export default function ObservabilityPage() {
 
       <div className="obs-summary-grid">
         <SummaryCard icon={<Route size={20} />} label="Agent Run" value={page.total} hint="已持久化总数" />
-        <SummaryCard icon={<Clock3 size={20} />} label="平均延迟" value={`${summary.averageLatency.toFixed(2)}s`} hint="当前页运行" />
-        <SummaryCard icon={<Bot size={20} />} label="Token 用量" value={summary.totalTokens.toLocaleString()} hint="当前页输入 + 输出" />
-        <SummaryCard icon={<ShieldAlert size={20} />} label="人工介入" value={summary.reviewCount} hint="当前页升级 / 审批" />
+        <SummaryCard icon={<Clock3 size={20} />} label="本页平均延迟" value={`${summary.averageLatency.toFixed(2)}s`} hint={`当前 ${page.items.length} 条运行`} />
+        <SummaryCard icon={<Bot size={20} />} label="本页 Token" value={summary.totalTokens.toLocaleString()} hint="输入 + 输出" />
+        <SummaryCard icon={<ShieldAlert size={20} />} label="本页人工介入" value={summary.reviewCount} hint="升级 / 审批" />
       </div>
 
       <div className="obs-runs-card glass-card">
@@ -265,7 +276,7 @@ export default function ObservabilityPage() {
                 {page.items.map((run) => {
                   const status = runStatus(run);
                   return (
-                    <tr key={run.id} onClick={() => openRun(run.id)} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && openRun(run.id)}>
+                    <tr key={run.id} onClick={() => openRun(run.id)} tabIndex={0} onKeyDown={(event) => ['Enter', ' '].includes(event.key) && openRun(run.id)}>
                       <td>{formatDate(run.created_at)}</td>
                       <td><code>{run.id.slice(0, 8)}</code><small>{run.trace_id ? `Trace ${run.trace_id.slice(0, 10)}…` : '无 Trace ID'}</small></td>
                       <td><strong>{run.workflow_path?.length || 0} 节点</strong><small>{run.model_name}</small></td>

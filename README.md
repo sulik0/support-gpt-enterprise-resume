@@ -29,7 +29,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | Feedback | AgentRun + FeedbackEvent + Trace 关联，脱敏 SFT/DPO 候选导出 |
 | Resilience | LLM/RAG/Tool 统一超时、有界 Retry、Circuit Breaker、Fallback 与风险降级 |
 | Memory | SQL 结构化会话为事实源、Redis revision Cache、有界上下文、实体续接与 HITL 结算 |
-| Frontend | 用户咨询页、客服审批后台、Agent 可观测页 |
+| Frontend | 用户咨询与评价页、客服审批后台、Agent 可观测页 |
 
 ## 快速启动
 

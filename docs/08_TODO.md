@@ -78,7 +78,7 @@
 - [ ] Memory V1 的摘要/实体为确定性轻量实现，尚未建立长期语义 Memory；同 session 并发请求可安全追加，但两请求的起始上下文仍可能同时取到旧 revision。
 - [ ] Checkpoint 尚无 TTL/归档、旧 Graph 多版本恢复与定期清理；AgentExecution 和 Saver DDL 尚未纳入 Alembic/受控 Migration。
 - [ ] 默认 LLM、CRM、OMS 和工单 Adapter 仍为 Mock，尚无真实线上数据。
-- [ ] 反馈 Token 目前随 Agent 响应返回，前端仍需安全保存并只在评价提交时使用。
+- [x] 用户咨询页已接入一次性评分和文字评价，Feedback Token 只在当次评价提交时使用。
 - [ ] 训练候选属于敏感数据资产，生产环境还需对象存储加密、访问审计和生命周期策略。
 - [ ] Qwen3Guard 默认未启用且尚无本项目真实运行指标，未知语义变体与误报率仍需通过持续红队样本验证。
 - [ ] Risk Engine 阈值尚未基于真实客服运营数据校准，当前采用保守的 high / critical 转人工策略。

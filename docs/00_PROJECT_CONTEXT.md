@@ -379,7 +379,7 @@ resolved / closed --reopen--> in_progress
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口、统一报告与两级 Quality Gate。2026-08-30 同一固定 Dataset 的 DeepSeek + Qwen 真实复测将 Case Pass Rate 从 `0.54` 提升到 `0.99`，平均耗时约 `1.62s`、P95 约 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。PR Gate 要求 Mock 确定性回放 100% 通过，Release Gate 固化当前真实模型质量和性能阈值；语义回答质量与人工标注仍是后续评测范围。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
 - **部署**：本地 Docker Compose 和 Kubernetes 模板已存在，但不代表已在真实生产环境部署。
-- **前端**：React 已拆分用户咨询页与客服员工后台；员工后台仅处理待审批异常工单，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。
+- **前端**：React 已拆分用户咨询页与客服员工后台；用户自动回复后可提交关联 AgentRun / Trace 的一次性评价，员工后台仅处理待审批异常工单，支持原样批准、人工修改和拒绝，并保留 Agent Run / LangSmith 可观测入口。尚未接入 Prometheus 真实趋势指标、内嵌 Span 时间轴和异步消息通知。
 - **安全治理**：已有确定性多层检测、Qwen3Guard 语义 Adapter 与可配置 Risk Engine，但 Guard 服务默认未启用，且尚无策略版本、持久化安全事件和真实数据阈值校准。
 - **故障治理**：LLM/RAG/读 Tool 仍是单进程 Resilience；受治理写 Tool 已有数据库 Outbox、租约、Retry/DLQ、业务幂等和结果对账，但尚无分布式 Circuit Breaker、通用消息平台与故障注入压测。
 - **Durable Execution**：已覆盖人工审批等待与重启续跑；尚无 Checkpoint TTL/归档清理、多 Workflow 版本兼容执行器、通用后台任务队列和全节点失败的自动续跑策略。

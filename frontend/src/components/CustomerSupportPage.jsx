@@ -9,8 +9,9 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Star,
 } from 'lucide-react';
-import { submitSupportRequest } from '../api/client';
+import { submitSupportRequest, submitUserFeedback } from '../api/client';
 
 const EXAMPLE_QUESTIONS = [
   '我的订单还没有收到，能帮我查一下吗？',
@@ -40,6 +41,10 @@ export default function CustomerSupportPage({ onStaffEntry }) {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [feedbackRating, setFeedbackRating] = useState(0);
+  const [feedbackComment, setFeedbackComment] = useState('');
+  const [feedbackState, setFeedbackState] = useState('idle');
+  const [feedbackError, setFeedbackError] = useState('');
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -47,6 +52,7 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     setSubmitting(true);
     setResult(null);
     setError('');
+    resetFeedback();
     const userMessage = message.trim();
     setConversation((current) => [...current, { role: 'user', content: userMessage }]);
     try {
@@ -68,6 +74,35 @@ export default function CustomerSupportPage({ onStaffEntry }) {
     setMessage('');
     setResult(null);
     setError('');
+    resetFeedback();
+  }
+
+  function resetFeedback() {
+    setFeedbackRating(0);
+    setFeedbackComment('');
+    setFeedbackState('idle');
+    setFeedbackError('');
+  }
+
+  async function handleFeedback(event) {
+    event.preventDefault();
+    if (!feedbackRating || !result?.agent_run_id || !result?.feedback_token) return;
+    setFeedbackState('submitting');
+    setFeedbackError('');
+    try {
+      const randomPart = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+      await submitUserFeedback(
+        result.agent_run_id,
+        result.feedback_token,
+        feedbackRating,
+        feedbackComment,
+        `feedback-${result.ticket_id}-${randomPart}`,
+      );
+      setFeedbackState('submitted');
+    } catch (requestError) {
+      setFeedbackError(requestError.message || '提交评价失败，请稍后重试。');
+      setFeedbackState('idle');
+    }
   }
 
   function startNewConversation(nextCustomerId = customerId) {
@@ -173,6 +208,41 @@ export default function CustomerSupportPage({ onStaffEntry }) {
               <span className="result-icon"><CheckCircle2 size={28} /></span>
               <div className="result-heading"><span>工单 #{result.ticket_id}</span><strong>智能客服已完成回复</strong></div>
               <div className="customer-answer"><Bot size={18} /><p>{result.response}</p></div>
+              {result.agent_run_id && result.feedback_token && (
+                feedbackState === 'submitted' ? (
+                  <div className="feedback-success" role="status"><CheckCircle2 size={17} /> 感谢您的评价，将用于改进服务质量。</div>
+                ) : (
+                  <form className="support-feedback" onSubmit={handleFeedback}>
+                    <strong>这次回答对您有帮助吗？</strong>
+                    <div className="feedback-rating" aria-label="回答评分">
+                      {[1, 2, 3, 4, 5].map((rating) => (
+                        <button
+                          type="button"
+                          key={rating}
+                          className={feedbackRating >= rating ? 'active' : ''}
+                          onClick={() => setFeedbackRating(rating)}
+                          aria-label={`${rating} 分`}
+                          aria-pressed={feedbackRating === rating}
+                          disabled={feedbackState === 'submitting'}
+                        >
+                          <Star size={18} fill={feedbackRating >= rating ? 'currentColor' : 'none'} />
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      value={feedbackComment}
+                      onChange={(event) => setFeedbackComment(event.target.value)}
+                      placeholder="可选：告诉我们哪里做得好或需要改进"
+                      maxLength={2000}
+                      disabled={feedbackState === 'submitting'}
+                    />
+                    {feedbackError && <span className="feedback-error" role="alert">{feedbackError}</span>}
+                    <button type="submit" className="support-secondary" disabled={!feedbackRating || feedbackState === 'submitting'}>
+                      {feedbackState === 'submitting' ? '提交中……' : '提交评价'}
+                    </button>
+                  </form>
+                )
+              )}
               <button type="button" className="support-secondary" onClick={resetConversation}>继续追问</button>
               <button type="button" className="support-secondary" onClick={() => startNewConversation()}>新对话</button>
             </section>

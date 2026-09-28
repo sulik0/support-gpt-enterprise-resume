@@ -1317,7 +1317,7 @@ async def create_public_support_request(
         ticket_id=ticket.id,
         prior_context=memory_context,
     )
-    agent_output, approval_id, _ = await _process_ticket_with_agent(
+    agent_output, approval_id, agent_run = await _process_ticket_with_agent(
         db=db,
         ticket=ticket,
         kb_version=req.kb_version,
@@ -1336,6 +1336,10 @@ async def create_public_support_request(
             response=None,
             message="您的问题需要人工客服进一步确认，我们已经为您转交处理。",
             created_at=ticket.created_at,
+            agent_run_id=agent_run.id if agent_run else None,
+            feedback_token=(
+                getattr(agent_run, "_feedback_token", None) if agent_run else None
+            ),
         )
     return PublicSupportResponse(
         ticket_id=ticket.id,
@@ -1344,6 +1348,10 @@ async def create_public_support_request(
         response=agent_output.get("suggested_response", ""),
         message="智能客服已完成处理。",
         created_at=ticket.created_at,
+        agent_run_id=agent_run.id if agent_run else None,
+        feedback_token=(
+            getattr(agent_run, "_feedback_token", None) if agent_run else None
+        ),
     )
 
 

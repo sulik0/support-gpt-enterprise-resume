@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AUTH_EXPIRED_EVENT, fetchReviewQueue, login, register, logout } from './api/client';
+import { AUTH_EXPIRED_EVENT, fetchHealth, fetchReviewQueue, login, register, logout } from './api/client';
 import CustomerSupportPage from './components/CustomerSupportPage';
 import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
@@ -29,12 +29,16 @@ export default function App() {
   const [authNotice, setAuthNotice] = useState('');
   const [tickets, setTickets] = useState([]);
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [ticketsError, setTicketsError] = useState('');
+  const [serviceStatus, setServiceStatus] = useState('checking');
 
   useEffect(() => {
     if (isAuthenticated && entryMode === 'staff') {
       setUserRole(localStorage.getItem('role') || 'agent');
       setUsername(localStorage.getItem('username') || '');
       loadTickets();
+      checkServiceHealth();
     }
   }, [entryMode, isAuthenticated]);
 
@@ -54,6 +58,8 @@ export default function App() {
   }, []);
 
   async function loadTickets() {
+    setTicketsLoading(true);
+    setTicketsError('');
     try {
       const list = await fetchReviewQueue();
       setTickets(list);
@@ -61,7 +67,20 @@ export default function App() {
       return list;
     } catch (error) {
       console.error('加载待人工处理队列失败：', error);
+      setTicketsError(error.message || '加载待人工处理队列失败。');
       return [];
+    } finally {
+      setTicketsLoading(false);
+    }
+  }
+
+  async function checkServiceHealth() {
+    setServiceStatus('checking');
+    try {
+      const health = await fetchHealth();
+      setServiceStatus(health.status === 'healthy' ? 'healthy' : 'degraded');
+    } catch {
+      setServiceStatus('offline');
     }
   }
 
@@ -77,14 +96,14 @@ export default function App() {
     }
   }
 
-  async function handleRegister(role) {
+  async function handleRegister() {
     if (!loginUser || !loginPass) {
       alert('请先填写用户名和密码。');
       return;
     }
     try {
-      await register(loginUser, loginPass, role);
-      alert(`用户 ${loginUser} 已注册为${translateRole(role)}，请登录。`);
+      await register(loginUser, loginPass, 'agent');
+      setAuthNotice(`客服账号 ${loginUser} 已注册，请登录。`);
     } catch (error) {
       alert(error.message);
     }
@@ -145,8 +164,7 @@ export default function App() {
           <div className="staff-register">
             <span>首次使用可注册演示账号</span>
             <div>
-              <button onClick={() => handleRegister('agent')} className="btn btn-secondary">注册客服</button>
-              <button onClick={() => handleRegister('admin')} className="btn btn-secondary">注册管理员</button>
+              <button onClick={handleRegister} className="btn btn-secondary">注册客服演示账号</button>
             </div>
           </div>
         </div>
@@ -177,9 +195,13 @@ export default function App() {
           )}
         </nav>
 
-        <div className="sidebar-runtime">
-          <div className="runtime-title"><ShieldCheck size={15} /> Agent 服务正常</div>
-          <p>普通问题自动处理，异常请求进入当前人工队列。</p>
+        <div className={`sidebar-runtime runtime-${serviceStatus}`}>
+          <div className="runtime-title"><ShieldCheck size={15} /> {
+            serviceStatus === 'healthy' ? 'Agent 服务正常'
+              : serviceStatus === 'checking' ? '正在检查 Agent 服务'
+                : serviceStatus === 'degraded' ? 'Agent 服务状态异常' : 'Agent 服务不可达'
+          }</div>
+          <p>{serviceStatus === 'healthy' ? '普通问题自动处理，异常请求进入当前人工队列。' : '当前状态来自后端健康检查。'}</p>
         </div>
 
         <div className="sidebar-account">
@@ -196,8 +218,8 @@ export default function App() {
             <h1>{isObservabilityView ? 'Agent 可观测性' : '异常与待审批工单'}</h1>
           </div>
           {!isObservabilityView && (
-            <button className="icon-button" onClick={loadTickets} title="刷新工单" aria-label="刷新工单">
-              <RefreshCw size={17} />
+            <button className="icon-button" onClick={loadTickets} disabled={ticketsLoading} title="刷新工单" aria-label="刷新工单">
+              <RefreshCw size={17} className={ticketsLoading ? 'spin' : ''} />
             </button>
           )}
         </header>
@@ -220,8 +242,15 @@ export default function App() {
               </div>
 
               <main className="grid-dashboard">
-                <TicketList tickets={tickets} selectedId={selectedTicket?.id} onSelect={setSelectedTicket} />
-                <TicketDetails ticket={selectedTicket} onActionComplete={handleActionComplete} />
+                <TicketList
+                  tickets={tickets}
+                  selectedId={selectedTicket?.id}
+                  onSelect={setSelectedTicket}
+                  loading={ticketsLoading}
+                  error={ticketsError}
+                  onRetry={loadTickets}
+                />
+                <TicketDetails ticket={selectedTicket} userRole={userRole} onActionComplete={handleActionComplete} />
               </main>
             </section>
           )}

@@ -13,12 +13,30 @@ function getHeaders() {
 }
 
 async function authenticatedFetch(url, options = {}) {
-  const response = await fetch(url, { ...options, headers: options.headers || getHeaders() });
+  const response = await fetch(url, {
+    ...options,
+    headers: { ...getHeaders(), ...(options.headers || {}) },
+  });
   if (response.status === 401) {
     logout();
     window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
   }
   return response;
+}
+
+async function apiError(response, fallbackMessage) {
+  try {
+    const payload = await response.json();
+    return new Error(payload.detail || payload.message || fallbackMessage);
+  } catch {
+    return new Error(fallbackMessage);
+  }
+}
+
+export async function fetchHealth() {
+  const response = await fetch(`${BASE_URL}/health`);
+  if (!response.ok) throw await apiError(response, '服务健康检查失败');
+  return response.json();
 }
 
 export async function login(username, password) {
@@ -38,7 +56,9 @@ export async function login(username, password) {
 }
 
 export function logout() {
-  localStorage.clear();
+  localStorage.removeItem('token');
+  localStorage.removeItem('role');
+  localStorage.removeItem('username');
 }
 
 export async function register(username, password, role = 'agent') {
@@ -89,9 +109,10 @@ export async function createTicket(customerId, subject, description, kbVersion =
   return response.json();
 }
 
-export async function fetchTicketAgentResult(ticketId) {
+export async function fetchTicketAgentResult(ticketId, signal) {
   const response = await authenticatedFetch(`${BASE_URL}/tickets/${encodeURIComponent(ticketId)}/agent-result`, {
     headers: getHeaders(),
+    signal,
   });
   if (!response.ok) throw new Error(response.status === 404 ? '该工单暂无已保存的 Agent 处理结果' : '加载 Agent 处理结果失败');
   return response.json();
@@ -109,7 +130,11 @@ export async function submitApproval(approvalId, status, modifiedResponse) {
   const response = await authenticatedFetch(`${BASE_URL}/approvals/${approvalId}`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ approval_id: approvalId, status, modified_response: modifiedResponse }),
+    body: JSON.stringify({
+      approval_id: approvalId,
+      status,
+      modified_response: status === 'modified' ? modifiedResponse : null,
+    }),
   });
   if (!response.ok) throw new Error('处理审批请求失败');
   return response.json();
@@ -125,21 +150,38 @@ export async function submitChat(message, customerId, sessionId, kbVersion = 'v1
   return response.json();
 }
 
-export async function fetchCustomerContext(customerId) {
+export async function fetchCustomerContext(customerId, signal) {
   const response = await authenticatedFetch(`${BASE_URL}/customer-context`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ customer_id: customerId }),
+    signal,
   });
   if (!response.ok) throw new Error('加载客户画像失败');
   return response.json();
 }
 
-export async function evaluateResponse(query, context, responseText) {
+export async function submitUserFeedback(agentRunId, feedbackToken, rating, comment, idempotencyKey) {
+  const response = await fetch(`${BASE_URL}/feedback/user`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent_run_id: agentRunId,
+      feedback_token: feedbackToken,
+      rating,
+      comment: comment.trim() || null,
+      idempotency_key: idempotencyKey,
+    }),
+  });
+  if (!response.ok) throw await apiError(response, '提交评价失败');
+  return response.json();
+}
+
+export async function evaluateResponse(query, context, responseText, agentRunId) {
   const response = await authenticatedFetch(`${BASE_URL}/evaluate-response`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ query, context, response: responseText }),
+    body: JSON.stringify({ query, context, response: responseText, agent_run_id: agentRunId }),
   });
   if (!response.ok) throw new Error('评测请求失败');
   return response.json();

@@ -148,6 +148,8 @@ class PublicSupportResponse(BaseModel):
     response: Optional[str] = None
     message: str
     created_at: datetime
+    agent_run_id: Optional[str] = None
+    feedback_token: Optional[str] = None
 
 
 class TicketResponse(BaseModel):

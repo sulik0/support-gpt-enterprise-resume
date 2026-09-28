@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, ChevronRight, Inbox, MessageSquare, Search } from 'lucide-react';
+import { AlertCircle, ChevronRight, Inbox, MessageSquare, RefreshCw, Search } from 'lucide-react';
 import { translatePriority, translateSentiment, translateStatus, translateSubject } from '../i18n';
 
-export default function TicketList({ tickets = [], selectedId, onSelect }) {
+export default function TicketList({ tickets = [], selectedId, onSelect, loading = false, error = '', onRetry }) {
   const [query, setQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
 
@@ -40,7 +40,20 @@ export default function TicketList({ tickets = [], selectedId, onSelect }) {
       </div>
 
       <div className="ticket-list" aria-live="polite">
-        {filteredTickets.length === 0 ? (
+        {loading && tickets.length === 0 ? (
+          <div className="queue-empty queue-request-state">
+            <RefreshCw className="spin" size={28} />
+            <strong>正在加载待处理工单</strong>
+            <span>请稍候……</span>
+          </div>
+        ) : error ? (
+          <div className="queue-empty queue-request-state error" role="alert">
+            <AlertCircle size={28} />
+            <strong>工单队列加载失败</strong>
+            <span>{error}</span>
+            <button type="button" className="btn btn-secondary" onClick={onRetry}>重试</button>
+          </div>
+        ) : filteredTickets.length === 0 ? (
           <div className="queue-empty">
             <Inbox size={28} />
             <strong>{tickets.length === 0 ? '暂无待处理工单' : '没有匹配的工单'}</strong>
