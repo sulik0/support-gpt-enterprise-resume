@@ -181,6 +181,28 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
     assert listed["skill_selection"]["selection_strategy"] == "intent_rule"
     assert "input_text" not in listed
 
+    ticket_id = run_detail.json()["ticket_id"]
+    filtered_runs = await client.get(
+        f"/observability/runs?limit=10&offset=0&ticket_id={ticket_id}",
+        headers=headers,
+    )
+    assert filtered_runs.status_code == 200
+    filtered_page = filtered_runs.json()
+    assert filtered_page["total"] >= 1
+    assert all(item["ticket_id"] == ticket_id for item in filtered_page["items"])
+
+    missing_runs = await client.get(
+        "/observability/runs?ticket_id=99999999", headers=headers
+    )
+    assert missing_runs.status_code == 200
+    assert missing_runs.json()["total"] == 0
+    assert missing_runs.json()["items"] == []
+
+    invalid_ticket_filter = await client.get(
+        "/observability/runs?ticket_id=0", headers=headers
+    )
+    assert invalid_ticket_filter.status_code == 422
+
     await client.post(
         "/auth/register",
         json={

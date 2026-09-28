@@ -53,7 +53,7 @@ npm run dev
 
 - 用户咨询页：使用连续会话提交问题；正常结果展示 Agent 回复，风险、质量或依赖异常展示安全的人工介入说明；自动回复后可提交一次性评分和文字评价。
 - 客服后台：只处理异常、待审批和需要人工修改的工单，支持原样批准、人工修改和拒绝。
-- Agent 可观测页：仅 `manager/admin` 可访问 Agent Run 摘要并跳转 LangSmith Project。
+- Agent 可观测页：仅 `manager/admin` 可访问 Agent Run 摘要，支持按工单编号精确查询并以北京时间展示运行时间，可继续跳转 LangSmith Project。
 
 ## LangGraph Checkpoint 配置
 
@@ -197,7 +197,7 @@ QWEN3_GUARD_MODEL_NAME=Qwen/Qwen3Guard-Gen-0.6B
 | `POST /tool-outbox/{event_id}/retry` | 显式重放 DLQ 事件 | `manager/admin` |
 | `POST /feedback/user` | 提交一次性用户评价 | `agent_run_id + feedback_token` |
 | `GET /feedback/runs/{agent_run_id}` | 查看 Run 与反馈关联 | `manager/admin` |
-| `GET /observability/runs` | 分页查询 Agent Run 摘要 | `manager/admin` |
+| `GET /observability/runs` | 分页查询 Agent Run 摘要；可传 `ticket_id` 精确筛选 | `manager/admin` |
 | `POST /evaluate-response` | 运行单次评估 | 关联 Run 时需 `manager/admin` |
 
 Swagger 是最新 Schema 的最终参考；修改 API 时必须同步 Pydantic Model、测试和本文档。

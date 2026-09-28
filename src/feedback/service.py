@@ -318,14 +318,23 @@ class FeedbackService:
         return run
 
     async def list_agent_runs(
-        self, db: AsyncSession, *, limit: int, offset: int
+        self,
+        db: AsyncSession,
+        *,
+        limit: int,
+        offset: int,
+        ticket_id: int | None = None,
     ) -> tuple[List[AgentRun], int]:
-        """按最新优先分页返回 Agent Run 及总数。"""
-        total_result = await db.execute(select(func.count()).select_from(AgentRun))
+        """按工单精确筛选，并按最新优先分页返回 Agent Run。"""
+        filters = [AgentRun.ticket_id == ticket_id] if ticket_id is not None else []
+        total_result = await db.execute(
+            select(func.count()).select_from(AgentRun).where(*filters)
+        )
         total = int(total_result.scalar_one())
         result = await db.execute(
             select(AgentRun)
             .options(selectinload(AgentRun.skill_selection))
+            .where(*filters)
             .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
             .limit(limit)
             .offset(offset)

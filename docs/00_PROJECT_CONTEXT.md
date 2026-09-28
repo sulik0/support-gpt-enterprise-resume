@@ -363,7 +363,7 @@ resolved / closed --reopen--> in_progress
 - Baseline Workflow Replay V1：固定 100 条 Dataset、完整 Ticket State、六项确定性行为指标、逐 Case 执行结果及 OTel Trace 同源性能报告。
 - 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，具备 Mock 拒绝、显式确认、调用预算和模型/Token/成本归因。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
-- LangSmith 前端入口：主管/管理员可分页查看 Agent Run、Trace ID、Workflow Path 和执行快照，并跳转至配置的 LangSmith Project 下钻。
+- LangSmith 前端入口：主管/管理员可分页或按工单编号精确查询 Agent Run、Trace ID、Workflow Path 和执行快照；列表时间统一展示为北京时间，并可跳转至配置的 LangSmith Project 下钻。
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
 - Qwen3Guard-Gen-0.6B 已作为独立 OpenAI-compatible 语义安全 Adapter 接入三类信任边界；默认关闭外部服务，启用后将 `Safe / Controversial / Unsafe` 交给 Risk Engine。
 - 独立 Risk Engine 已接入 Analyzer、QA、Escalation、AgentState、API、Trace、Metrics 和结构化日志。

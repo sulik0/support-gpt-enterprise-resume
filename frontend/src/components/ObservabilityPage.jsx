@@ -9,6 +9,7 @@ import {
   ExternalLink,
   RefreshCw,
   Route,
+  Search,
   ShieldAlert,
   Sparkles,
   X,
@@ -30,13 +31,18 @@ const NODE_LABELS = {
 
 function formatDate(value) {
   if (!value) return '-';
+  // 数据库存储 UTC 裸时间；无时区后缀时按 UTC 解析，再统一显示北京时间。
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`;
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  }).format(new Date(value));
+    hourCycle: 'h23',
+  }).format(new Date(normalized));
 }
 
 function runStatus(run) {
@@ -174,6 +180,8 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
 export default function ObservabilityPage() {
   const [page, setPage] = useState({ items: [], total: 0, limit: PAGE_SIZE, offset: 0 });
   const [offset, setOffset] = useState(0);
+  const [ticketQuery, setTicketQuery] = useState('');
+  const [ticketFilter, setTicketFilter] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedRun, setSelectedRun] = useState(null);
@@ -184,13 +192,13 @@ export default function ObservabilityPage() {
     setLoading(true);
     setError('');
     try {
-      setPage(await fetchAgentRuns(PAGE_SIZE, offset));
+      setPage(await fetchAgentRuns(PAGE_SIZE, offset, ticketFilter));
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setLoading(false);
     }
-  }, [offset]);
+  }, [offset, ticketFilter]);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
@@ -221,6 +229,28 @@ export default function ObservabilityPage() {
     await navigator.clipboard.writeText(traceId);
     setCopiedTrace(traceId);
     window.setTimeout(() => setCopiedTrace(''), 1600);
+  }
+
+  function handleTicketSearch(event) {
+    event.preventDefault();
+    const normalized = ticketQuery.trim().replace(/^#/, '');
+    const nextTicketId = Number(normalized);
+    if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(nextTicketId) || nextTicketId < 1) {
+      setError('请输入有效的正整数工单编号。');
+      return;
+    }
+    setError('');
+    setOffset(0);
+    if (ticketFilter === nextTicketId && offset === 0) loadRuns();
+    else setTicketFilter(nextTicketId);
+  }
+
+  function clearTicketSearch() {
+    setTicketQuery('');
+    setError('');
+    setOffset(0);
+    if (ticketFilter == null && offset === 0) loadRuns();
+    else setTicketFilter(null);
   }
 
   const canGoNext = offset + PAGE_SIZE < page.total;
@@ -259,25 +289,43 @@ export default function ObservabilityPage() {
 
       <div className="obs-runs-card glass-card">
         <div className="obs-table-heading">
-          <div><h3>Agent Run 列表</h3><p>仅主管和管理员可查看</p></div>
-          <span>{page.total ? offset + 1 : 0}–{Math.min(offset + PAGE_SIZE, page.total)} / {page.total}</span>
+          <div>
+            <h3>Agent Run 列表</h3>
+            <p>{ticketFilter ? `正在查看工单 #${ticketFilter} 的运行记录` : '仅主管和管理员可查看'}</p>
+          </div>
+          <div className="obs-table-controls">
+            <form className="obs-ticket-search" onSubmit={handleTicketSearch}>
+              <Search size={15} />
+              <input
+                inputMode="numeric"
+                value={ticketQuery}
+                onChange={(event) => setTicketQuery(event.target.value)}
+                placeholder="按工单编号查询"
+                aria-label="按工单编号查询 Agent Run"
+              />
+              <button type="submit" className="btn btn-secondary" disabled={loading}>查询</button>
+              {ticketFilter && <button type="button" className="btn btn-quiet" onClick={clearTicketSearch}>清除</button>}
+            </form>
+            <span>{page.total ? offset + 1 : 0}–{Math.min(offset + PAGE_SIZE, page.total)} / {page.total}</span>
+          </div>
         </div>
 
         {error && <div className="obs-error-banner"><AlertTriangle size={17} /> {error}</div>}
         {loading ? (
           <div className="obs-empty"><RefreshCw className="spin" size={20} /> 正在加载 Agent Run…</div>
         ) : page.items.length === 0 ? (
-          <div className="obs-empty">暂无 Agent Run，请先执行一次 <code>/chat</code>。</div>
+          <div className="obs-empty">{ticketFilter ? `工单 #${ticketFilter} 暂无 Agent Run。` : <>暂无 Agent Run，请先执行一次 <code>/chat</code>。</>}</div>
         ) : (
           <div className="obs-table-wrap">
             <table className="obs-table">
-              <thead><tr><th>时间</th><th>Run / Trace</th><th>Workflow</th><th>质量</th><th>消耗</th><th>状态</th></tr></thead>
+              <thead><tr><th>北京时间</th><th>工单</th><th>Run / Trace</th><th>Workflow</th><th>质量</th><th>消耗</th><th>状态</th></tr></thead>
               <tbody>
                 {page.items.map((run) => {
                   const status = runStatus(run);
                   return (
                     <tr key={run.id} onClick={() => openRun(run.id)} tabIndex={0} onKeyDown={(event) => ['Enter', ' '].includes(event.key) && openRun(run.id)}>
                       <td>{formatDate(run.created_at)}</td>
+                      <td>{run.ticket_id ? <strong>#{run.ticket_id}</strong> : <span>-</span>}</td>
                       <td><code>{run.id.slice(0, 8)}</code><small>{run.trace_id ? `Trace ${run.trace_id.slice(0, 10)}…` : '无 Trace ID'}</small></td>
                       <td><strong>{run.workflow_path?.length || 0} 节点</strong><small>{run.model_name}</small></td>
                       <td><strong>{run.qa_score == null ? '-' : run.qa_score.toFixed(2)}</strong><small>{run.hallucination_detected ? '幻觉风险' : '未检出幻觉'}</small></td>

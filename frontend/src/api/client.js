@@ -187,8 +187,9 @@ export async function evaluateResponse(query, context, responseText, agentRunId)
   return response.json();
 }
 
-export async function fetchAgentRuns(limit = 30, offset = 0) {
+export async function fetchAgentRuns(limit = 30, offset = 0, ticketId = null) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (ticketId != null) params.set('ticket_id', String(ticketId));
   const response = await authenticatedFetch(`${BASE_URL}/observability/runs?${params}`, {
     headers: getHeaders(),
   });

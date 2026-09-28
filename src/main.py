@@ -981,11 +981,17 @@ async def get_feedback_run(
 async def list_observability_runs(
     limit: int = Query(default=30, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    ticket_id: int | None = Query(default=None, ge=1),
     current_user: User = Depends(require_manager),
     db: AsyncSession = Depends(get_db),
 ):
-    """供主管分页查看可关联 LangSmith Trace 的 Agent Run。"""
-    runs, total = await feedback_service.list_agent_runs(db, limit=limit, offset=offset)
+    """供主管按工单筛选并分页查看可关联 Trace 的 Agent Run。"""
+    runs, total = await feedback_service.list_agent_runs(
+        db,
+        limit=limit,
+        offset=offset,
+        ticket_id=ticket_id,
+    )
     return AgentRunPageResponse(
         items=runs,
         total=total,
