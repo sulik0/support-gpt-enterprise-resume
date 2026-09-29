@@ -15,6 +15,7 @@ from src.agents.resolver import resolution_agent
 from src.agents.retriever import knowledge_retriever_agent
 from src.agents.tooling import tooling_agent
 from src.guardrails.qwen3_guard import Qwen3GuardResult, qwen3_guard
+from src.models.intents import IntentType
 from src.models.schemas import Citation
 from src.rag.vector_store import vector_store
 from src.tools.registry import tool_registry
@@ -71,6 +72,39 @@ async def test_analyzer_rule_match_skips_business_llm(monkeypatch):
     assert result["analyzer_strategy"] == "rule"
     assert result["intent"] == "billing_dispute"
     assert result.get("tokens_input", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_billing_policy_question_is_neutral_not_negative():
+    result = await ticket_analyzer_agent.analyze(
+        {
+            "subject": "退款条件咨询",
+            "description": "我想了解退款需要满足什么条件？",
+        }
+    )
+
+    assert result["analyzer_strategy"] == "rule"
+    assert result["intent"] == "billing_dispute"
+    assert result["department"] == "billing"
+    assert result["sentiment"] == "neutral"
+
+
+@pytest.mark.parametrize(
+    ("text", "candidate", "expected"),
+    [
+        ("退款政策和申请条件是什么？", "negative", "neutral"),
+        ("What are the refund policy requirements?", "negative", "neutral"),
+        ("我要申请退款。", "negative", "negative"),
+        ("你们重复扣款，我要投诉。", "neutral", "negative"),
+    ],
+)
+def test_billing_sentiment_uses_language_not_only_intent(text, candidate, expected):
+    assert (
+        ticket_analyzer_agent._normalize_sentiment(
+            text, IntentType.BILLING_DISPUTE, candidate
+        )
+        == expected
+    )
 
 
 @pytest.mark.asyncio

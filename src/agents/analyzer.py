@@ -29,6 +29,28 @@ _BILLING_DOMAIN = re.compile(
     r"\b(refund|payment|invoice|billing|charged?|card payment|bank statement)\b|"
     r"退款|支付|发票|账单|扣款|银行卡"
 )
+_BILLING_INFORMATION_QUERY = re.compile(
+    r"(?:了解|咨询|请问).{0,12}(?:退款|退费|退钱|发票|账单)|"
+    r"(?:退款|退费|退钱|发票|账单).{0,16}"
+    r"(?:条件|要求|资格|政策|规则|流程|时限|期限|范围|怎么|如何|什么)|"
+    r"(?:什么|哪些|怎么|如何).{0,12}(?:退款|退费|退钱)|"
+    r"\b(?:refund (?:policy|conditions?|requirements?|eligibility|rules?|process)|"
+    r"what (?:conditions?|requirements?).{0,20}refund|how does (?:a )?refund work|"
+    r"invoice (?:policy|rules?|total))\b"
+)
+_BILLING_ACTION_REQUEST = re.compile(
+    r"(?:我要|需要|要求|申请|办理|帮我|给我)"
+    r"(?:立即|现在|马上)?(?:退款|退费|退钱)|"
+    r"我想(?:要)?(?:申请|办理)?(?:退款|退费|退钱)|"
+    r"(?:退款|退费|退钱)(?:申请|办理)|"
+    r"\b(?:i (?:need|want)(?: to request)?|please|request(?:ing)?)\b.{0,20}\brefund\b"
+)
+_EXPLICIT_NEGATIVE_SENTIMENT = re.compile(
+    r"\b(?:angry|upset|furious|unacceptable|terrible|awful|disappointed|complain|complaint|"
+    r"overcharged|wrongly charged|charged twice|failed|rejected|never arrived)\b|"
+    r"不满|生气|愤怒|投诉|糟糕|离谱|坑人|欺骗|乱扣|错误扣款|"
+    r"多扣|重复扣款|不能退|无法退|退款失败|退款被拒|未收到|没收到|迟迟"
+)
 _API_INCIDENT = re.compile(
     r"(?:\bapi\b|接口|服务).{0,50}"
     r"(?:\b504\b|\b503\b|error|timeout|timing out|down|offline|crash|broken|"
@@ -193,6 +215,11 @@ class TicketAnalyzerAgent:
             )
             if not intent_is_known:
                 analyzer_confidence = min(analyzer_confidence, 0.5)
+            sentiment = self._normalize_sentiment(
+                f"{clean_subject} {clean_description}".strip(),
+                normalized_intent,
+                analysis.get("sentiment", "neutral"),
+            )
 
             # Increment token and latency stats
             state["tokens_input"] = state.get("tokens_input", 0) + in_tok
@@ -200,7 +227,7 @@ class TicketAnalyzerAgent:
 
             # Track sentiment through OpenTelemetry Metrics.
             TICKET_SENTIMENT_TOTAL.add(
-                1, {"sentiment": analysis.get("sentiment", "neutral")}
+                1, {"sentiment": sentiment}
             )
 
             # Record execution latency
@@ -214,7 +241,7 @@ class TicketAnalyzerAgent:
                 **state,
                 "description": clean_description,
                 "subject": clean_subject,
-                "sentiment": analysis.get("sentiment", "neutral"),
+                "sentiment": sentiment,
                 "priority": defaults.priority,
                 "intent": normalized_intent,
                 "department": defaults.department,
@@ -268,20 +295,23 @@ class TicketAnalyzerAgent:
             return None
         intent = candidates[0] if candidates else IntentType.INFORMATION_REQUEST
         defaults = intent_defaults(intent)
+        rule_sentiment = (
+            "negative"
+            if intent
+            in {
+                IntentType.BILLING_DISPUTE,
+                IntentType.OUTAGE_REPORT,
+                IntentType.ORDER_CANCELLATION,
+                IntentType.ACCOUNT_SUPPORT,
+            }
+            else "positive" if intent == IntentType.FEEDBACK else "neutral"
+        )
         return {
             "intent": intent,
             "priority": defaults.priority,
             "department": defaults.department,
-            "sentiment": (
-                "negative"
-                if intent
-                in {
-                    IntentType.BILLING_DISPUTE,
-                    IntentType.OUTAGE_REPORT,
-                    IntentType.ORDER_CANCELLATION,
-                    IntentType.ACCOUNT_SUPPORT,
-                }
-                else "positive" if intent == IntentType.FEEDBACK else "neutral"
+            "sentiment": TicketAnalyzerAgent._normalize_sentiment(
+                normalized, intent, rule_sentiment
             ),
             "confidence_score": 0.95,
         }
@@ -293,6 +323,23 @@ class TicketAnalyzerAgent:
             return min(max(float(value), 0.0), 1.0)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _normalize_sentiment(
+        text: str, intent: IntentType, candidate: Any
+    ) -> str:
+        """将情绪与业务意图解耦，避免把中性政策咨询标成负向。"""
+        normalized = " ".join(str(text).lower().split())
+        sentiment = str(candidate or "neutral").strip().lower()
+        if _EXPLICIT_NEGATIVE_SENTIMENT.search(normalized):
+            return "negative"
+        if (
+            intent == IntentType.BILLING_DISPUTE
+            and _BILLING_INFORMATION_QUERY.search(normalized)
+            and not _BILLING_ACTION_REQUEST.search(normalized)
+        ):
+            return "neutral"
+        return sentiment if sentiment in {"positive", "neutral", "negative"} else "neutral"
 
     @staticmethod
     def _classifier_input(subject: str, description: str, memory_context: str) -> str:
