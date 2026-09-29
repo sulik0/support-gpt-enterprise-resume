@@ -131,6 +131,19 @@ class PromptRegistry:
                 atomic_json(path, bundle.payload())
         return bundle
 
+    def list_bundles(self) -> list[dict[str, Any]]:
+        """返回全部不可变 Prompt Bundle，并验证文件名与内容 Hash。"""
+        bundles: list[dict[str, Any]] = []
+        bundle_dir = self.root / "bundles"
+        if bundle_dir.exists():
+            for path in sorted(bundle_dir.glob("*.json")):
+                bundle = self.load(path.stem)
+                bundles.append({**bundle.metadata(), "payload": bundle.payload()})
+        default = PromptBundle(default_payload())
+        if all(item["bundle_id"] != default.bundle_id for item in bundles):
+            bundles.append({**default.metadata(), "payload": default.payload()})
+        return sorted(bundles, key=lambda item: (item["version"], item["bundle_id"]))
+
     def load(self, bundle_id: str) -> PromptBundle:
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_id):
             raise ValueError("Bundle ID must be a SHA256 hash.")

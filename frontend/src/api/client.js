@@ -205,3 +205,66 @@ export async function fetchAgentRun(agentRunId) {
   if (!response.ok) throw new Error('加载 Agent 运行详情失败');
   return response.json();
 }
+
+export async function fetchAdminTools() {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/tools`);
+  if (!response.ok) throw await apiError(response, '加载 Tool 清单失败');
+  return response.json();
+}
+
+export async function updateAdminTool(toolName, enabled, reason) {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/tools/${encodeURIComponent(toolName)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled, reason: reason || null }),
+  });
+  if (!response.ok) throw await apiError(response, '更新 Tool 状态失败');
+  return response.json();
+}
+
+export async function fetchAdminPrompts() {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/prompts`);
+  if (!response.ok) throw await apiError(response, '加载 Prompt Registry 失败');
+  return response.json();
+}
+
+export async function createPromptCandidate(payload) {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/prompts`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await apiError(response, '创建 Prompt 候选版本失败');
+  return response.json();
+}
+
+export async function fetchAdminRagDocuments() {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/rag-documents`);
+  if (!response.ok) throw await apiError(response, '加载 RAG 文档失败');
+  return response.json();
+}
+
+export async function saveAdminRagDocument(payload, existingId = null) {
+  const url = existingId
+    ? `${BASE_URL}/admin/resources/rag-documents/${encodeURIComponent(existingId)}`
+    : `${BASE_URL}/admin/resources/rag-documents`;
+  const response = await authenticatedFetch(url, {
+    method: existingId ? 'PUT' : 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await apiError(response, '保存 RAG 文档失败');
+  return response.json();
+}
+
+export async function deleteAdminRagDocument(docId) {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/rag-documents/${encodeURIComponent(docId)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw await apiError(response, '删除 RAG 文档失败');
+}
+
+export async function reindexAdminRagDocuments() {
+  const response = await authenticatedFetch(`${BASE_URL}/admin/resources/rag-documents/reindex`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw await apiError(response, '重建 RAG 索引失败');
+  return response.json();
+}

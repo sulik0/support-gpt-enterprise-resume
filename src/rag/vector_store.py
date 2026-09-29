@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import math
 import re
 from collections import Counter
@@ -73,17 +74,38 @@ class VectorStoreManager:
         # Inject KB version into metadata for filtering
         metadatas = []
         for i in range(len(chunks)):
-            meta = metadata.copy()
+            meta = {
+                key: value if isinstance(value, (str, int, float, bool))
+                else json.dumps(value, ensure_ascii=False, sort_keys=True)
+                for key, value in metadata.items()
+                if value is not None
+            }
             meta["version"] = version
             meta["chunk_index"] = i
             meta["doc_id"] = doc_id
             metadatas.append(meta)
             
-        self.collection.add(
+        # 先 upsert 新 Chunk，成功后再清理多余旧 Chunk，避免更新窗口无索引。
+        existing = await asyncio.to_thread(
+            self.collection.get,
+            where={"doc_id": doc_id},
+        )
+        previous_ids = set((existing or {}).get("ids") or [])
+        self.collection.upsert(
             ids=ids,
             embeddings=embeddings,
             metadatas=metadatas,
             documents=chunks
+        )
+        stale_ids = sorted(previous_ids.difference(ids))
+        if stale_ids:
+            await asyncio.to_thread(self.collection.delete, ids=stale_ids)
+
+    async def delete_document(self, doc_id: str) -> None:
+        """按文档标识删除全部向量 Chunk。"""
+        await asyncio.to_thread(
+            self.collection.delete,
+            where={"doc_id": doc_id},
         )
 
     async def query_kb(

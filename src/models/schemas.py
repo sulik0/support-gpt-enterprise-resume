@@ -706,3 +706,85 @@ class AgentRunPageResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- ADMIN RESOURCE MANAGEMENT SCHEMAS ---
+class AdminToolResponse(BaseModel):
+    """返回 Tool Registry 定义与持久化运行开关。"""
+
+    name: str
+    description: str
+    input_schema: Dict[str, Any]
+    output_schema: Dict[str, Any]
+    min_role: str
+    timeout_seconds: float
+    mocked: bool
+    risk_level: str
+    operation_type: str
+    allowed_intents: Optional[List[str]] = None
+    version: str
+    enabled: bool
+    disabled_reason: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class AdminToolUpdateRequest(BaseModel):
+    """定义管理员对 Tool 运行开关的修改。"""
+
+    enabled: bool
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class AdminPromptBundleRequest(BaseModel):
+    """接收待发布的不可变 Prompt Bundle。"""
+
+    schema_version: str
+    version: str
+    templates: Dict[str, Dict[str, str]]
+
+
+class AdminPromptBundleResponse(BaseModel):
+    """返回 Prompt Bundle 内容与稳定标识。"""
+
+    bundle_id: str
+    version: str
+    node_hashes: Dict[str, str]
+    payload: Dict[str, Any]
+
+
+class AdminPromptRegistryResponse(BaseModel):
+    """返回 Prompt 环境指针、生效版本与候选列表。"""
+
+    state: Dict[str, Any]
+    effective: Dict[str, AdminPromptBundleResponse]
+    bundles: List[AdminPromptBundleResponse]
+
+
+class AdminKnowledgeDocumentRequest(BaseModel):
+    """定义知识文档和向量索引的统一写入输入。"""
+
+    id: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+    title: str = Field(..., min_length=1, max_length=255)
+    content: str = Field(..., min_length=1, max_length=30000)
+    version: str = Field(default="v1", min_length=1, max_length=50)
+    category: str = Field(..., min_length=1, max_length=100)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminKnowledgeDocumentResponse(BaseModel):
+    """返回知识文档的权威 SQL 快照。"""
+
+    id: str
+    title: str
+    content: str
+    version: str
+    category: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AdminRagReindexResponse(BaseModel):
+    """返回全量 RAG 重建结果。"""
+
+    indexed_documents: int

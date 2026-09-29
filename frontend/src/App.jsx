@@ -4,11 +4,13 @@ import CustomerSupportPage from './components/CustomerSupportPage';
 import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
 import ObservabilityPage from './components/ObservabilityPage';
+import ResourceManagementPage from './components/ResourceManagementPage';
 import { translateRole } from './i18n';
 import {
   Activity,
   ArrowLeft,
   Headphones,
+  LibraryBig,
   LayoutDashboard,
   LogOut,
   RefreshCw,
@@ -158,7 +160,9 @@ export default function App() {
   }
 
   const canViewObservability = ['manager', 'admin'].includes(userRole);
+  const canManageResources = userRole === 'admin';
   const isObservabilityView = activeView === 'observability' && canViewObservability;
+  const isResourceView = activeView === 'resources' && canManageResources;
 
   return (
     <div className="app-shell">
@@ -176,6 +180,11 @@ export default function App() {
           {canViewObservability && (
             <button className={activeView === 'observability' ? 'active' : ''} onClick={() => setActiveView('observability')}>
               <Activity size={18} /><span>Agent 可观测性</span>
+            </button>
+          )}
+          {canManageResources && (
+            <button className={activeView === 'resources' ? 'active' : ''} onClick={() => setActiveView('resources')}>
+              <LibraryBig size={18} /><span>资源管理</span>
             </button>
           )}
         </nav>
@@ -199,10 +208,10 @@ export default function App() {
       <div className="app-main">
         <header className="app-topbar">
           <div>
-            <span className="topbar-eyebrow">{isObservabilityView ? '系统运行洞察' : '人工审核中心'}</span>
-            <h1>{isObservabilityView ? 'Agent 可观测性' : '异常与待审批工单'}</h1>
+            <span className="topbar-eyebrow">{isResourceView ? '能力与内容治理' : isObservabilityView ? '系统运行洞察' : '人工审核中心'}</span>
+            <h1>{isResourceView ? '资源管理' : isObservabilityView ? 'Agent 可观测性' : '异常与待审批工单'}</h1>
           </div>
-          {!isObservabilityView && (
+          {!isObservabilityView && !isResourceView && (
             <button className="icon-button" onClick={loadTickets} disabled={ticketsLoading} title="刷新工单" aria-label="刷新工单">
               <RefreshCw size={17} className={ticketsLoading ? 'spin' : ''} />
             </button>
@@ -210,7 +219,9 @@ export default function App() {
         </header>
 
         <div className="app-content">
-          {isObservabilityView ? (
+          {isResourceView ? (
+            <ResourceManagementPage />
+          ) : isObservabilityView ? (
             <ObservabilityPage />
           ) : (
             <section className="workspace-page">

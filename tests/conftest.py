@@ -29,6 +29,7 @@ from src.database import Base, get_db
 from src.main import app
 from src.rag.vector_store import vector_store
 from src.tools.refund_gateway import refund_gateway
+from src.tools.registry import tool_registry
 
 # Configure isolated testing engine
 test_engine = create_async_engine(
@@ -57,6 +58,7 @@ def event_loop():
 @pytest.fixture(autouse=True)
 async def init_test_db():
     """Create a fresh database structure for each test run."""
+    tool_registry.replace_runtime_settings({})
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -65,6 +67,7 @@ async def init_test_db():
     # Clear memory vector store collection
     vector_store.clear_database()
     refund_gateway.reset()
+    tool_registry.replace_runtime_settings({})
 
 
 @pytest.fixture

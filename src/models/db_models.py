@@ -188,6 +188,26 @@ class KnowledgeDoc(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class ToolRuntimeSetting(Base):
+    """保存 Tool 运行时启停状态及管理审计信息。
+
+    Tool 的 Schema、权限与风险定义仍由代码注册表统一管理。
+    """
+
+    __tablename__ = "tool_runtime_settings"
+
+    tool_name = Column(String(180), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    reason = Column(String(500), nullable=True)
+    updated_by = Column(String(100), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+
 class ResponseApproval(Base):
     """保存 AI 回复草稿、人工审批结果及处理耗时。"""
 

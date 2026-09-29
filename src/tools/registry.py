@@ -85,6 +85,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: Dict[str, ToolDefinition] = {}
+        self._enabled_overrides: Dict[str, bool] = {}
 
     def register(self, definition: ToolDefinition) -> None:
         self._tools[definition.name] = definition
@@ -107,9 +108,26 @@ class ToolRegistry:
                     else None
                 ),
                 "version": tool.version,
+                "enabled": self.is_enabled(tool.name),
             }
             for tool in self._tools.values()
         ]
+
+    def is_enabled(self, name: str) -> bool:
+        """返回 Tool 的运行时启用状态。"""
+        return self._enabled_overrides.get(name, True)
+
+    def set_enabled(self, name: str, enabled: bool) -> None:
+        """应用已持久化的运行时开关，不修改 Tool 定义。"""
+        if name not in self._tools:
+            raise KeyError(name)
+        self._enabled_overrides[name] = enabled
+
+    def replace_runtime_settings(self, values: Dict[str, bool]) -> None:
+        """以数据库快照原子替换当前进程内开关。"""
+        self._enabled_overrides = {
+            name: enabled for name, enabled in values.items() if name in self._tools
+        }
 
     def get_definition(self, name: str) -> Optional[ToolDefinition]:
         return self._tools.get(name)
@@ -230,6 +248,18 @@ class ToolRegistry:
                 started=started,
                 mocked=False,
                 error=f"Tool '{name}' is not registered.",
+            )
+
+        if not self.is_enabled(name):
+            return self._record_call(
+                name=name,
+                role=role,
+                ticket_id=ticket_id,
+                allowed=False,
+                status="disabled",
+                started=started,
+                mocked=definition.mocked,
+                error=f"Tool '{name}' is disabled by an administrator.",
             )
 
         if not self._is_allowed(role, definition.min_role):

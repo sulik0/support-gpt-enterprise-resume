@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -30,29 +30,25 @@ class KBVersioningService:
         """
         Save a document description to the database and chunk/index it in ChromaDB.
         """
-        # Save to PostgreSQL / database
-        doc = KnowledgeDoc(
-            id=doc_id,
-            title=title,
-            content=content,
-            category=category,
-            version=version,
-            metadata_json=metadata or {}
-        )
-        
-        # Merge to support upsert behavior
-        await db.merge(doc)
-        await db.commit()
+        doc = await db.get(KnowledgeDoc, doc_id)
+        if doc is None:
+            doc = KnowledgeDoc(id=doc_id)
+            db.add(doc)
+        doc.title = title
+        doc.content = content
+        doc.category = category
+        doc.version = version
+        doc.metadata_json = metadata or {}
+        await db.flush()
 
         # Chunk text and add to Vector DB
         chunks = self.splitter.split_text(content)
         meta = {
+            **(metadata or {}),
             "title": title,
             "category": category,
             "doc_id": doc_id
         }
-        if metadata:
-            meta.update(metadata)
             
         await vector_store.add_document_chunks(
             doc_id=doc_id,
@@ -60,9 +56,53 @@ class KBVersioningService:
             metadata=meta,
             version=version
         )
-        
-        logger.info(f"Registered document {doc_id} under version {version} successfully.")
+        await db.commit()
+        await db.refresh(doc)
+
+        logger.info("Registered document %s under version %s.", doc_id, version)
         return doc
+
+    async def list_documents(self, db: AsyncSession) -> List[KnowledgeDoc]:
+        """按文档标识稳定返回知识库全量文档。"""
+        result = await db.execute(select(KnowledgeDoc).order_by(KnowledgeDoc.id))
+        return list(result.scalars().all())
+
+    async def get_document(
+        self, db: AsyncSession, doc_id: str
+    ) -> Optional[KnowledgeDoc]:
+        """读取单篇知识文档。"""
+        return await db.get(KnowledgeDoc, doc_id)
+
+    async def delete_document(self, db: AsyncSession, doc_id: str) -> bool:
+        """同步删除 SQL 文档和对应向量 Chunk。"""
+        doc = await db.get(KnowledgeDoc, doc_id)
+        if doc is None:
+            return False
+        await vector_store.delete_document(doc_id)
+        await db.delete(doc)
+        await db.commit()
+        logger.info("Deleted knowledge document %s.", doc_id)
+        return True
+
+    async def reindex_all(self, db: AsyncSession) -> int:
+        """以 SQL 文档为权威数据源重建现有文档索引。"""
+        documents = await self.list_documents(db)
+        for doc in documents:
+            chunks = self.splitter.split_text(doc.content)
+            metadata = {
+                **(doc.metadata_json or {}),
+                "title": doc.title,
+                "category": doc.category,
+                "doc_id": doc.id,
+            }
+            await vector_store.add_document_chunks(
+                doc_id=doc.id,
+                chunks=chunks,
+                metadata=metadata,
+                version=doc.version,
+            )
+        logger.info("Reindexed %s knowledge documents.", len(documents))
+        return len(documents)
 
     async def get_active_versions(self, db: AsyncSession) -> List[str]:
         """List all unique KB versions currently stored in the system."""
