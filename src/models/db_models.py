@@ -256,6 +256,35 @@ class AgentRun(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    review_context = relationship(
+        "AgentReviewContext",
+        back_populates="agent_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentReviewContext(Base):
+    """保存触发人工审批时的风险与质量信号快照。
+
+    独立表避免在已有 AgentRun 表上执行破坏性字段迁移。
+    """
+
+    __tablename__ = "agent_review_contexts"
+
+    agent_run_id = Column(
+        String(36), ForeignKey("agent_runs.id"), primary_key=True
+    )
+    escalation_reason = Column(Text, nullable=True)
+    risk_level = Column(String(30), nullable=False, default="low")
+    risk_score = Column(Float, nullable=False, default=0.0)
+    risk_reasons = Column(JSON, nullable=False, default=list)
+    analyzer_confidence = Column(Float, nullable=False, default=1.0)
+    response_requires_human = Column(Boolean, nullable=False, default=False)
+    degradation_reasons = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    agent_run = relationship("AgentRun", back_populates="review_context")
 
 
 class AgentSkillSelection(Base):

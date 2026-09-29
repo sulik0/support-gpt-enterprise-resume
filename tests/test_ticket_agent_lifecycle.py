@@ -3,7 +3,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.db_models import AgentRun, Ticket
+from src.models.db_models import AgentReviewContext, AgentRun, Ticket
 
 
 def _public_workflow_output(state, *, approval_required: bool):
@@ -62,6 +62,11 @@ async def test_create_ticket_runs_agent_once_and_detail_only_reads_saved_result(
             "sla_hours": 4.0,
             "approval_required": True,
             "escalation_recommended": True,
+            "escalation_reason": "Risk Engine classified ticket as high: high_risk_business_intent.",
+            "risk_level": "high",
+            "risk_score": 0.82,
+            "risk_reasons": ["high_risk_business_intent"],
+            "analyzer_confidence": 0.91,
             "qa_score": 0.88,
             "hallucination_detected": False,
             "workflow_path": ["ticket_analyzer", "retriever", "llm_generation"],
@@ -112,12 +117,27 @@ async def test_create_ticket_runs_agent_once_and_detail_only_reads_saved_result(
     assert first_detail.json()["approval_required"] is True
     assert first_detail.json()["approval_id"] is not None
     assert first_detail.json()["citations"][0]["source"] == "refund_policy.md"
+    assert first_detail.json()["escalation_reason"].startswith(
+        "Risk Engine classified ticket as high"
+    )
+    assert first_detail.json()["review_reasons"] == [
+        "Risk Engine classified ticket as high: high_risk_business_intent.",
+        "high_risk_business_intent",
+        "negative_high_priority",
+    ]
+    assert first_detail.json()["risk_level"] == "high"
+    assert first_detail.json()["risk_score"] == 0.82
+    assert first_detail.json()["analyzer_confidence"] == 0.91
     assert len(workflow_calls) == 1
 
     ticket_count = await db_session.scalar(select(func.count()).select_from(Ticket))
     run_count = await db_session.scalar(select(func.count()).select_from(AgentRun))
+    review_count = await db_session.scalar(
+        select(func.count()).select_from(AgentReviewContext)
+    )
     assert ticket_count == 1
     assert run_count == 1
+    assert review_count == 1
 
 
 @pytest.mark.asyncio

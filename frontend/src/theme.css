@@ -466,7 +466,9 @@ body {
 .passed-badge { color: #116b4e; background: #eaf7f1; }
 .risk-badge { color: #b42318; background: #fff0ef; }
 .escalation-banner { color: #b42318; border-color: #f0c5c2; background: #fff5f4; }
-.escalation-banner span { color: #8f3b34; }
+.escalation-banner span,
+.escalation-reasons,
+.escalation-banner small { color: #8f3b34; }
 .draft-label strong { color: #344054; }
 .draft-label span { color: #7d8998; }
 .reference-disclosure { background: #ffffff; }

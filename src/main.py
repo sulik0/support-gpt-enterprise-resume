@@ -41,6 +41,7 @@ from src.feedback.service import feedback_service
 from src.memory import MemoryContext, MemoryOwnershipError, memory_service
 from src.models.db_models import (
     AgentExecution,
+    AgentReviewContext,
     AgentRun,
     ResponseApproval,
     Ticket,
@@ -1298,6 +1299,48 @@ async def compensate_tool_action(
     return await tool_governance_service.get(db, action.id)
 
 
+def _ticket_review_reasons(
+    *,
+    agent_run: AgentRun,
+    ticket: Ticket | None,
+    review_context: AgentReviewContext | None,
+) -> list[str]:
+    """聚合快照中的具体审批信号，并兼容上线前的历史工单。"""
+    reasons: list[str] = []
+
+    def add(value: str | None) -> None:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in reasons:
+            reasons.append(normalized)
+
+    if review_context:
+        add(review_context.escalation_reason)
+        for reason in review_context.risk_reasons or []:
+            add(str(reason))
+        if review_context.response_requires_human:
+            add("authoritative_answer_unavailable")
+        for reason in review_context.degradation_reasons or []:
+            add(str(reason))
+
+    # 旧 AgentRun 没有审批快照时，仍用已持久化字段给出可说明的原因。
+    if ticket and ticket.priority == "urgent":
+        add("urgent_priority")
+    if ticket and ticket.priority == "high" and ticket.sentiment == "negative":
+        add("negative_high_priority")
+    if agent_run.hallucination_detected:
+        add("hallucination_detected")
+    if (
+        agent_run.qa_score is not None
+        and agent_run.qa_score < settings.RISK_QA_SCORE_THRESHOLD
+    ):
+        add("qa_score_below_threshold")
+    if agent_run.workflow_errors:
+        add("workflow_error")
+    if agent_run.escalation_recommended and not reasons:
+        add("manual_review_policy")
+    return reasons
+
+
 @app.get(
     "/tool-actions/{action_id}/policy-replay",
     response_model=ToolPolicyReplayResponse,
@@ -1614,6 +1657,15 @@ async def get_ticket_agent_result(
             detail="No persisted Agent result exists for this ticket.",
         )
 
+    review_result = await db.execute(
+        select(AgentReviewContext).where(
+            AgentReviewContext.agent_run_id == agent_run.id
+        )
+    )
+    review_context = review_result.scalars().first()
+    ticket_result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
+    ticket = ticket_result.scalars().first()
+
     approval_result = await db.execute(
         select(ResponseApproval)
         .where(ResponseApproval.ticket_id == ticket_id)
@@ -1635,6 +1687,16 @@ async def get_ticket_agent_result(
     )
     approval_required = bool(approval and approval.status == "pending")
     citations = [Citation(**citation) for citation in (agent_run.citations or [])]
+    review_reasons = _ticket_review_reasons(
+        agent_run=agent_run,
+        ticket=ticket,
+        review_context=review_context,
+    )
+    escalation_reason = (
+        review_context.escalation_reason
+        if review_context and review_context.escalation_reason
+        else (review_reasons[0] if review_reasons else None)
+    )
 
     return TicketAgentResultResponse(
         ticket_id=ticket_id,
@@ -1646,10 +1708,12 @@ async def get_ticket_agent_result(
         qa_score=agent_run.qa_score,
         hallucination_detected=agent_run.hallucination_detected,
         escalation_recommended=agent_run.escalation_recommended,
-        escalation_reason=(
-            "系统基于风险、优先级或质量规则建议升级人工处理。"
-            if agent_run.escalation_recommended
-            else None
+        escalation_reason=escalation_reason,
+        review_reasons=review_reasons,
+        risk_level=review_context.risk_level if review_context else None,
+        risk_score=review_context.risk_score if review_context else None,
+        analyzer_confidence=(
+            review_context.analyzer_confidence if review_context else None
         ),
         approval_required=approval_required,
         approval_id=approval.id if approval_required else None,

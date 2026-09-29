@@ -207,6 +207,10 @@ class TicketAgentResultResponse(BaseModel):
     hallucination_detected: bool = False
     escalation_recommended: bool = False
     escalation_reason: Optional[str] = None
+    review_reasons: List[str] = Field(default_factory=list)
+    risk_level: Optional[str] = None
+    risk_score: Optional[float] = None
+    analyzer_confidence: Optional[float] = None
     approval_required: bool = False
     approval_id: Optional[int] = None
     approval_status: Optional[str] = None

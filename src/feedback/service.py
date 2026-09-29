@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from src.config import settings
 from src.models.db_models import (
+    AgentReviewContext,
     AgentRun,
     AgentRunLink,
     AgentSkillSelection,
@@ -94,6 +95,30 @@ class FeedbackService:
         )
         db.add(run)
         await db.flush()
+        db.add(
+            AgentReviewContext(
+                agent_run_id=run.id,
+                escalation_reason=self._optional_text(
+                    agent_output.get("escalation_reason"), 1000
+                ),
+                risk_level=self._bounded(
+                    agent_output.get("risk_level"), 30, "low"
+                ),
+                risk_score=self._score(agent_output.get("risk_score"), 0.0),
+                risk_reasons=self._safe_reason_list(
+                    agent_output.get("risk_reasons", [])
+                ),
+                analyzer_confidence=self._score(
+                    agent_output.get("analyzer_confidence"), 1.0
+                ),
+                response_requires_human=bool(
+                    agent_output.get("response_requires_human", False)
+                ),
+                degradation_reasons=self._safe_reason_list(
+                    agent_output.get("degradation_reasons", [])
+                ),
+            )
+        )
         if agent_output.get("skill_name") not in {None, "", "unselected"}:
             db.add(
                 AgentSkillSelection(
@@ -623,6 +648,31 @@ class FeedbackService:
     def _bounded(self, value: Any, limit: int, fallback: str) -> str:
         text = self._sanitize_training_text(str(value or fallback)).strip()
         return (text or fallback)[:limit]
+
+    def _optional_text(self, value: Any, limit: int) -> Optional[str]:
+        """仅保存有内容的脱敏文本，避免空理由污染审批快照。"""
+        text = self._sanitize_training_text(str(value or "")).strip()
+        return text[:limit] if text else None
+
+    def _safe_reason_list(self, values: Any) -> List[str]:
+        """将风险与降级原因限长、去重后持久化。"""
+        if not isinstance(values, (list, tuple, set)):
+            return []
+        reasons: List[str] = []
+        for value in values:
+            reason = self._optional_text(value, 300)
+            if reason and reason not in reasons:
+                reasons.append(reason)
+            if len(reasons) >= 20:
+                break
+        return reasons
+
+    @staticmethod
+    def _score(value: Any, default: float) -> float:
+        try:
+            return round(min(max(float(value), 0.0), 1.0), 4)
+        except (TypeError, ValueError):
+            return default
 
     def _sanitize_training_text(self, text: Optional[str]) -> str:
         """对训练候选文本执行稳定占位符脱敏。"""

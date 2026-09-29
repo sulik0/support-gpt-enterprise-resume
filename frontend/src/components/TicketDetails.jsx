@@ -132,6 +132,12 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
   const recentOrders = customer?.recent_orders || [];
   const responseChanged = Boolean(chatOutput && editedResponse.trim() !== chatOutput.response.trim());
   const canRunEvaluation = ['manager', 'admin'].includes(userRole);
+  const reviewReasons = Array.from(new Set(
+    (chatOutput?.review_reasons?.length
+      ? chatOutput.review_reasons
+      : [chatOutput?.escalation_reason]
+    ).map(translateEscalationReason).filter(Boolean),
+  ));
 
   return (
     <section className="ticket-detail">
@@ -223,7 +229,22 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
           {chatOutput.escalation_recommended && (
             <div className="escalation-banner">
               <ShieldAlert size={19} />
-              <div><strong>建议升级人工处理</strong><span>{translateEscalationReason(chatOutput.escalation_reason)}</span></div>
+              <div>
+                <strong>建议升级人工处理</strong>
+                <span>{reviewReasons[0] || '该工单需要人工复核。'}</span>
+                {reviewReasons.length > 1 && (
+                  <ul className="escalation-reasons">
+                    {reviewReasons.slice(1).map((reason) => <li key={reason}>{reason}</li>)}
+                  </ul>
+                )}
+                {chatOutput.risk_level && chatOutput.risk_score != null && (
+                  <small>
+                    风险等级：{chatOutput.risk_level.toUpperCase()}
+                    · 风险分：{chatOutput.risk_score.toFixed(2)}
+                    {chatOutput.analyzer_confidence != null && ` · 意图置信度：${chatOutput.analyzer_confidence.toFixed(2)}`}
+                  </small>
+                )}
+              </div>
             </div>
           )}
 
