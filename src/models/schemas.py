@@ -616,6 +616,21 @@ class AgentSkillSelectionResponse(BaseModel):
         from_attributes = True
 
 
+class AgentRunSnapshotResponse(BaseModel):
+    """返回 Analyzer / QA 的执行策略和结构化结果。"""
+
+    analyzer_strategy: str
+    analyzer_result: Dict[str, Any] = Field(default_factory=dict)
+    qa_strategy: str
+    qa_result: Dict[str, Any] = Field(default_factory=dict)
+    decision_records: List[Dict[str, Any]] = Field(default_factory=list)
+
+    class Config:
+        """允许从 ORM 快照对象读取字段。"""
+
+        from_attributes = True
+
+
 class AgentRunResponse(BaseModel):
     """返回一次 Agent 执行快照及其全部反馈事件。"""
 
@@ -644,6 +659,7 @@ class AgentRunResponse(BaseModel):
     latency_seconds: float
     created_at: datetime
     skill_selection: Optional[AgentSkillSelectionResponse] = None
+    execution_snapshot: Optional[AgentRunSnapshotResponse] = None
     feedback_events: List[FeedbackEventResponse] = Field(default_factory=list)
 
     class Config:

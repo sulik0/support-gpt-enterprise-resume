@@ -262,6 +262,12 @@ class AgentRun(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    execution_snapshot = relationship(
+        "AgentRunSnapshot",
+        back_populates="agent_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentReviewContext(Base):
@@ -285,6 +291,27 @@ class AgentReviewContext(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     agent_run = relationship("AgentRun", back_populates="review_context")
+
+
+class AgentRunSnapshot(Base):
+    """保存 Analyzer 和 QA 节点的结构化执行快照。
+
+    仅保存脱敏后的决策结果，详情查询不会重放 Workflow。
+    """
+
+    __tablename__ = "agent_run_snapshots"
+
+    agent_run_id = Column(
+        String(36), ForeignKey("agent_runs.id"), primary_key=True
+    )
+    analyzer_strategy = Column(String(30), nullable=False, default="not_run")
+    analyzer_result = Column(JSON, nullable=False, default=dict)
+    qa_strategy = Column(String(30), nullable=False, default="not_run")
+    qa_result = Column(JSON, nullable=False, default=dict)
+    decision_records = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    agent_run = relationship("AgentRun", back_populates="execution_snapshot")
 
 
 class AgentSkillSelection(Base):

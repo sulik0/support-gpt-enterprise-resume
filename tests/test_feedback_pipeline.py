@@ -168,6 +168,18 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
     assert run_detail.json()["prompt_version"]
     assert run_detail.json()["skill_selection"]["skill_name"] == "refund_support"
     assert run_detail.json()["skill_selection"]["skill_version"] == "v1"
+    snapshot = run_detail.json()["execution_snapshot"]
+    assert snapshot["analyzer_strategy"] == "rule"
+    assert snapshot["analyzer_result"] == {
+        "intent": "billing_dispute",
+        "department": "billing",
+        "priority": "high",
+        "sentiment": "negative",
+        "confidence": 0.95,
+    }
+    assert snapshot["qa_strategy"] == "llm"
+    assert snapshot["qa_result"]["score"] == run_detail.json()["qa_score"]
+    assert isinstance(snapshot["decision_records"], list)
     assert any(
         event["source"] == "human_review"
         for event in run_detail.json()["feedback_events"]

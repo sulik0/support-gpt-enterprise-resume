@@ -558,10 +558,17 @@ body {
 }
 .obs-helper,
 .obs-kv-grid dt,
+.obs-analyzer-grid dt,
+.obs-snapshot-heading span,
+.obs-snapshot-unavailable,
 .obs-compact-list em,
 .obs-compact-list p,
 .obs-error-section p { color: #687588; }
 .obs-kv-grid dd { color: #344054; }
+.obs-analyzer-snapshot { border-color: #dfe5ee; background: #fbfcfe; }
+.obs-analyzer-grid > div { background: #f4f6f9; }
+.obs-analyzer-grid dd,
+.obs-snapshot-heading strong { color: #344054; }
 .obs-node { color: #3155b6; border-color: #d4ddf7; background: #f0f3fe; }
 .obs-node span { color: #ffffff; background: #526bc3; }
 .obs-arrow { color: #a0aab7; }

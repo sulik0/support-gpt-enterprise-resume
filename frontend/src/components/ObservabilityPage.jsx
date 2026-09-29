@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { fetchAgentRun, fetchAgentRuns } from '../api/client';
+import { translatePriority, translateSentiment } from '../i18n';
 
 const PAGE_SIZE = 20;
 const LANGSMITH_PROJECT_URL = import.meta.env.VITE_LANGSMITH_PROJECT_URL || 'https://smith.langchain.com/';
@@ -28,6 +29,37 @@ const NODE_LABELS = {
   qa: '质量校验',
   escalation: '升级判断',
 };
+
+const STRATEGY_LABELS = {
+  rule: 'Rule 规则',
+  jev: 'Jev 决策',
+  llm: 'LLM 识别',
+  not_run: '未执行',
+  unknown: '未知',
+};
+
+const INTENT_LABELS = {
+  billing_dispute: '账务 / 退款争议',
+  outage_report: 'API / 服务故障',
+  order_cancellation: '订单取消',
+  order_status: '订单状态',
+  account_support: '账户支持',
+  warranty_claim: '保修申请',
+  feedback: '用户反馈',
+  information_request: '信息咨询',
+};
+
+const DEPARTMENT_LABELS = {
+  billing: '账务',
+  technical: '技术支持',
+  shipping: '订单与物流',
+  general: '综合支持',
+};
+
+function StrategyBadge({ value }) {
+  const normalized = value || 'not_run';
+  return <span className={`obs-strategy strategy-${normalized}`}>{STRATEGY_LABELS[normalized] || normalized}</span>;
+}
 
 function formatDate(value) {
   if (!value) return '-';
@@ -77,6 +109,8 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
   }, [loading, onClose, run]);
 
   if (!run && !loading) return null;
+  const snapshot = run?.execution_snapshot;
+  const analyzer = snapshot?.analyzer_result || {};
   return (
     <div className="obs-detail-backdrop" onClick={onClose}>
       <aside className="obs-detail-panel" role="dialog" aria-modal="true" aria-label="Agent Run 详情" onClick={(event) => event.stopPropagation()}>
@@ -130,12 +164,32 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
                 <div><dt>Workflow</dt><dd>{run.workflow_version}</dd></div>
                 <div><dt>Skill</dt><dd>{run.skill_selection ? `${run.skill_selection.skill_name} / ${run.skill_selection.skill_version}` : '-'}</dd></div>
                 <div><dt>Skill 路由</dt><dd>{run.skill_selection?.selection_strategy || '-'}</dd></div>
+                <div><dt>Analyzer 方式</dt><dd>{snapshot ? <StrategyBadge value={snapshot.analyzer_strategy} /> : '-'}</dd></div>
+                <div><dt>QA 方式</dt><dd>{snapshot ? <StrategyBadge value={snapshot.qa_strategy} /> : '-'}</dd></div>
                 <div><dt>知识库</dt><dd>{run.kb_version}</dd></div>
                 <div><dt>延迟</dt><dd>{run.latency_seconds.toFixed(3)}s</dd></div>
                 <div><dt>Token</dt><dd>{run.tokens_input + run.tokens_output}</dd></div>
                 <div><dt>QA Score</dt><dd>{run.qa_score == null ? '-' : run.qa_score.toFixed(2)}</dd></div>
                 <div><dt>人工审批</dt><dd>{run.approval_required ? '需要' : '不需要'}</dd></div>
               </dl>
+
+              {snapshot ? (
+                <div className="obs-analyzer-snapshot">
+                  <div className="obs-snapshot-heading">
+                    <div><strong>Analyzer 分析结果</strong><span>工单进入后续 Skill 和 Tool 路由时使用的快照</span></div>
+                    <StrategyBadge value={snapshot.analyzer_strategy} />
+                  </div>
+                  <dl className="obs-analyzer-grid">
+                    <div><dt>意图</dt><dd>{INTENT_LABELS[analyzer.intent] || analyzer.intent || '-'}</dd></div>
+                    <div><dt>部门</dt><dd>{DEPARTMENT_LABELS[analyzer.department] || analyzer.department || '-'}</dd></div>
+                    <div><dt>优先级</dt><dd>{translatePriority(analyzer.priority)}</dd></div>
+                    <div><dt>情绪</dt><dd>{translateSentiment(analyzer.sentiment)}</dd></div>
+                    <div><dt>置信度</dt><dd>{typeof analyzer.confidence === 'number' ? analyzer.confidence.toFixed(2) : '-'}</dd></div>
+                  </dl>
+                </div>
+              ) : (
+                <p className="obs-snapshot-unavailable">该记录生成于节点快照上线前，无法还原 Analyzer / QA 的决策方式。</p>
+              )}
             </section>
 
             <section className="obs-detail-section">

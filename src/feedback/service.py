@@ -21,6 +21,7 @@ from src.models.db_models import (
     AgentReviewContext,
     AgentRun,
     AgentRunLink,
+    AgentRunSnapshot,
     AgentSkillSelection,
     FeedbackEvent,
 )
@@ -116,6 +117,46 @@ class FeedbackService:
                 ),
                 degradation_reasons=self._safe_reason_list(
                     agent_output.get("degradation_reasons", [])
+                ),
+            )
+        )
+        db.add(
+            AgentRunSnapshot(
+                agent_run_id=run.id,
+                analyzer_strategy=self._node_strategy(
+                    agent_output.get("analyzer_strategy")
+                ),
+                analyzer_result=sanitize_value(
+                    {
+                        "intent": str(agent_output.get("intent") or "unknown"),
+                        "department": agent_output.get("department", "general"),
+                        "priority": agent_output.get("priority", "medium"),
+                        "sentiment": agent_output.get("sentiment", "neutral"),
+                        "confidence": self._score(
+                            agent_output.get("analyzer_confidence"), 0.0
+                        ),
+                    }
+                ),
+                qa_strategy=self._node_strategy(agent_output.get("qa_strategy")),
+                qa_result=sanitize_value(
+                    {
+                        "score": self._score(agent_output.get("qa_score"), 0.0),
+                        "hallucination_detected": bool(
+                            agent_output.get("hallucination_detected", False)
+                        ),
+                        "citation_verified": bool(
+                            agent_output.get("citation_verified", False)
+                        ),
+                        "response_grounded": bool(
+                            agent_output.get("response_grounded", False)
+                        ),
+                        "response_requires_human": bool(
+                            agent_output.get("response_requires_human", False)
+                        ),
+                    }
+                ),
+                decision_records=sanitize_value(
+                    agent_output.get("decision_records", [])
                 ),
             )
         )
@@ -331,6 +372,7 @@ class FeedbackService:
             .options(
                 selectinload(AgentRun.feedback_events),
                 selectinload(AgentRun.skill_selection),
+                selectinload(AgentRun.execution_snapshot),
             )
             .where(AgentRun.id == run_id)
         )
@@ -673,6 +715,12 @@ class FeedbackService:
             return round(min(max(float(value), 0.0), 1.0), 4)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _node_strategy(value: Any) -> str:
+        """节点策略只允许固定枚举，防止外部文本进入运行快照。"""
+        strategy = str(value or "not_run").strip().lower()
+        return strategy if strategy in {"rule", "jev", "llm", "not_run"} else "unknown"
 
     def _sanitize_training_text(self, text: Optional[str]) -> str:
         """对训练候选文本执行稳定占位符脱敏。"""
