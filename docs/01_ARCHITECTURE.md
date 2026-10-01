@@ -9,7 +9,7 @@
 架构遵循以下原则：
 
 - **先安全、后生成**：Prompt Injection、Jailbreak 和 PII 处理发生在业务工具调用与 LLM 生成之前。
-- **显式编排、职责单一**：将理解、工具补全、检索、生成、质量校验和升级决策拆成明确节点。
+- **流程清晰、节点分工**：输入理解、业务信息查询、知识检索、回复生成、质量检查和转人工决定分别交给相应节点处理。
 - **上下文有据可查**：回复同时使用 RAG citation 和结构化业务上下文，API 返回检索与工具审计信息。
 - **高风险操作受治理**：工具统一经过 ToolRegistry，工单状态统一经过状态机，高风险回复进入 Human-in-the-Loop。
 - **本地可复现、生产可替换**：Mock LLM、SQLite、可选 Redis 和本地 ChromaDB 使 Demo 可离线运行；Provider、Adapter 和部署配置保留替换空间。
@@ -89,11 +89,11 @@ flowchart TB
     Approval --> Obs
 ```
 
-### 架构层职责
+### 各层分别负责什么
 
-| 架构层 | 职责 | 输入 | 输出 | 采用原因 | 可替代方案与权衡 |
+| 架构层 | 这一层负责什么 | 输入 | 输出 | 采用原因 | 可替代方案与权衡 |
 |---|---|---|---|---|---|
-| API 层 | 接收请求、鉴权、编排持久化、返回可审计结果 | HTTP 请求、JWT、会话与工单参数 | API 响应、工单与审批记录 | FastAPI 适合异步 I/O 和 Schema 驱动接口 | Django / Flask；前者更重，后者需自行补齐异步与校验能力 |
+| API 层 | 接收请求并校验身份，启动工作流，保存工单和审批记录，再返回结果 | HTTP 请求、JWT、会话与工单参数 | API 响应、工单与审批记录 | FastAPI 适合异步 I/O，Pydantic 用于校验请求和响应 | Django / Flask；Django 自带的管理功能更多，Flask 则需自行补上异步处理和数据校验 |
 | Agent 层 | 执行客服理解、检索、生成和风控流程 | 当前工单与知识库版本 | 回复草稿、citation、工具审计、升级结论 | LangGraph 适合显式状态机式 Agent 编排 | 普通 Chain 难以表达条件路由与节点观测；工作流引擎会增加结构复杂度 |
 | 工具层 | 获取结构化业务上下文并进行调用治理 | 客户标识、操作角色、工单标识 | 工具结果和审计信息 | ToolRegistry 统一权限、Schema、超时和 Mock 标记 | 直接调用 Adapter 简单但不可审计；Function Calling / MCP 尚未采用 |
 | 知识层 | 管理知识文档、版本、检索与 citation | 查询、版本、类别 | Top-K citation | Hybrid RAG 兼顾语义与精确词匹配 | 纯向量检索较简单但对规则编号、时间窗口和产品词不稳定 |
@@ -129,10 +129,10 @@ stateDiagram-v2
 
 ### 3.2 节点编排
 
-| 节点 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前取舍 |
+| 节点 | 这个节点负责什么 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前做法 |
 |---|---|---|---|---|---|---|
 | Analyzer | 规则与 Qwen3Guard 语义安全检测、PII 脱敏、情绪/优先级/部门/意图分类和初始风险评估 | 主题、描述 | 分类结果、置信度、脱敏文本、语义安全结果或安全阻断 | 在早期阻断风险，减少越权工具和无效 LLM 调用 | 只用规则、只用专用分类模型 | 固定高置信度意图优先规则分类，模糊/多意图才调用精简 LLM Schema |
-| Skill Selector | 将归一化 Intent 映射到版本化 Skill，固定 Tool/RAG/槽位能力边界 | Analyzer State | Skill 名称、版本、Registry Hash、Policy 快照 | 把业务能力与 Graph 节点解耦，且不让 LLM 选择高风险能力 | LLM Router、每 Skill 独立 Subgraph | V1 使用 Intent 确定性选择和共享 Workflow，避免成本与路由漂移 |
+| Skill Selector | 根据 Intent 选择有版本的 Skill，并确定可用 Tool、RAG 类别和必填信息 | Analyzer State | Skill 名称、版本、Registry Hash、Policy 快照 | 把业务选择规则和 Graph 节点分开，并防止 LLM 选择高风险能力 | LLM Router、每 Skill 独立 Subgraph | V1 根据 Intent 选择 Skill，所有 Skill 共用 Workflow，避免增加调用成本和误路由 |
 | Context Enrichment | 并行执行 Tooling 与 Retriever，以风险只升不降策略合并 State | Skill Selector State | Tool Context、citation、联合风险结果 | 两分支无强依赖，并行可降低等待时间 | LangGraph 串行节点 | 并行分支后集中合并，任一分支高风险都清空上下文并转人工 |
 | Tooling | 补充客户、订单、历史工单上下文，检查工具结果的间接注入 | 客户 ID、角色、部门、意图 | `tool_context`、`tool_calls` 或安全阻断 | 先补齐业务事实，但不信任外部工具文本 | 让 LLM 自行决定工具 | 确定性调用后执行规则 + Qwen3Guard 扫描；语义服务不可用时隔离未扫描的 Tool Context |
 | Retriever | 召回售后政策、FAQ 和操作指引，检查文档间接注入 | 工单主题、描述、版本、类别 | citation 列表或安全阻断 | 给回复提供知识依据，且不把受污染文档交给模型 | 纯关键字搜索、纯向量搜索 | 混合检索后执行规则 + Qwen3Guard 扫描；语义服务不可用时隔离 citation |
@@ -160,13 +160,13 @@ stateDiagram-v2
 | 工具上下文 | 操作角色、结构化 Tool Context、调用审计 | Tooling / ToolRegistry | Resolver、API、Trace | 让回复可利用业务事实并暴露治理证据 |
 | RAG 结果 | citation | Retriever | Resolver、QA、API | 让回答、质量判断和人工核验使用同一依据 |
 | 生成与质量 | 回复草稿、QA 分数、幻觉标记 | Resolver、QA | Escalation、Approval、API | 将内容生成和风险判断分离 |
-| 决策结果 | 升级结论、升级原因、是否审批 | Escalation | Approval、API | 支持 Human-in-the-Loop 与业务闭环 |
+| 处理决定 | 是否转人工、转人原因、是否需审批 | Escalation | Approval、API | 让工作流判断能否自动回复，以及是继续还是等待审批 |
 | 持久执行 | Thread ID、逻辑 Namespace、执行状态、审批状态和人工决策 | API、Approval Gate | Checkpointer、恢复服务、API | 让同一 Graph 可以跨请求、跨重启继续 |
 | 可观测数据 | token、成本、延迟、错误列表 | 各节点 | Metrics、Trace、API | 支持成本控制、排障和安全短路 |
 
 `AgentState.intent` 使用统一 `IntentType`，规则表、OpenAI-compatible/Azure Prompt、Mock Provider、Tooling、Risk Engine 和 Agent Evaluation 共用同一套 8 个枚举值。Provider 不遵守约束时，未知值会归一化为 `information_request`，同时将分类置信度上限降至 `0.5`，使 Risk Engine 触发受控人工处理。
 
-**职责**：在节点之间传递完整、结构化且可审计的上下文。
+**这个状态用来做什么**：在节点之间传递结构化的上下文，并保留必要信息供审计。
 
 **输入**：API 构建的当前工单信息与默认值。
 
@@ -179,11 +179,11 @@ stateDiagram-v2
 
 ### 4.2 TaskState
 
-当前项目**没有独立的 `TaskState`**。`AgentState` 同时承担任务输入、执行上下文和最终结果的职责。
+当前项目**没有独立的 `TaskState`**。任务输入、执行中的上下文和最终结果都保存在 `AgentState` 中。
 
 | 项目 | 当前结论 |
 |---|---|
-| 职责 | 不适用；没有单独的任务计划或子任务状态对象 |
+| 单独对象的工作 | 目前不适用；系统没有单独保存任务计划或子任务的对象 |
 | 输入/输出 | 不适用；由 `AgentState` 统一承载 |
 | 未采用原因 | 当前客服流程为固定图；持久恢复只需要保存单一 AgentState，不需要动态子任务计划对象 |
 | 可替代方案 | 将工单任务、子任务、计划版本、重试计数和执行状态拆为 `TaskState` |
@@ -197,7 +197,7 @@ stateDiagram-v2
 
 当前 Agent 编排由 LangGraph 固定定义：正常请求走 Analyzer → Skill Selector → Tooling/Retriever 并行 → Context Enrichment 合并 → Resolver → QA → Escalation → Approval Gate；用户输入、Tool 结果或 RAG 文档任一信任边界命中安全风险时，直接路由到 Escalation，再由 Approval Gate 强制暂停等待人工处理。
 
-**职责**：控制节点顺序与唯一条件分支。
+**工作方式**：按照固定顺序调用节点，遇到指定条件时转入相应分支。
 
 **输入**：`AgentState`。
 
@@ -215,11 +215,11 @@ stateDiagram-v2
 1. 设计时已确定标准处理路径和安全短路路径。
 2. 运行时 Analyzer 产出的部门、意图、优先级用于决定订单查询、RAG 类别过滤、SLA 和升级规则。
 
-这是一种“**固定流程 + 分类驱动的轻量路由**”，不是 LLM 输出步骤列表、子任务或执行计划的动态 Planning。
+处理顺序由固定 Workflow 决定，系统根据意图分类结果选择后续分支。LLM 不会自行列出步骤、拆分子任务或生成动态执行计划。
 
 | 维度 | 当前方案 | 可替代方案 | 最终原因与权衡 |
 |---|---|---|---|
-| 职责 | 通过既定图和分类结果形成隐式执行计划 | LLM Planner 生成多步计划 | 客服流程稳定且风险高，不需要自由规划 |
+| 如何决定步骤 | 按既定 Workflow 和分类结果选择处理路径 | LLM Planner 动态生成多步计划 | 客服流程稳定且风险高，固定路径更容易控制 |
 | 输入 | 当前工单、分类结果、安全结果 | 工单、历史、工具目录、环境状态 | 动态 Planner 需要更强验证与恢复机制 |
 | 输出 | 固定节点路径或安全短路路径 | 计划列表、子任务、依赖关系 | 当前输出更易测试；灵活性较低 |
 | 重新规划 | 仅有 RAG 类别回退和人工拒绝后的重新处理 | Plan Revision、反思式重规划 | 当前没有自主 Replanning，避免不可控循环 |
@@ -234,16 +234,16 @@ stateDiagram-v2
 - 检索范围选择：优先按部门类别检索；为空时放宽类别过滤。
 - 升级选择：由 Risk Engine 综合安全、优先级、情绪、高风险业务意图、分类置信度、QA、幻觉和异常信号决定。
 
-**职责**：做有限、可审计的路由与资源选择。
+**它负责的工作**：依据安全和分类结果选择 Skill、Tool 和 RAG 范围，并记录选择依据。
 
 **输入**：安全结果、分类结果、当前上下文。
 
-**输出**：Skill 名称/版本、Registry Hash、必需/缺失槽位、Tool 和 RAG 能力边界，以及其他确定性路由结论。
+**输出**：Skill 名称/版本、Registry Hash、必填但缺失的信息，以及这类请求可以使用的 Tool 和 RAG 知识类别。
 
 **设计原因**：这些选择直接影响权限、成本和客户体验，使用确定性规则可减少 LLM 误选。
 
 **可替代方案**：LLM Router、策略模型、每 Skill 独立 LangGraph Subgraph。
-**工程权衡**：V1 共享现有 Workflow，能力隔离尚不是运行时 Subgraph 隔离；但选择、版本、权限与评测归因已经可复现，且不改变稳定业务流程。
+**工程取舍**：V1 所有 Skill 共用现有 Workflow，尚未通过独立 Subgraph 隔开各自的运行路径。系统可以重现地查看选择结果、版本、权限和评测信息，而且不会改动现有业务流程。
 
 ## 6. Reviewer、Validator 与 Reflection
 
@@ -253,7 +253,7 @@ stateDiagram-v2
 
 | 维度 | 说明 |
 |---|---|
-| 职责 | 审查回复是否有 citation 支撑、是否存在幻觉风险、是否泄露内部指令或工作流信息 |
+| 检查内容 | 确认回复有没有 citation 支持，是否可能有幻觉，以及是否泄露内部指令或工作流信息 |
 | 输入 | 原始问题、检索 citation、回复草稿 |
 | 输出 | QA 分数、幻觉标记、风险原因和过滤后的回复 |
 | 设计原因 | 将“生成”与“审查”分离，避免同一阶段既生成又自我放行 |
@@ -282,7 +282,7 @@ stateDiagram-v2
 
 | 项目 | 当前结论 |
 |---|---|
-| 职责 | 不适用；系统不进行模型自我反思后自动重生成 |
+| 当前做法 | 本项目没有这项能力；系统不会在模型自我反思后自动重写回复 |
 | 未采用原因 | 客服政策场景中，自动多轮改写可能放大错误、增加成本并延迟人工介入 |
 | 当前替代机制 | QA 低分或幻觉时升级到 Human-in-the-Loop |
 | 可替代方案 | 限次 Reflection，例如“引用不足时最多重写一次” |
@@ -296,7 +296,7 @@ Tool Calling 通过 ToolRegistry 实现，所有业务工具都必须从该入�
 
 | 维度 | 说明 |
 |---|---|
-| 职责 | 对工具定义、参数、权限、超时、Mock 标记和审计进行统一治理 |
+| 它管什么 | 集中管理工具可接收的参数、使用者权限、超时限制、Mock 状态和审计记录 |
 | 输入 | 工具名称、结构化参数、调用角色、工单 ID |
 | 输出 | 工具结果及包含允许状态、执行状态、耗时、错误、Mock 标记的审计记录 |
 | 当前工具 | 客户画像、订单历史、历史工单、退款资格初筛、创建 Mock 退款请求 |
@@ -309,7 +309,7 @@ Tool Calling 通过 ToolRegistry 实现，所有业务工具都必须从该入�
 
 | 维度 | 当前设计 |
 |---|---|
-| 职责 | 将高风险写 Tool 从 Agent 自动路由中隔离，强制提议、审批、异步执行、结果对账、补偿和终态审计 |
+| 它怎么保护写操作 | Agent 不能自动调用高风险写 Tool；操作要先提议、审批，再异步执行。结果不明时先对账，需要时补偿，并保留完整审计记录 |
 | 输入 | Ticket、Tool 名、结构化 payload、intent、当前用户与 expected version |
 | 输出 | `ToolAction`、`ToolActionControl`、Append-only `ToolActionEvent`、`ToolOutboxEvent`、`ToolInvocationAudit` 和脱敏 API 视图 |
 | 设计原因 | 资金类写操作不能因 LLM 错误路由、重放或审批绕过直接产生副作用 |
@@ -327,13 +327,13 @@ Policy 在 Action 创建时冻结版本、Tool 版本、角色、风险、允许
 
 | 维度 | 当前结论 |
 |---|---|
-| 职责 | 不适用；外部企业工具通过本地 ToolRegistry + Mock Adapter 表达 |
+| 当前做法 | 未接入 MCP；外部企业工具目前用本地 ToolRegistry 和 Mock Adapter 模拟 |
 | 输入/输出 | 不适用 |
-| 未采用原因 | 当前重点是本地可复现的客服业务闭环，不需要跨工具宿主的标准化发现与连接协议 |
+| 未采用原因 | 目前主要是在本地重现客服处理流程，尚无跨工具宿主的标准化接入需求 |
 | 可替代方案 | 未来将 CRM、OMS、工单、知识库等封装为 MCP Server，再由受限 MCP Client 调用 |
 | 工程权衡 | MCP 有利于标准化集成和工具复用，但会引入连接鉴权、服务发现、资源治理、协议版本和审计边界；在真实外部服务需求明确前不提前引入 |
 
-如未来采用 MCP，仍必须保留现有的权限、参数校验、超时、审计和高风险审批边界；MCP 不能绕过 ToolRegistry 的治理职责。
+如果未来接入 MCP，仍需保留权限检查、参数校验、超时限制、审计和高风险审批。MCP 工具也必须通过 ToolRegistry 检查后才能执行。
 
 ## 8. Memory 与 Checkpoint
 
@@ -343,7 +343,7 @@ Policy 在 Action 创建时冻结版本、Tool 版本、角色、风险、允许
 
 | 维度 | 说明 |
 |---|---|
-| 职责 | 校验 session/customer 归属，以追加为主保存消息，组装可注入 Agent 的安全上下文 |
+| 它怎么工作 | 先检查 session/customer 是否匹配，再保存新消息，组装经过安全处理、可供 Agent 使用的上下文 |
 | 输入 | `session_id`、`customer_id`、当前消息、Ticket/审批关联 |
 | 输出 | `recent_turns`、`summary`、`active_entities`、上一轮 Intent/Department、Memory version/source |
 | Redis 策略 | 缓存最近 final 消息，TTL 24 小时；Cache 必须与 SQL revision 一致，否则直接回退 SQL |
@@ -362,7 +362,7 @@ Policy 在 Action 创建时冻结版本、Tool 版本、角色、风险、允许
 
 | 维度 | 当前设计 |
 |---|---|
-| 职责 | 在节点边界保存 AgentState；在 Approval Gate 暂停并在人工决策后从原 Thread 恢复 |
+| 它怎么工作 | 在节点之间保存 AgentState；需要审批时在 Approval Gate 暂停，并在人工决定后从原 Thread 继续 |
 | 输入 | 稳定 UUID thread_id、根 Graph 空 checkpoint namespace、当前 State 或 Command(resume) 人工决策 |
 | 输出 | LangGraph Checkpoint、StateSnapshot、暂停节点、Checkpoint ID 和恢复后的终态 State |
 | 业务关联 | AgentExecution 关联 Ticket、ResponseApproval、AgentRun、Request ID、初始/恢复 Trace ID 和 Workflow Version |
@@ -390,7 +390,7 @@ flowchart LR
     C --> QA
 ```
 
-| 模块 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 最终取舍 |
+| 模块 | 这个模块做什么 | 输入 | 输出 | 设计原因 | 可替代方案 | 最终做法 |
 |---|---|---|---|---|---|---|
 | 文档解析与分块 | 将 PDF、DOCX、HTML、TXT、Markdown、FAQ 转为可检索 chunk | 原始知识文档 | 文本 chunk 与 metadata | 控制上下文粒度并保留语义连续性 | 固定长度切块、语义切块 | 当前递归切分易实现，复杂文档结构理解有限 |
 | 向量数据库 | 持久化 Embedding 与 chunk metadata | chunk、Embedding、版本、类别 | 向量候选 | 本地 Demo 低门槛、支持 metadata filter | pgvector、Pinecone、Milvus、OpenSearch | 采用 ChromaDB，运维简单；横向扩展和生产检索治理能力较弱 |
@@ -418,13 +418,13 @@ flowchart LR
     Filter --> Decision[Escalation / Approval]
 ```
 
-| 阶段 | 职责 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前取舍 |
+| 阶段 | 这一步要做什么 | 输入 | 输出 | 设计原因 | 可替代方案 | 当前做法 |
 |---|---|---|---|---|---|---|
 | 输入 Guardrails | 阻断攻击、脱敏 PII | 原始主题和描述 | 结构化安全结果或脱敏文本 | 防止不可信输入进入后续链路 | 只用规则、只用模型、人工初筛 | 规则先拦截确定性特征；PII 脱敏后由 Qwen3Guard-Gen-0.6B 识别语义变体，Risk Engine 融合结果 |
 | 上下文 Guardrails | 阻断间接 Prompt Injection | Tool 结果、RAG 文档 | 可信上下文、安全短路或隔离 | 防止受污染的外部数据改写模型任务 | 内容签名、沙箱摘要、人工审查 | 敏感业务字段过滤后执行规则 + Qwen3Guard；语义服务失效时不将未扫描内容交给业务 LLM |
 | Analyzer Prompt | 模糊或多意图工单分类 | 脱敏工单 | 五个必要分类字段 | 高置信度规则未命中时才产生 LLM 成本 | 全量 LLM 分类 | 精简 JSON Schema 并限制 max_tokens |
 | Resolver Prompt | 基于事实与知识生成草稿 | 工单、Top-2 citation、精简 Tool Context | 最终客服回复 | 强制让生成依赖可见上下文 | 全量上下文 | 限长与 max_tokens 同时降低输入和生成成本 |
-| QA Prompt | 评估依据与幻觉风险 | 问题、Top-2 citation、草稿 | score / hallucination / citation JSON | 将质量门从生成职责中分离 | 长文 Judge | 确定性失败规则短路，其余使用轻量结构化 Judge |
+| QA Prompt | 检查回复有没有依据、是否存在幻觉 | 问题、Top-2 citation、草稿 | score / hallucination / citation JSON | 让独立的 QA 步骤在回复生成后检查质量 | 长文 Judge | 确定失败由规则短路，其他情况用轻量结构化 Judge |
 | 输出过滤 | 删除内部信息泄露 | 草稿 | 过滤后的回复和风险标记 | 防止提示词与工作流暴露 | DLP 服务、关键词规则 | 当前规则简单，需持续维护覆盖面 |
 
 PromptOps / EvalOps V1 使用文件型内容寻址 Registry。`PromptBundle` 校验 Analyzer / Resolver / QA 的变量契约并冻结内容；OpenAI-compatible / Azure 渲染同一 Bundle，Mock 保持确定性行为。`ContextVar` 在 Workflow 与整个 Baseline 实验入口固定版本，并行节点继承该版本。AgentState 保存 Bundle Hash，Checkpoint 随 State 保留该标识；AgentRun、LLM/Workflow Span 和实验报告关联同一 Hash。
@@ -439,7 +439,7 @@ V1 权限边界为受信任的本地 CLI / 发布目录写权限，适合单机�
 
 Redis 是可选组件，不是启动前提。
 
-- **职责**：保存最近会话消息，减少重复读取 SQL 的需要。
+- **用途**：缓存最近的会话消息，减少从 SQL 重复读取历史的次数。
 - **输入**：会话标识和消息列表。
 - **输出**：与 SQL revision 匹配的最近 final 消息；无 Redis、Cache Miss、版本落后或读取失败时回退 SQL。
 - **设计原因**：短期状态对延迟敏感，且不应让缓存故障阻断客服流程。
@@ -451,7 +451,7 @@ Redis 是可选组件，不是启动前提。
 | 维度 | SQLite | PostgreSQL |
 |---|---|---|
 | 当前定位 | 本地默认数据库 | Docker Compose 与生产风格部署数据库 |
-| 职责 | 低门槛启动和单机 Demo | 并发事务、连接池和更接近生产的持久化 |
+| 适用场景 | 低门槛启动和单机 Demo | 并发事务、连接池和更接近生产的持久化 |
 | 保存内容 | 用户、工单、会话、知识文档、审批 | 同左 |
 | 设计原因 | 无额外服务依赖 | 适合多连接和容器化部署 |
 | 工程权衡 | 并发与运维能力有限 | 需要独立服务、连接管理与迁移治理 |
@@ -482,7 +482,7 @@ Redis 是可选组件，不是启动前提。
 
 | 维度 | 设计 |
 |---|---|
-| 职责 | 将封闭选项语义决策从通用 Chat LLM 和业务权限层分离 |
+| 如何使用 | 判断时从封闭选项中返回结果；它不代替通用 Chat LLM，也不能决定业务权限 |
 | 输入 | 脱敏且限长的工单/回复 State，以及版本化 `Choice / Score / Noul` 问题集 |
 | 输出 | 类型化结果、每题置信度、Token、耗时、模型和回退原因 |
 | 设计原因 | Analyzer 意图分类和 QA Review 是封闭判断，无需让生成模型输出长 JSON |
@@ -498,7 +498,7 @@ Risk Engine 位于 `src/risk/engine.py`，是独立于 Prompt、业务 LLM Provi
 
 | 维度 | 设计 |
 |---|---|
-| 职责 | 统一综合规则安全、语义安全、业务、分类置信度、QA、幻觉和 Workflow 错误，决定风险等级与处置建议 |
+| 怎么判断风险 | 一起检查安全规则、语义安全、业务风险、分类置信度、QA、幻觉和 Workflow 错误，再确定风险等级与处理方式 |
 | 输入 | `security_risk_score`、`semantic_guard_label`、`semantic_guard_degraded`、优先级、情绪、意图、`analyzer_confidence`、`qa_score`、幻觉标记、`degradation_level`、错误列表 |
 | 输出 | `risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation` |
 | 默认阈值 | `medium >= 0.4`、`high >= 0.7`、`critical >= 0.9`；Analyzer 低置信度阈值 `0.65`，QA 阈值 `0.8` |
@@ -526,13 +526,13 @@ flowchart TD
 
 | 维度 | 说明 |
 |---|---|
-| 职责 | 将高风险或低置信度 AI 草稿交由人工审核，并将审核结果纳入工单状态闭环 |
+| 怎么工作 | 高风险或低置信度的 AI 草稿交给人工审核，审核结果写入工单状态记录 |
 | 输入 | 草稿、Risk Engine 结论、QA 分数、幻觉标记、工单状态 |
 | 触发条件 | 安全违规、urgent、negative + high、高风险业务意图、Analyzer 低置信度、QA 分数低于 0.8、检测到幻觉、`risk_level` 为 high / critical，或工作流最终建议升级 |
 | 输出 | 待审批记录、人工最终回复、审核人、审核延迟和合法工单新状态 |
-| 设计原因 | 退款、投诉、重大故障和安全风险不宜由模型单独闭环 |
+| 设计原因 | 退款、投诉、重大故障和安全问题不应由模型单独决定并处理完成 |
 | 可替代方案 | 全自动回复、全量人工审核、分级抽样审核 |
-| 最终取舍 | 风险驱动的按需审批；风险阈值通过 `RISK_*` 环境变量集中配置，但尚未根据真实历史指标自适应优化 |
+| 最终取舍 | 系统根据风险判断是否需要人工审批；阈值统一配置在 `RISK_*` 环境变量中，尚未按真实历史数据自动调整 |
 
 人工拒绝草稿后，工单回到 `in_progress`。当前系统不会自动重新规划或重新生成；后续处理需要人工重新触发业务流程。这种设计避免系统在被拒绝后不受控地重复生成相似内容。
 
@@ -603,7 +603,7 @@ CD 仅监听成功的 Release Gate，检出其 `head_sha` 并发布 `latest` 与
 |---|---|---|---|
 | Agent 编排 | 固定 LangGraph 工作流 + Approval Gate | 安全、可测试、可观测且审批不可绕过 | 自由 ReAct、动态多 Agent 协商 |
 | 状态 | 单一 AgentState + 持久化 Checkpoint + AgentExecution | 支持审批暂停、跨重启恢复和业务关联 | 独立 TaskState、通用工作流引擎 |
-| 路由 | 规则驱动条件边 | 高风险业务需要可解释性 | LLM Selector |
+| 路由 | 根据规则选择条件边 | 高风险业务需要可解释性 | LLM Selector |
 | 工具 | ToolRegistry + Mock Adapter + ToolAction | Schema、RBAC、持久化审计与高风险审批状态机 | Agent 直接调用外部服务 |
 | 协议 | 本地工具协议 | 本地可复现、依赖少 | MCP（当前未集成） |
 | 检索 | ChromaDB Hybrid RAG | 兼顾语义与精确词，适合 Demo | 纯向量、生产搜索集群 |

@@ -8,13 +8,13 @@
 
 这是一个面向企业售后客服场景的、可本地运行的生产风格 Agent 平台。它把初版 FAQ / RAG 问答扩展为一条完整的客服处理链：先理解工单和识别风险，再补充客户、订单与历史工单上下文，检索售后知识，生成回复草稿，执行 QA 和输出过滤，最后决定是否进入人工审批。
 
-平台目前有 6 个逻辑业务 Agent 节点、1 个确定性 Skill Selector、1 个 Approval Gate 和 5 个注册 Tool。Skill Framework V1 将 8 个统一 Intent 映射到 6 个版本化 Skill，并使用 Tool Allowlist 收窄能力边界。CRM、OMS、工单工具与默认 LLM 都是本地 Mock，不是已接入的真实企业系统。
+平台目前有 6 个业务 Agent 节点、1 个确定性 Skill Selector、1 个 Approval Gate 和 5 个注册 Tool。Skill Framework V1 根据 8 个统一 Intent 选择 6 个版本化 Skill，并用 Tool Allowlist 限制每类请求能使用哪些工具。CRM、OMS、工单工具和默认 LLM 都是本地 Mock，项目尚未连接真实企业系统。
 
 ### 2. 为什么传统 FAQ 系统无法满足售后场景？
 
 传统 FAQ 主要解决“问题到固定答案”的映射，但售后问题通常依赖客户、订单和历史处理事实。例如同样问退款，不同订单状态、购买时间和投诉历史会导致不同处理路径。
 
-售后还存在 Prompt Injection、隐私、退款权限、服务故障、低置信度回复和人工审批等要求。FAQ 无法自然表达条件路由、Tool Calling、风险拦截、QA、SLA 和工单状态闭环，因此需要受控 Agent Workflow。
+售后客服还要处理 Prompt Injection、隐私信息、退款权限、服务故障、低置信度回复和人工审批。单纯 FAQ 问答很难表达这些条件和处理步骤，也无法统一管理 Tool Calling、风险拦截、QA、SLA 和工单状态。所以项目采用可控制的 Agent Workflow。
 
 ### 3. 你的客服 Agent 整体架构是什么？
 
@@ -49,7 +49,7 @@
 
 系统先创建工单并读取会话存储，然后对当前输入进行 Prompt Injection、Jailbreak 和 PII 处理。安全请求被短路；正常请求进入分类，得到情绪、优先级、部门和意图。
 
-之后先以统一 Intent 确定性选择版本化 Skill，再在其 Tool/RAG 边界内并行执行业务工具与 Hybrid RAG。Resolver 只使用最高相关的 Top-2 citation 和必要 Tool 字段生成草稿；QA 以规则短路或精简结构化 Judge 检查依据、幻觉和泄露，Escalation 与 Approval Gate 决定是否暂停等待审批。
+之后系统根据统一 Intent 选择对应版本的 Skill，再在该 Skill 允许的工具和 RAG 知识范围内，并行查询业务工具和 Hybrid RAG。Resolver 使用相关度最高的两条 citation 和必要的 Tool 字段生成草稿。QA 会先用规则处理确定的失败情况，其他情况再由精简的结构化 Judge 检查回复是否有依据、是否存在幻觉或信息泄露。最后 Escalation 和 Approval Gate 决定是否需要转人工审批。
 
 要注意，“本次 Agent 返回回复”不等于“工单已关闭”。工单只有经过合法状态流转才进入 resolved 和 closed。
 
@@ -63,7 +63,7 @@ LangGraph 是 Agent 编排器。它定义节点顺序、共享 State、条件路
 
 LangGraph 原生提供状态图、条件边和异步节点执行，适合表达安全短路和固定处理链，也更容易让节点级 Trace 与 State 更新保持一致。
 
-自己写状态机当然可行，但要自行处理节点注册、状态合并、条件路由、异步调用、错误传播和可视化。当前项目仍然自己实现了“工单业务状态机”；LangGraph 解决的是 Agent 执行编排，两者职责不同。
+自己写状态机也可以，但节点注册、合并状态、条件路由、异步调用、错误处理和运行可视化都需要自己实现。当前项目也有自己实现的工单业务状态机；它管理工单状态，而 LangGraph 管理 Agent 节点的执行顺序。
 
 ### 9. 如果不用 LangGraph，你会怎么实现？
 
@@ -87,7 +87,7 @@ Analyzer（包含 Input Guard 与分类）
 
 ### 11. 为什么这样拆节点？
 
-拆分依据是职责、风险和可观测边界：Analyzer 处理不可信输入；Tooling 获取业务事实；Retriever 获取知识事实；Resolver 只负责表达；QA 独立审查；Escalation 执行业务风险规则。
+每个节点做的工作不同，也有不同风险和可观测需求：Analyzer 处理不可信的用户输入，Tooling 查业务信息，Retriever 查政策知识，Resolver 负责组织回复，QA 检查回复，Escalation 根据业务风险决定是否转人工。
 
 这样可以避免一个大 Prompt 同时分类、调用工具、回答和自我放行，也能快速定位错误发生在分类、工具、检索、生成还是 QA。
 
@@ -687,7 +687,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 当前工具选择是确定性规则，不由 LLM自由规划；Registry 还会检查注册白名单、参数和角色。误调用会留下工具名、角色、状态和耗时审计。
 
-当前工具主要是读操作且均为 Mock。唯一高风险写 Tool 已具备职责分离审批、业务幂等键、最小权限、Outbox、对账和补偿状态机；真实上线仍需接入 OMS 并验证契约。
+当前工具主要用于查询，而且都是 Mock。唯一的高风险写 Tool 要求由提议人以外的人审批，并使用业务幂等键、最小权限、Outbox、对账和补偿状态机。要在真实环境上线，还需要接入 OMS 并验证调用约定。
 
 ### 107. 如果工具调用失败怎么办？
 
@@ -726,4 +726,4 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 - 当前是 6 个逻辑 Agent 节点、5 个注册 Tool、0 个 MCP。
 - 当前没有独立 TaskState、动态 Planner、自动 Reflection、分布式 Circuit Breaker、通用 Queue/DLQ、pgvector、Milvus 或生产级搜索后端。Tool Governance 有专用数据库 Outbox Retry/DLQ；Checkpoint 已覆盖审批暂停与恢复，但尚无 TTL、旧 Graph 多版本恢复或通用后台调度。
 - 当前没有真实上线指标、P95/QPS 基准、真实客户数据或业务提升百分比。
-- 个人职责和是否独立开发必须按本人真实经历回答，不能根据仓库推断。
+- 个人参与的工作和是否独立开发，必须按真实经历回答，不能仅根据仓库内容推断。

@@ -78,7 +78,7 @@ Skill 清单在 `src/skills/definitions.py`，协议和 Registry 分别在 `mode
 1. 先在统一 `IntentType` 中确定业务边界，不得为了单个 Case 新建意图。
 2. 注册唯一 Skill 名称和版本，声明 input/output Schema、required slots、RAG categories、minimum role 和 Tool Allowlist/Forbidden List。
 3. 保证每个 Intent 只有一个主 Skill，且引用的 Tool 已在 ToolRegistry 注册。
-4. 增加 Skill 选择、跨域 Tool 拒绝、AgentRun 归因与固定 100 条 Baseline 回归。
+4. 增加 Skill 选择和跨域 Tool 拒绝测试，并让 AgentRun 记下本次用的 Skill；最后用固定 100 条 Baseline 回归确认改动没有影响原有行为。
 
 V1 的 Skill 共享现有 Workflow，不是运行时动态插件，也不允许 LLM 自由选 Skill。Tool Allowlist 是额外收窄层，不能替代 Schema、RBAC、Risk Engine、Approval Grant 和 Tool Governance。
 
@@ -299,7 +299,7 @@ PR Agent Quality Gate：
 python scripts/run_ci_quality_gate.py
 ```
 
-该入口强制覆盖本地 `.env` 中的模型、Guard 和 OTel 配置，使用 Mock Provider 与临时 SQLite/Chroma 目录回放固定 100 条完整 Workflow。门禁策略存放在 `evaluation/quality_gate_policy.json`，当前要求固定 Dataset SHA256、100 条 Case、六项行为指标全部达到确定性目标，且不得出现新的失败 Case。JSON、Markdown、Baseline 和 Error Analysis 保存在 `evaluation/reports/ci_quality_gate/`，GitHub Actions 会作为 Artifact 保留 14 天。
+这个入口会覆盖本地 `.env` 中的模型、Guard 和 OTel 配置，并在临时 SQLite/Chroma 目录中使用 Mock Provider 回放同一组 100 条完整 Workflow。规则存放在 `evaluation/quality_gate_policy.json`：必须使用指定的 Dataset SHA256 和 100 条 Case，六项行为指标都要达到设定目标，也不能增加失败 Case。JSON、Markdown、Baseline 和 Error Analysis 报告保存在 `evaluation/reports/ci_quality_gate/`，GitHub Actions 会保留 14 天供查看。
 
 Locust 压测：
 

@@ -5,7 +5,7 @@
 
 ## 项目背景
 
-SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目。项目基于开源客服问答系统改造，目标是将传统 FAQ / RAG 问答升级为具有工单理解、业务上下文补全、风险拦截、回复校验、人工审批和工单状态闭环的 Agent 平台。
+SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目。项目基于开源客服问答系统改造，将原有 FAQ / RAG 问答扩展为可以理解工单、补充业务信息、拦截高风险请求、检查回复并转人工审批的 Agent 平台。工单也会记录从提交到处理完成的状态变化。
 
 核心业务场景包括退款、保修、物流异常、订单取消、账户问题和技术支持。目标用户是客服坐席、客服组长和运营管理人员。
 
@@ -22,8 +22,8 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 
 ### 工程目标
 
-- 使用 LangGraph 将 Agent 流程拆分为职责清晰、可独立观测的节点。
-- 使用 Skill Registry 将统一 Intent 映射为可版本化能力包，并以 Skill 级 Tool Allowlist 限制能力边界。
+- 使用 LangGraph 将 Agent 流程拆成若干节点。每个节点处理一类工作，并能单独查看执行情况。
+- 使用 Skill Registry 将统一 Intent 映射到有版本的能力配置，并用各 Skill 的 Tool Allowlist 限制可用工具。
 - 使用 LangGraph Checkpoint 持久化 Graph State，让高风险回复可在人工审批前暂停，并在进程重启后从原 Thread 恢复。
 - 通过 ToolRegistry 统一工具协议，实现 Schema 校验、RBAC、超时和调用审计。
 - 使用 Hybrid RAG 兼顾语义检索与政策编号、产品名、时间窗口等精确词匹配。
@@ -54,7 +54,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 |---|---|---|
 | API | Python、FastAPI、Pydantic | 异步 API、请求/响应 Schema与健康检查 |
 | Agent 编排 | LangGraph、LangGraph Checkpoint | 编排 Analyzer、Skill Selector、Tooling、Retriever、Resolver、QA、Escalation 和 Approval Gate，持久化暂停/恢复状态 |
-| Skill Framework | SkillDefinition、SkillRegistry | 版本化 Skill 协议、Intent 确定性选择、Tool Policy 与运行归因 |
+| Skill Framework | SkillDefinition、SkillRegistry | 管理各版本 Skill，根据 Intent 选择能力，并记录运行时用到的配置 |
 | LLM | Mock LLM、OpenAI、Azure OpenAI | 默认 Mock 保证离线可复现；通过 `BaseLLMProvider` 适配外部模型 |
 | 决策模型 | DecisionProvider、Jev System One | 可选封闭选项语义分类与 QA 评判，不授予 Tool 执行权 |
 | 数据库 | SQLAlchemy Async、SQLite、PostgreSQL | 本地默认 SQLite；Docker Compose 使用 PostgreSQL |
@@ -122,7 +122,7 @@ LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为�
 - 安全与风险：`security_threat_detected`、`security_risk_score`、`security_findings`、`semantic_guard_label`、`semantic_guard_categories`、`semantic_guard_checks`、`semantic_guard_degraded`、`risk_level`、`risk_score`、`risk_reasons`、`risk_requires_human`、`risk_block_automation`。
 - 质量结果：`qa_score`、`hallucination_detected`、`citation_verified`、`errors`。
 - 性能策略：`analyzer_strategy`、`qa_strategy`，用于区分规则短路、Jev 决策与 LLM 评估；`decision_records` 保存问题集版本、模型、类型化结果、置信度和回退原因。
-- 闭环决策：`escalation_recommended`、`escalation_reason`、`approval_required`。
+- 人工处理判断：`escalation_recommended`、`escalation_reason`、`approval_required`。
 - 持久执行：`checkpoint_namespace`、`durable_execution_enabled`、`execution_status`、`approval_status`、`human_decision`。
 - 成本与延迟：`tokens_input`、`tokens_output`、`cost_usd`、`latency_seconds`。
 
@@ -147,7 +147,7 @@ approval_gate
   `-- 需审批 --> interrupt + Checkpoint --> 人工决策 --> Command(resume) --> END
 ```
 
-### 节点职责
+### 每个节点做什么
 
 1. **Analyzer**
    - 先执行多层 Prompt Injection 和 Jailbreak 检测。
@@ -183,7 +183,7 @@ approval_gate
    - 无需审批时直接结束；需审批时调用 LangGraph `interrupt()` 暂停并保存 Checkpoint。
    - 人工通过、修改或拒绝后，API 使用原 `thread_id` 和 `Command(resume=...)` 续跑，不重跑 Analyzer、Tool、RAG、Resolver 和 QA。
 
-### 工单状态闭环
+### 工单如何从提交处理到结束
 
 ```text
 open --start_work--> in_progress
@@ -198,7 +198,7 @@ resolved / closed --reopen--> in_progress
 
 ## 关键模块
 
-| 模块 | 路径 | 职责 |
+| 模块 | 路径 | 模块会做什么 |
 |---|---|---|
 | API 入口 | `src/main.py` | FastAPI 应用、鉴权、聊天、工单、审批、评测、Metrics 与 HTTP Trace |
 | Agent Graph | `src/agents/graph.py` | `AgentState`、节点编排、安全条件路由、token/成本/延迟汇总 |
@@ -207,7 +207,7 @@ resolved / closed --reopen--> in_progress
 | Durable Execution | `src/agents/durable_execution.py` | 管理 Thread 业务关联、执行状态、恢复租约、重启扫描和幂等续跑 |
 | Agent 节点 | `src/agents/` | Analyzer、Tooling、Retriever、Resolver、QA、Escalation |
 | Tool Registry | `src/tools/registry.py` | 工具注册、Schema、RBAC、风险策略、执行和 Trace |
-| Tool Governance | `src/tools/governance.py`、`outbox.py`、`policy.py` | 高风险写 Action 的加密提议、职责分离审批、幂等 Outbox 执行、自动对账/补偿、Retry/DLQ 和 Policy 回放 |
+| Tool Governance | `src/tools/governance.py`、`outbox.py`、`policy.py` | 加密保存高风险写操作的提议，交给不同的人审批，再使用幂等 Outbox 异步执行。结果不明时自动对账，并支持补偿、Retry/DLQ 和 Policy 回放 |
 | Mock Adapter | `src/tools/crm.py`、`order_mgmt.py`、`ticketing.py` | 模拟 CRM、OMS 和历史工单系统 |
 | LLM Provider | `src/llm/provider.py` | 定义分析、生成、QA 和通用 Chat 接口；选择 Mock / OpenAI / Azure，并支持 Analyzer/QA 独立 Fast Model 路由 |
 | DecisionProvider | `src/decision/` | 版本化封闭问题集、Jev System One Adapter、置信度门禁和 LLM Fallback 映射 |
@@ -361,7 +361,7 @@ resolved / closed --reopen--> in_progress
 - RAGAS / DeepEval Adapter、本地评测降级和 JSON 报告输出。
 - Dataset + Workflow Replay 离线评测，统一输出 RAG / Agent / Security 指标并关联 Trace ID。
 - Baseline Workflow Replay V1：固定 100 条 Dataset、完整 Ticket State、六项确定性行为指标、逐 Case 执行结果及 OTel Trace 同源性能报告。
-- 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，具备 Mock 拒绝、显式确认、调用预算和模型/Token/成本归因。
+- 真实 LLM Regression 专用入口，支持 12 条 smoke 和 100 条 full 套件，能拒绝 Mock、要求明确确认并控制调用预算；同时记录使用的模型、Token 数和成本。
 - Feedback Pipeline 第一阶段：Agent Run 快照、用户评价、人工修正、评测结果关联，以及脱敏后的 SFT / DPO 候选导出。
 - LangSmith 前端入口：主管/管理员可分页或按工单编号精确查询 Agent Run、Trace ID、Workflow Path 和执行快照；列表时间统一展示为北京时间，并可跳转至配置的 LangSmith Project 下钻。
 - Prompt Injection 多层检测已覆盖用户输入、Tool 返回和 RAG 文档，命中时从当前信任边界短路到 Escalation。
@@ -374,7 +374,7 @@ resolved / closed --reopen--> in_progress
 ### 部分完成
 
 - **多轮记忆**：V1 已完成有界历史、实体续接、Prompt/Retrieval Context 和审批回写；尚无向量长期 Memory、语义摘要模型、多租户身份接入和专项多轮 Evaluation Gate。
-- **Tool Governance**：V2.2 治理闭环已实现，但当前退款写入、对账和补偿仍使用 Mock OMS 账本；真实 OMS 集成、跨服务契约验证和生产 Alembic Migration 尚未完成。
+- **Tool Governance**：V2.2 的审批、执行、对账和补偿流程已实现，但目前退款、对账和补偿还在使用 Mock OMS 账本。项目尚未接入真实 OMS、验证跨服务调用约定，也未用生产 Alembic Migration 管理数据库变更。
 - **Trace**：核心 Span 与 OTLP Collector 已接入，当前 Collector 将 Trace 转发 LangSmith；尚未接入 Jaeger / Tempo。
 - **评测**：已具备 Golden Dataset、100 条 Workflow Replay Baseline、真实 LLM 运行入口、统一报告与两级 Quality Gate。2026-08-30 同一固定 Dataset 的 DeepSeek + Qwen 真实复测将 Case Pass Rate 从 `0.54` 提升到 `0.99`，平均耗时约 `1.62s`、P95 约 `3.24s`、平均总 Token `453.29`、LLM Calls `87`。PR Gate 要求 Mock 确定性回放 100% 通过，Release Gate 固化当前真实模型质量和性能阈值；语义回答质量与人工标注仍是后续评测范围。
 - **Feedback Pipeline**：第一阶段采集和候选导出已实现，尚未接入标注平台、训练任务、Dataset Registry 和模型发布门禁。
@@ -433,7 +433,7 @@ resolved / closed --reopen--> in_progress
 
 ### P2：PromptOps 后续优化
 
-- V1 已完成三个节点的内容版本、运行归因和评测晋级/回滚。
+- V1 已为三个节点保存 Prompt 版本，并能查到每次运行使用的版本。候选版可先评测，通过后才能晋级或回滚。
 - 后续建立独立留出集、反馈人工复核、Dataset Registry 与人工校准的语义质量指标。
 - 在有真实流量后引入 A/B、按会话灰度和自动回滚。
 

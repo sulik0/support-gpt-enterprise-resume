@@ -34,7 +34,7 @@ Memory 通过现有 Analyzer `text`、Resolver `context` 和 QA `query/context` 
 
 ## Analyzer Prompt
 
-### 职责
+### 这个 Prompt 处理什么
 
 对无法被确定性规则高置信命中的工单执行轻量分类。固定意图和高置信场景由规则处理，避免不必要的 LLM 调用。
 
@@ -62,7 +62,7 @@ Memory 通过现有 Analyzer `text`、Resolver `context` 和 QA `query/context` 
 
 ## Resolver Prompt
 
-### 职责
+### 这个 Prompt 处理什么
 
 根据已通过安全检查的客户问题、必要 Tool Context 与高相关 RAG Citation 生成一段可直接发给客户的草稿。
 
@@ -83,7 +83,7 @@ Memory 通过现有 Analyzer `text`、Resolver `context` 和 QA `query/context` 
 
 ## QA Prompt
 
-### 职责
+### 这个 Prompt 处理什么
 
 对 Resolver 草稿进行最小化结构评估。确定性 citation 存在性、输出泄露和基础格式检查优先由代码完成，只在需要语义判断时使用 LLM。
 
@@ -159,7 +159,7 @@ python scripts/promptops.py evaluate --bundle <bundle-id> --environment staging 
 
 将 staging 当前版本与候选分别回放同一固定 100 条 Baseline，总计 200 条 Workflow；使用隔离 SQLite/Chroma，关闭外部遥测、真实模型和语义安全服务。`--bundle default` 可用内置 Bundle 验证实验流程。`--limit 3` 可抽样调试，但不完整报告不能通过原门禁。
 
-Mock 不读取 Prompt 推理，因此 PASS 只证明 Workflow、归因与发布管道正确，不能证明候选 Prompt 改善回答。
+Mock 不会读取 Prompt 并生成真实回复。因此 PASS 只能说明 Workflow 可正常执行、版本记录正确、发布流程可用，无法说明候选 Prompt 改善了回答。
 
 ### 真实模型实验
 
@@ -176,7 +176,7 @@ python scripts/promptops.py evaluate --bundle <bundle-id> --environment producti
 - `policy.json`：门禁策略快照。
 - `experiment.json` / `experiment.md`：证据 Hash、Git 指纹、门禁原因、13 项指标 Diff 与四类 Case 变化。
 
-`experiments/latest.json` 是普通索引文件；晋级指定固定实验 ID。原 `run_baseline_eval.py` 的 snapshot/latest/Error Analysis 机制保持不变，并自动增加 Prompt 内容归因。
+`experiments/latest.json` 只指向最近一次实验。晋级时需要指定一个实验 ID。原 `run_baseline_eval.py` 会继续生成 snapshot、latest 和 Error Analysis，并在报告中记录使用的 Prompt 内容。
 
 ### 晋级与回滚
 

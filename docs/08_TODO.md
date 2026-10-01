@@ -7,7 +7,7 @@
 - [x] 建立 `AgentRun`、`AgentRunLink`、`FeedbackEvent` 数据模型。
 - [x] 将 `/chat`、`/suggest-response` 的执行快照与 OpenTelemetry Trace ID 关联。
 - [x] 增加基于 `agent_run_id + feedback_token` 的用户评价 API。
-- [x] 将人工审批通过、修改和拒绝自动沉淀为反馈事件。
+- [x] 将人工审批通过、修改或拒绝的结果自动保存为反馈事件。
 - [x] 将在线与离线 Evaluation 结果关联到 Agent Run。
 - [x] 增加 PII / 密钥过滤、Tool 字段白名单、会话 HMAC 摘要和独立事务 fail-open。
 - [x] 增加 SFT / DPO 候选质量门控、去重、原子导出和 Manifest。
@@ -21,7 +21,7 @@
 - [x] 将 Risk Engine 结果接入 LangGraph 路由、QA、Escalation、API、结构化日志、OpenTelemetry Trace 与 Metrics。
 - [x] 在 Dataset + Workflow Replay 中增加安全混淆矩阵、Precision / Recall / F1 / 误报率和安全处置正确率。
 - [x] 将业务回归 Baseline 扩展到 100 条，增加多语言、安全攻击与安全 hard negative 覆盖。
-- [x] 增加真实 LLM Regression 专用入口、smoke/full 套件、Dry Run、付费确认、调用预算和 Token/成本归因。
+- [x] 增加真实 LLM Regression 专用入口、smoke/full 套件、Dry Run、付费调用前确认、调用预算，并记录模型、Token 与成本。
 - [x] 拆分用户咨询页与客服员工后台；用户端采用连续会话展示正常回复或安全的风险/异常状态，异常请求进入受 RBAC 保护的人工审批队列。
 - [x] 建立统一 `IntentType`，让规则、LLM Provider、AgentState、Tooling、Risk Engine 和 Agent Evaluation 共用同一套意图枚举与兜底策略。
 - [x] 实现 Baseline Workflow Replay V1：固定 100 条完整 Ticket State 回放、六项确定性行为指标、逐 Case 结果和 OTel Trace 同源性能汇总。
@@ -32,7 +32,7 @@
 - [x] 建立真实 LLM Release Quality Gate：显式付费确认、调用预算、行为/延迟/Token/LLM Calls 阈值与 Actions Artifact。
 - [x] 建立门禁后 CD：仅对通过 Release Gate 的同一 Git SHA 构建镜像，发布 GHCR 不可变 SHA Tag 并生成 Provenance Attestation。
 - [x] 完成 Resilience V1：LLM/RAG/Tool 统一故障分类、超时、有界 Retry、进程内 Circuit Breaker、Fallback、AgentState/Risk/OTel 联动与高风险禁重试。
-- [x] 完成 Tool Governance V2.1：Tool 调用脱敏持久化审计，高风险写 Action 加密/HMAC、职责分离审批、乐观版本和 Append-only 状态事件。
+- [x] 完成 Tool Governance V2.1：持久化保存脱敏后的 Tool 调用审计；高风险写 Action 的参数经加密保存并用 HMAC 防篡改，审批需要由其他人完成，状态用乐观并只追加事件的方式记录。
 - [x] 完成 Tool Governance V2.2：写 Action 业务幂等键、Transactional Outbox、异步 Worker、数据库租约/乐观抢占、unknown 自动对账、Retry/DLQ、状态事件补写、显式补偿和版本化 Policy 回放。
 - [x] 完成 LangGraph Checkpoint + Durable Execution V1：SQLite/PostgreSQL Saver、Approval Gate interrupt/resume、AgentExecution、数据库恢复租约、启动扫描和主管重试 API。
 - [x] 完成 Skill Framework V1：6 个版本化 Skill 覆盖 8 个 Intent，确定性 Selector、Registry Hash、Tool Allowlist，并关联 State/Checkpoint/OTel/AgentRun/Baseline。
@@ -49,10 +49,10 @@
 - [ ] 建设 Dataset Registry、数据版本和不可变 Snapshot。
 - [ ] 增加 Train / Validation / Test 划分及数据泄漏检查。
 - [ ] 扩充 Synthetic Golden Dataset，并建立稳定回归基线。
-- [x] 增加 PromptOps / EvalOps V1：三个节点内容快照、ContextVar 版本绑定、运行/Trace 归因、当前/候选成对实验、证据校验、环境晋级和显式回滚。
+- [x] 增加 PromptOps / EvalOps V1：为三个节点保存内容快照，在一次运行中绑定 Prompt 版本，让 Agent Run 和 Trace 能查到使用的版本，并支持成对评测、校验证据、晋级和回滚。
 - [ ] 增加按会话灰度、线上 A/B、自动回滚和人工校准的语义发布门禁；V1 的 Mock 通过不代表 Prompt 语义质量通过。
 - [ ] 为 Jev DecisionProvider 增加 Shadow Mode 数据校准和故障率/置信度分布看板；暂不将 Jev 用作离线 Evaluation Judge。
-- [x] 基于首次真实 100 条 Baseline 完成归因修复，Case Pass 由 `0.54` 提升到 `0.99`，固化 Release Gate 阈值与已知失败 Case 白名单。
+- [x] 根据首次真实 100 条 Baseline 定位并修复问题，Case Pass 从 `0.54` 提升到 `0.99`；同时记录 Release Gate 的阈值和已知失败 Case 白名单。
 - [ ] 增加 `ticket_status_events`；Tool Calling 持久化审计已在 V2.1 完成。
 - [ ] 建设安全样本库、持久化安全事件、策略版本与 Risk Engine 阈值回放校准。
 - [ ] 启用 Qwen3Guard Shadow Mode，用中英文安全数据校准 `Controversial / Unsafe` 处置策略。
@@ -65,7 +65,7 @@
 - [ ] 接入 SFT / DPO 训练任务与 Model Registry；当前只导出候选数据。
 - [ ] 引入 vLLM 自托管 Serving。
 - [ ] 采集 TTFT、TPOT、吞吐、并发、GPU 利用率和 Token 成本。
-- [ ] 建立“候选模型离线评测 → 灰度 → 回滚”的发布闭环。
+- [ ] 完成候选模型的发布流程：先做离线评测，再小范围灰度上线，出现问题时可回滚。
 
 ## 已知问题与风险
 

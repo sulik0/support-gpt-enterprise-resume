@@ -80,7 +80,7 @@
 
 1. 先检查 `git status`，保留用户未相关改动。
 2. 阅读相关实现和测试，不根据文档猜测当前代码。
-3. 以最小范围实现，函数可增加一两行精简中文注释，主要类应有简短中文职责说明。
+3. 以最小范围实现，函数可加一两行精简中文注释，主要类开头用中文说明它做什么。
 4. 对新行为增加确定性测试；若影响 Agent，评估 Baseline 兼容性。
 5. 运行 `git diff --check`、相关 pytest，高风险改动运行全量 pytest。
 6. 同步 `00_PROJECT_CONTEXT.md`、`03_INTERVIEW_CANON.md`、`08_TODO.md` 中受影响的完成状态与边界。
@@ -90,14 +90,14 @@
 
 - 真实 CRM/OMS/Ticketing 尚未接入。
 - Memory V1 已注入 Analyzer、Retriever、Resolver 和 QA；尚无向量长期记忆、真实用户/租户身份接入和多轮专项评测门禁。
-- Tool 调用已持久化脱敏审计；高风险写 Tool 必须经 `ToolAction` 状态机、职责分离审批和 Outbox Worker，Agent Workflow 不会自动执行。
+- Tool 调用已持久化脱敏审计；高风险写 Tool 必须经过 `ToolAction` 状态机和 Outbox Worker。提议人不能审批自己的操作，Agent Workflow 不会自动执行。
 - Qwen3Guard 默认关闭，Risk Engine 阈值尚未基于真实运营数据校准。
 - Jev DecisionProvider 默认关闭，尚无真实准确率/延迟校准，且按当前边界不接入离线 Evaluation Judge。
-- Feedback Pipeline 只生成脱敏 SFT/DPO 候选，尚无 Dataset Registry、训练与发布闭环。
+- Feedback Pipeline 只会导出脱敏后的 SFT/DPO 候选数据，还没有 Dataset Registry、模型训练和模型发布流程。
 - Docker Compose/Kubernetes 是可复现模板，不代表生产上线。
 - Resilience 的通用 Circuit Breaker 仍为单进程 V1；Tool Governance V2.2 已有专用数据库 Outbox、Retry/DLQ、业务幂等和自动对账，但没有通用分布式消息平台，OMS 仍为 Mock。
 - Checkpoint 已覆盖审批暂停和跨重启恢复，但没有 TTL/归档、旧 Graph 多版本恢复或通用后台任务队列；相关 DDL 仍需纳入 Migration。
-- 真实 Baseline V1 在同一固定 100 条 Dataset 上经归因优化后通过率为 0.99，仍不等于生产业务指标。
+- 真实 Baseline V1 用同一固定 100 条 Dataset 比较时，记录到的通过率为 0.99。这个结果只反映这组回放数据，不能当作生产业务指标。
 
 ## 当前优先级
 

@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-SupportGPT Enterprise 是一个面向企业售后客服场景的、可本地运行的生产风格 AI Agent 项目。它将初版 FAQ / RAG 问答能力扩展为包含工单理解、结构化业务上下文、知识检索、回复生成、质量校验、风险拦截、人工审批和工单状态闭环的客服处理平台。
+SupportGPT Enterprise 是一个面向企业售后客服场景、可在本地运行的生产风格 AI Agent 项目。项目将初版 FAQ / RAG 问答扩展为客服处理平台：系统可理解工单、补充结构化业务信息、检索知识、生成并检查回复，对高风险请求进行拦截并转人工审批。工单也会保留从提交到处理完成的状态记录。
 
 项目用于展示 Agentic RAG、Tool Calling 治理、Human-in-the-Loop 和可观测性等工程能力。它不是已连接真实企业数据、已在生产客服中心上线的系统。
 
@@ -22,7 +22,7 @@ CRM、OMS、历史工单和退款资格初筛当前均通过本地 Mock Adapter 
 - 在回复生成前补充客户、订单和历史工单等结构化业务事实。
 - 使用带版本和类别过滤的 Hybrid RAG 提供知识依据与 citation。
 - 在输入、工具、输出和工单状态多个层面设置安全与治理边界。
-- 对高风险、低置信度或紧急问题引入人工审批，而不是让模型自动完成业务闭环。
+- 高风险、低置信度或紧急问题需由人工审批，不由模型单独决定并处理完成。
 - 提供本地可运行、可观测、可替换真实服务的工程骨架。
 
 ## 4. 团队情况
@@ -37,9 +37,9 @@ CRM、OMS、历史工单和退款资格初筛当前均通过本地 Mock Adapter 
 
 可以准确说明：这是一个基于开源项目改造的简历项目，现有仓库展示了客服 Agent、RAG、工具治理、审批和可观测性等能力。
 
-## 5. 我的职责
+## 5. 我参与的工作
 
-仓库不能证明具体个人对每个文件的作者归属。因此“我的职责”必须与回答者的真实参与经历一致，不能由本文虚构。
+仓库无法证明每个文件由谁编写。面试时请根据你真正参与的工作说明个人贡献，本文不代你虚构经历。
 
 在仅依据仓库可验证事实的情况下，可以描述的**项目改造范围**为：
 
@@ -102,14 +102,14 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 
 未使用或未实现的技术包括：MCP、pgvector、独立 TaskState、动态 Planner、自动 Reflection Loop、多租户知识隔离、生产搜索后端、Prompt 版本灰度、通用分布式任务队列和旧 Graph 多版本恢复。
 
-## 8. Agent 数量与职责
+## 8. Agent 数量与节点分工
 
-当前存在 **6 个逻辑业务 Agent 节点 + 1 个确定性 Skill Selector + 1 个 Approval Gate 控制节点**。六个业务 Agent 节点是单个 LangGraph Workflow 中的职责分工，不代表 6 个独立部署的模型服务；Skill Selector 和 Approval Gate 都不调用 LLM，不计为自治 Agent。
+当前有 **6 个业务 Agent 节点、1 个确定性 Skill Selector 和 1 个 Approval Gate 控制节点**。六个 Agent 节点分别处理单个 LangGraph Workflow 中的不同阶段，并不是六个独立部署的模型服务。Skill Selector 和 Approval Gate 不调用 LLM，也不是自治 Agent。
 
-| Agent | 职责 |
+| Agent | 这个节点负责什么 |
 |---|---|
 | Analyzer | 确定性 Prompt Injection/Jailbreak、PII 脱敏、Qwen3Guard 语义检测；规则生成候选，Jev 启用时优先复核，再按规则/LLM 分层回退，最后执行初始 Risk Engine 评估 |
-| Skill Selector（控制节点） | 将统一 Intent 确定性选择为版本化 Skill，固定 Tool/RAG/槽位能力边界 |
+| Skill Selector（控制节点） | 根据统一 Intent 选择有版本的 Skill，并确定可用 Tool、RAG 类别和必填信息 |
 | Tooling | 调用受治理的业务工具，补充客户、订单和历史工单上下文，并检查工具返回的间接注入 |
 | Retriever | 按知识库版本与类别进行 Hybrid RAG 检索，返回 citation，并在生成前检查文档间接注入 |
 | Resolver | 汇总工单、RAG citation 和 Tool Context，生成客服草稿 |
@@ -117,7 +117,7 @@ Prometheus + OpenTelemetry 覆盖 API、Agent、工具、RAG 和审批过程。
 | Escalation | 调用 Risk Engine 生成最终风险结论，计算 SLA，判断升级与人工审批需求 |
 | Approval Gate（控制节点） | 无需审批时结束；需要审批时 interrupt，人工决策后从原 Checkpoint Thread 恢复 |
 
-当前没有独立 Planner、LLM Selector、Validator Agent 或 Reflection Agent。Skill Selector 是确定性控制节点；QA 承担 Review 职责；安全、工具和状态验证由分层规则完成。
+当前没有独立 Planner、LLM Selector、Validator Agent 或 Reflection Agent。Skill Selector 是确定性控制节点；QA 负责检查回复；安全、工具和状态验证则由分层规则处理。
 
 ## 8.1 Skill Framework
 
@@ -233,7 +233,7 @@ Redis 是可选组件，不是系统启动或处理工单的强依赖。
 - Redis 未配置、连接失败、Cache Miss 或 revision 不一致时，主流程继续运行并回退 SQL。
 - Docker Compose 会启动 Redis；本地默认配置不要求 Redis。
 
-不能说 Redis 是唯一记忆存储、必须依赖 Redis，或 Redis 当前承担分布式锁、队列、Checkpoint、限流等职责。
+不能说 Redis 是唯一的记忆存储，或说项目必须依赖 Redis。目前 Redis 不用来实现分布式锁、任务队列、Checkpoint 或限流。
 
 ## 17. Embedding
 
@@ -286,7 +286,7 @@ CI/CD 采用两级门禁：PR/Push 强制使用 Mock Provider 回放固定 100 �
 
 ## 20. Feedback Pipeline
 
-第一阶段已实现线上反馈采集和训练候选沉淀：
+第一阶段已可以收集用户反馈和人工修改，并导出经脱敏处理的训练候选数据：
 
 - 用户咨询页通过 `POST /support/requests` 创建唯一工单并立即执行 Workflow；普通请求返回安全回复，需要审批时返回安全的占位回复和人工介入类别，不向用户暴露 Tool、QA、内部风险规则、Trace 或未经审批的草稿。
 - 客服员工后台通过受 RBAC 保护的 `GET /staff/review-queue` 仅加载待审批工单；打开详情调用 `GET /tickets/{ticket_id}/agent-result` 读取最新持久化结果，不会重新执行 Agent，也不会新增 Ticket、AgentRun 或审批记录。
