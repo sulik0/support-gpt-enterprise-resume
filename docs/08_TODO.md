@@ -42,6 +42,9 @@
 
 ## P1
 
+- [x] 售后 Tool / RAG 扩充：9 个注册工具、12 篇新增中文演示文档、中文词法召回，新增查询按意图进入 Workflow 和 Resolver，并经过 Skill `v1.1` 权限及审计。
+- [ ] 将物流、账务、保修和服务状态演示适配器替换为真实接口，并补充认证、契约测试、数据更新时间和生产可用性检查；目前不宣称真实业务接入。
+
 - [x] 实现 Memory V1：Conversation/Message/Snapshot 结构化持久化、追加为主的消息、Redis revision Cache、会话归属、有界 Context Assembly、实体续接和 HITL 回写。
 - [ ] 增加多轮 Dataset/Workflow Replay 与 Quality Gate，覆盖指代、Slot 延续、跨会话隔离、Memory Poisoning、Token 和延迟增量。
 - [ ] 将用户页 Demo 客户选择器替换为真实身份/租户绑定，再宣称生产级会话隔离。

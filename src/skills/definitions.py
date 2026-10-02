@@ -5,7 +5,7 @@ from src.skills.models import SkillDefinition
 from src.skills.registry import SkillRegistry
 
 
-SKILL_REGISTRY_VERSION = "v1"
+SKILL_REGISTRY_VERSION = "v1.1"
 COMMON_READ_TOOLS = frozenset(
     {"crm.get_customer_profile", "tickets.get_past_tickets"}
 )
@@ -16,6 +16,10 @@ ALL_TOOL_NAMES = COMMON_READ_TOOLS | {
     ORDER_READ_TOOL,
     REFUND_ELIGIBILITY_TOOL,
     REFUND_WRITE_TOOL,
+    "shipping.get_shipments",
+    "warranty.get_entitlements",
+    "billing.get_payment_invoices",
+    "services.get_status",
 }
 
 
@@ -30,7 +34,7 @@ def _definition(
     """生成带明确 Tool Allowlist/Forbidden List 的 Skill。"""
     return SkillDefinition(
         name=name,
-        version="v1",
+        version="v1.1",
         description=description,
         supported_intents=intents,
         allowed_tools=tools,
@@ -47,7 +51,7 @@ skill_registry.register(
         description="处理退款、支付、发票与账务争议，写操作仍由 Tool Governance 审批。",
         intents=frozenset({IntentType.BILLING_DISPUTE}),
         tools=COMMON_READ_TOOLS
-        | {ORDER_READ_TOOL, REFUND_ELIGIBILITY_TOOL, REFUND_WRITE_TOOL},
+        | {ORDER_READ_TOOL, REFUND_ELIGIBILITY_TOOL, REFUND_WRITE_TOOL, "billing.get_payment_invoices"},
         rag_categories=("billing", "returns"),
     )
 )
@@ -56,7 +60,7 @@ skill_registry.register(
         name="order_support",
         description="处理订单状态查询和取消请求。",
         intents=frozenset({IntentType.ORDER_STATUS, IntentType.ORDER_CANCELLATION}),
-        tools=COMMON_READ_TOOLS | {ORDER_READ_TOOL},
+        tools=COMMON_READ_TOOLS | {ORDER_READ_TOOL, "shipping.get_shipments"},
         rag_categories=("shipping",),
     )
 )
@@ -74,7 +78,7 @@ skill_registry.register(
         name="api_incident_triage",
         description="处理 API 报错、超时、宕机和服务降级问题。",
         intents=frozenset({IntentType.OUTAGE_REPORT}),
-        tools=COMMON_READ_TOOLS,
+        tools=COMMON_READ_TOOLS | {"services.get_status"},
         rag_categories=("technical",),
     )
 )
@@ -83,7 +87,7 @@ skill_registry.register(
         name="warranty_support",
         description="处理设备保修、维修和换货申请。",
         intents=frozenset({IntentType.WARRANTY_CLAIM}),
-        tools=COMMON_READ_TOOLS,
+        tools=COMMON_READ_TOOLS | {"warranty.get_entitlements"},
         rag_categories=("returns", "general"),
     )
 )

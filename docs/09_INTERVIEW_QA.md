@@ -8,7 +8,7 @@
 
 这是一个面向企业售后客服场景的、可本地运行的生产风格 Agent 平台。它把初版 FAQ / RAG 问答扩展为一条完整的客服处理链：先理解工单和识别风险，再补充客户、订单与历史工单上下文，检索售后知识，生成回复草稿，执行 QA 和输出过滤，最后决定是否进入人工审批。
 
-平台目前有 6 个业务 Agent 节点、1 个确定性 Skill Selector、1 个 Approval Gate 和 5 个注册 Tool。Skill Framework V1 根据 8 个统一 Intent 选择 6 个版本化 Skill，并用 Tool Allowlist 限制每类请求能使用哪些工具。CRM、OMS、工单工具和默认 LLM 都是本地 Mock，项目尚未连接真实企业系统。
+平台目前有 6 个业务 Agent 节点、1 个确定性 Skill Selector、1 个 Approval Gate 和 9 个注册 Tool。Skill Framework 根据 8 个统一 Intent 选择 6 个版本化 Skill，当前配置版本为 `v1.1`，通过 Tool Allowlist 限制每类请求能使用哪些工具。新增查询覆盖物流、保修权益、支付发票和服务状态。业务工具和默认 LLM 都是本地 Mock，项目尚未连接真实企业系统。
 
 ### 2. 为什么传统 FAQ 系统无法满足售后场景？
 
@@ -723,7 +723,7 @@ API、SQLAlchemy Session、LangGraph 节点和 LLM Provider 采用 async。同�
 
 - 只引用 `03_INTERVIEW_CANON.md` 中可证实的事实。
 - CRM、OMS、历史工单、退款初筛和默认 LLM 必须明确为 Mock。
-- 当前是 6 个逻辑 Agent 节点、5 个注册 Tool、0 个 MCP。
+- 当前是 6 个逻辑 Agent 节点、9 个注册 Tool、0 个 MCP。
 - 当前没有独立 TaskState、动态 Planner、自动 Reflection、分布式 Circuit Breaker、通用 Queue/DLQ、pgvector、Milvus 或生产级搜索后端。Tool Governance 有专用数据库 Outbox Retry/DLQ；Checkpoint 已覆盖审批暂停与恢复，但尚无 TTL、旧 Graph 多版本恢复或通用后台调度。
 - 当前没有真实上线指标、P95/QPS 基准、真实客户数据或业务提升百分比。
 - 个人参与的工作和是否独立开发，必须按真实经历回答，不能仅根据仓库内容推断。

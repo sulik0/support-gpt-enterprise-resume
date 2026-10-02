@@ -19,7 +19,7 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | LLM | `mock/openai/azure`；`openai` 兼容 OpenAI、DeepSeek、Qwen 和 vLLM |
 | DecisionProvider | 可选 Jev System One；复核 Analyzer 规则候选并评判 QA 正向证据，规则/LLM 作为分层回退 |
 | RAG | ChromaDB、Hybrid Search、轻量 rerank、版本/类别过滤、citation |
-| Tool Calling | 5 个 CRM / OMS / Ticket Mock Tool；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
+| Tool Calling | 9 个演示 Tool，覆盖客户、订单、工单、物流、保修、支付发票及服务状态；ToolRegistry、Schema、RBAC、持久化脱敏审计 |
 | Tool Governance | V2.2：业务幂等键、Transactional Outbox、Worker、unknown 自动对账、Retry/DLQ、补偿与 Policy 回放 |
 | Safety | 多层 Prompt Injection 规则、Qwen3Guard Adapter、Risk Engine、PII/泄露过滤 |
 | HITL | 高风险、低置信度、低 QA、投诉与退款场景在 Graph 内暂停审批，完成后从原 Thread 恢复 |
@@ -48,6 +48,12 @@ uvicorn src.main:app --reload
 - Swagger：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 默认使用 Mock LLM、SQLite 和本地 ChromaDB，Redis 未启动时可正常降级。
+
+`scripts/seed_kb.py` 现在包含 16 篇知识文档：原有 4 篇保留，新增 12 篇中文售后说明，覆盖退款、发票、取消订单、物流、保修、账户和 API 排障。部署更新后需要在后端环境执行此脚本，才能将新增文档存入数据库并建立向量索引；应用启动不会自动导入。重复执行会按 `doc_id` 更新同名文档，因此不要用它覆盖管理员已修改的同名内容。新增文档属于演示手册，不代表企业正式政策。
+
+新增查询工具按意图自动调用，管理员可在资源管理页查看和停用。示例客户 `cust_102` 有物流延迟和未申请发票记录，`cust_103` 有服务支持权益。未知客户返回 `not_found`；这些适配器没有接入真实物流、财务或维修服务。
+
+已有环境建议使用 `python scripts/seed_kb.py --only-missing`，只补充缺失文档，保留后台已编辑的内容。若 SQL 文档存在但向量目录丢失，应从后台执行重建索引，不能依赖此增量模式修复索引。
 LangGraph Checkpoint 默认启用：本地写入独立的 `.runtime/langgraph-checkpoints.sqlite`；使用 PostgreSQL DATABASE_URL 时自动切换到官方 PostgreSQL Saver。高风险请求返回审批草稿后 Workflow 保持暂停，人工审批会恢复原执行而不是重跑前置节点。
 
 Memory V1 在 `/chat` 和用户咨询页中按 `session_id + customer_id` 续接会话。SQL 保存结构化消息、摘要和显式业务实体，Redis 只是带 revision 的可选缓存；待审草稿不会进入后续 Prompt，仅在审批通过或人工修改后结算为 final 消息。

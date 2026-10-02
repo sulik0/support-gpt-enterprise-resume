@@ -14,6 +14,7 @@ from src.tools.order_mgmt import order_mgmt_tool
 from src.tools.payload_security import tool_payload_security
 from src.tools.refund_gateway import refund_gateway
 from src.tools.ticketing import ticketing_tool
+from src.tools.service_queries import service_query_adapter
 from src.observability.tracing import (
     get_tracer,
     langsmith_span_attributes,
@@ -590,6 +591,19 @@ tool_registry.register(
         allowed_intents=frozenset({IntentType.BILLING_DISPUTE}),
     )
 )
+
+for name, description, handler, intents in (
+    ("shipping.get_shipments", "查询客户配送进度、物流异常和跟进状态（演示数据）。", service_query_adapter.get_shipments, {IntentType.ORDER_STATUS, IntentType.ORDER_CANCELLATION}),
+    ("warranty.get_entitlements", "查询客户保修或服务支持权益，不执行维修或赔付（演示数据）。", service_query_adapter.get_warranties, {IntentType.WARRANTY_CLAIM}),
+    ("billing.get_payment_invoices", "查询客户订单支付和发票状态，不执行资金操作（演示数据）。", service_query_adapter.get_billing, {IntentType.BILLING_DISPUTE}),
+    ("services.get_status", "查询演示 API 服务健康状态和公开故障信息。", service_query_adapter.get_service_status, {IntentType.OUTAGE_REPORT}),
+):
+    tool_registry.register(ToolDefinition(
+        name=name, description=description, input_schema=CustomerToolInput,
+        output_schema={"status": "str", "records": "list[dict]", "source": "str", "mocked": "bool"},
+        min_role="agent", timeout_seconds=1.0, mocked=True, handler=handler,
+        allowed_intents=frozenset(intents), version="v1.1",
+    ))
 
 # 启动期确保 Skill Policy 没有引用未注册 Tool。
 skill_registry.validate_tool_catalog(

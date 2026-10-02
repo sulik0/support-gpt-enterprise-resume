@@ -105,6 +105,7 @@ class ResolutionAgent:
             return "No relevant business facts."
         profile = tool_context.get("customer_profile") or {}
         compact = {
+            "service_query": tool_context.get("service_query", {}),
             "resolved_request_entities": tool_context.get(
                 "resolved_request_entities", {}
             ),

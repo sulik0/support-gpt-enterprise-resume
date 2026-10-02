@@ -307,7 +307,13 @@ class VectorStoreManager:
 
     def _tokenize(self, text: str) -> List[str]:
         tokens = re.findall(r"[a-z0-9]+", text.lower())
-        return [token for token in tokens if token not in STOPWORDS and len(token) > 1]
+        # 中文双字滑窗补充精确召回，不新增分词模型依赖。
+        chinese = [
+            segment[index:index + 2]
+            for segment in re.findall(r"[\u4e00-\u9fff]+", text)
+            for index in range(len(segment) - 1)
+        ]
+        return [token for token in tokens if token not in STOPWORDS and len(token) > 1] + chinese
 
     def _bm25_score(
         self,

@@ -41,6 +41,12 @@ uvicorn src.main:app --reload
 
 如果本地 ChromaDB 曾被其他大版本写入，应修改 `VECTOR_DB_PERSIST_DIR` 并重新执行 `scripts/seed_kb.py`，不得复用不兼容的 SQLite schema。
 
+初始化脚本包含原有 4 篇和新增 12 篇演示知识。新增内容位于 `src/rag/demo_documents.py`，每篇有固定 `doc_id`、类别、`v1` 版本和演示来源；不会修改原有 `v2` 退款政策。SQL 文档和 ChromaDB 索引通过同一初始化入口更新，后台资源管理页可以继续编辑、删除或重建索引。重复运行脚本会更新同名文档，生产环境执行前先备份管理员维护的内容。中文词法检索使用双字滑窗，与向量召回和轻量 rerank 一起工作，不等同于专业中文分词或语义 Embedding；Mock Embedding 仍仅用于离线演示。
+
+新增 Tool 定义在 `src/tools/registry.py`，本地数据和查询在 `src/tools/service_queries.py`。Skill 配置升级为 `v1.1`，每次请求记录当前版本和 Registry Hash。新增查询仍经过现有 Schema、权限、风险、停用开关、Resilience 和审计流程；不增加写权限。替换真实系统时应沿用返回协议，并将客户身份绑定到真实账号，而不是直接信任客户端传入的 `customer_id`。
+
+已有部署使用 `python scripts/seed_kb.py --only-missing` 增量添加，已有同名文档不会覆盖。这个模式按 SQL 是否存在判断，不检查向量是否丢失；向量目录更换或索引损坏时，请使用后台“重建索引”。
+
 ### 前端
 
 ```bash

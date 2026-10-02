@@ -1,12 +1,14 @@
 import os
 import sys
 import asyncio
+import argparse
 
 # Ensure project root is in path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.database import init_db, AsyncSessionLocal
 from src.rag.kb_versioning import kb_versioning_service
+from src.rag.demo_documents import DEMO_DOCUMENTS
 
 SEED_DOCUMENTS = [
     {
@@ -59,13 +61,17 @@ SEED_DOCUMENTS = [
     }
 ]
 
-async def seed():
+async def seed(only_missing: bool = False):
+    """导入演示文档；增量模式保留后台已经维护的同名内容。"""
     print("Initializing database tables...")
     await init_db()
     
     async with AsyncSessionLocal() as db:
         print("Registering and indexing seed documents...")
-        for doc in SEED_DOCUMENTS:
+        for doc in [*SEED_DOCUMENTS, *DEMO_DOCUMENTS]:
+            if only_missing and await kb_versioning_service.get_document(db, doc["doc_id"]):
+                print(f"Skipping existing document: {doc['doc_id']}")
+                continue
             print(f"Adding: {doc['title']} ({doc['version']})")
             await kb_versioning_service.register_document(
                 db=db,
@@ -80,4 +86,7 @@ async def seed():
     print("Database seeding completed successfully.")
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    parser = argparse.ArgumentParser(description="导入 SupportGPT 演示知识库")
+    parser.add_argument("--only-missing", action="store_true", help="只添加不存在的文档，保留后台编辑内容")
+    args = parser.parse_args()
+    asyncio.run(seed(only_missing=args.only_missing))

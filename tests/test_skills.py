@@ -25,7 +25,7 @@ def test_all_intents_have_one_versioned_skill():
         "warranty_support",
         "general_support",
     }
-    assert all(item["version"] == "v1" for item in skill_registry.list_skills())
+    assert all(item["version"] == "v1.1" for item in skill_registry.list_skills())
     assert len(skill_registry.registry_id) == 64
 
 
@@ -62,7 +62,7 @@ async def test_skill_allowlist_denies_cross_domain_tool():
         {"customer_id": "cust_101"},
         intent=IntentType.INFORMATION_REQUEST,
         skill_name="general_support",
-        skill_version="v1",
+        skill_version="v1.1",
     )
     assert result["allowed"] is False
     assert result["status"] == "skill_denied"
@@ -96,7 +96,7 @@ async def test_workflow_persists_skill_in_state(monkeypatch):
 
     result = await run_agent_workflow(state)
     assert result["skill_name"] == "order_support"
-    assert result["skill_version"] == "v1"
+    assert result["skill_version"] == "v1.1"
     assert result["selection_strategy"] == "intent_rule"
     assert "skill_selector" in result["workflow_path"]
     assert result["tool_context"]["tool_policy"]["skill_checked"] is True

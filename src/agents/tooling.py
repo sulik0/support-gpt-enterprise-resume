@@ -20,7 +20,7 @@ logger = logging.getLogger("supportgpt.agents.tooling")
 class ToolingAgent:
     """负责调用受 ToolRegistry 管理的工具补全业务上下文。
 
-    当前 CRM、订单和工单工具均为本地 Mock Adapter。
+    客户、订单、工单和新增售后查询均为本地 Mock Adapter。
     """
 
     async def enrich(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,14 +99,45 @@ class ToolingAgent:
                         **policy_kwargs,
                     )
                 )
+            service_tool = {
+                IntentType.ORDER_STATUS: "shipping.get_shipments",
+                IntentType.ORDER_CANCELLATION: "shipping.get_shipments",
+                IntentType.BILLING_DISPUTE: "billing.get_payment_invoices",
+                IntentType.WARRANTY_CLAIM: "warranty.get_entitlements",
+                IntentType.OUTAGE_REPORT: "services.get_status",
+            }.get(intent)
+            if service_tool:
+                pending_calls.append(
+                    tool_registry.call_tool(
+                        service_tool, {"customer_id": customer_id},
+                        role=operator_role, ticket_id=ticket_id, **policy_kwargs,
+                    )
+                )
             tool_calls = list(await asyncio.gather(*pending_calls))
             profile_call, ticket_call = tool_calls[:2]
-            order_call = tool_calls[2] if len(tool_calls) > 2 else None
+            order_call = next(
+                (call for call in tool_calls if call["tool_name"] == "orders.get_order_history"), None
+            )
+            service_call = next(
+                (call for call in tool_calls if call["tool_name"] == service_tool), None
+            )
 
             profile = profile_call.get("result") or {}
             past_tickets = ticket_call.get("result") or []
             orders = order_call.get("result") if order_call else []
             order_id = (state.get("memory_active_entities") or {}).get("order_id")
+            service_data = service_call.get("result") if service_call else None
+            if order_id and service_data and service_tool != "services.get_status":
+                # 用户指定订单时只提供该订单的记录，不用别的订单代替。
+                records = [
+                    item for item in service_data.get("records", [])
+                    if str(item.get("order_id", "")).upper() == str(order_id).upper()
+                ]
+                service_data = {
+                    **service_data, "records": records,
+                    "status": "found" if records else "not_found",
+                    "requested_order_id": order_id,
+                }
             if order_id and orders:
                 # Memory 只调整展示优先级，Tool 仍以实时 OMS 结果为准。
                 orders = sorted(
@@ -181,6 +212,11 @@ class ToolingAgent:
                 }
 
             tool_context = {
+                "service_query": {
+                    "tool": service_tool,
+                    "status": service_call.get("status"),
+                    "data": service_data,
+                } if service_call else {},
                 "customer_profile": {
                     "customer_id": profile.get("customer_id"),
                     "tier": profile.get("tier"),
@@ -203,7 +239,7 @@ class ToolingAgent:
                     "skill_version": skill_version,
                     "audit_enabled": True,
                 },
-                "mock_note": "CRM, order, and ticketing tools are local mock adapters behind the tool registry.",
+                "mock_note": "All business queries use local demo adapters, not live CRM, OMS, logistics or billing systems.",
             }
 
             duration = time.time() - start_time

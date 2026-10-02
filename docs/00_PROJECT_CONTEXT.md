@@ -36,7 +36,7 @@ SupportGPT Enterprise 是一个面向企业售后客服场景的 AI Agent 项目
 2. **Skill 选择**：将 8 个统一 Intent 确定性映射到 6 个版本化 Skill，固定 Tool Allowlist、RAG 类别和必需槽位快照。
 2. **多层安全短路**：先执行 Unicode 规范化、中英文特征、组合启发式、角色提权与 Base64 载荷扫描，规则未命中时再使用 Qwen3Guard-Gen-0.6B 扫描客户输入、Tool 返回和 RAG 文档。
 3. **PII 脱敏**：正常请求进入 LLM 前对主题和描述中的敏感信息进行匿名化。
-4. **业务工具上下文**：通过 ToolRegistry 查询客户画像、近期订单和历史工单，并把结构化结果注入 Resolver。
+4. **业务工具上下文**：通过 9 个注册 Tool 查询客户画像、近期订单、历史工单、物流、保修权益、支付发票和服务状态，并把结构化结果注入 Resolver。查询数据都是本地演示数据，未知客户返回无记录，不读取其他客户的数据。
 5. **工具治理**：除 ToolRegistry 的 Schema、RBAC 和审计外，高风险写操作具备业务幂等键、Transactional Outbox、异步 Worker、`unknown` 自动对账、Retry/DLQ、补偿和版本化 Policy 回放。
 6. **Hybrid RAG**：融合 ChromaDB 向量召回、进程内 BM25 风格词法打分和轻量 rerank，返回带版本的 citation。
 7. **回复生成与 QA**：使用知识库 citation 和 Tool Context 生成草稿，再评估 QA 分数、幻觉风险和输出泄露。
@@ -160,6 +160,7 @@ approval_gate
    - 始终查询客户画像和历史工单。
    - 只在 billing、shipping 或相关意图下查询订单历史。
    - 所有调用必须经过 ToolRegistry，Agent 不能直接调用 Mock Adapter。
+   - Skill `v1.1` 新增物流、保修权益、支付发票和服务状态的只读查询，按 Intent 选择并与原有工具并行执行；不增加自动退款或取消订单的权限。
    - 工具返回在写入 Tool Context 前扫描间接 Prompt Injection；命中后保留调用审计，但清空工具上下文并短路。
 4. **Retriever**
    - 用工单主题和描述构造 Query，默认返回 Top 3 citation。

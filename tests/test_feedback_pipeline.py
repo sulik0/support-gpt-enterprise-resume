@@ -167,7 +167,7 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
         assert run_detail.json()["trace_id"] == response_trace_id
     assert run_detail.json()["prompt_version"]
     assert run_detail.json()["skill_selection"]["skill_name"] == "refund_support"
-    assert run_detail.json()["skill_selection"]["skill_version"] == "v1"
+    assert run_detail.json()["skill_selection"]["skill_version"] == "v1.1"
     snapshot = run_detail.json()["execution_snapshot"]
     assert snapshot["analyzer_strategy"] == "rule"
     assert snapshot["analyzer_result"] == {
@@ -258,7 +258,7 @@ async def test_human_correction_and_evaluation_export_sft_dpo(
     dpo = json.loads((tmp_path / "dpo_candidates.jsonl").read_text().strip())
     assert sft["metadata"]["agent_run_id"] == run_id
     assert sft["metadata"]["skill_name"] == "refund_support"
-    assert sft["metadata"]["skill_version"] == "v1"
+    assert sft["metadata"]["skill_version"] == "v1.1"
     assert dpo["chosen"] == approval.json()["final_response"]
     assert dpo["chosen"] != dpo["rejected"]
 

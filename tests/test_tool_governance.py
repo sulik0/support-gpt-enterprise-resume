@@ -250,6 +250,7 @@ async def test_ticket_workflow_batch_persists_parallel_tool_audits(
         "crm.get_customer_profile",
         "orders.get_order_history",
         "tickets.get_past_tickets",
+        "shipping.get_shipments",
     }
     assert all(record.request_id != "unbound" for record in records)
     assert all(record.payload_keys == ["customer_id"] for record in records)

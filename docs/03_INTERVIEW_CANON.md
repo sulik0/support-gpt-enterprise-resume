@@ -127,7 +127,7 @@ Skill Framework V1 共有 **6 个 Skill**：`refund_support`、`order_support`�
 
 ## 9. Tool 数量与 Tool Calling
 
-当前 ToolRegistry 中注册 **5 个 Tool**：
+当前 ToolRegistry 中注册 **9 个 Tool**：
 
 | Tool | 权限 | 当前用途 |
 |---|---|---|
@@ -136,14 +136,20 @@ Skill Framework V1 共有 **6 个 Skill**：`refund_support`、`order_support`�
 | 历史工单查询 | agent 及以上 | 返回过去工单与处理结果 |
 | 退款资格初筛 | manager 及以上 | 高风险 Mock 初筛；主 Workflow 不会自动调用 |
 | 创建退款请求 | manager 及以上 | 高风险 Mock 写 Tool；只能使用已批准 Action 的一次性执行授权，主 Workflow 不会自动调用 |
+| 物流查询 `shipping.get_shipments` | agent 及以上 | 返回配送状态、跟踪编号和异常跟进，供订单查询及取消请求参考 |
+| 权益查询 `warranty.get_entitlements` | agent 及以上 | 返回保修或服务支持权益；无记录不等于拒保 |
+| 账务查询 `billing.get_payment_invoices` | agent 及以上 | 返回支付、金额、币种和开票状态，不提供支付密钥 |
+| 服务状态 `services.get_status` | agent 及以上 | 返回模拟 API 健康状态，不代表实时生产监控 |
 
-前四个为读工具，其中客户画像和历史工单在正常请求中调用；订单历史只在账单、物流或相关订单意图下调用。每次调用经过 Schema、RBAC、策略门禁和 Resilience，并持久化脱敏审计。
+共 8 个读工具和 1 个写工具。客户画像和历史工单在正常请求中调用；订单历史只在账单和订单意图下调用。新增工具分别按订单、账务、保修、API 故障意图选择，与已有查询并行执行，返回结果经过安全扫描后送入 Resolver。Skill 配置升级为 `v1.1`，只有对应 Skill 可以调用这些工具。每次调用经过 Schema、RBAC、策略门禁和 Resilience，并持久化脱敏审计。
 
 高风险写 Tool 采用 Tool Governance V2.2：主状态机为 `proposed -> pending_approval -> approved/rejected -> queued -> executing -> succeeded/failed/unknown`。参数加密存储，payload 和创建时的 Policy 快照使用 HMAC 防篡改；每个写 Action 生成唯一业务幂等键；提议人不能自批；API 原子保存 `queued + Outbox`，Worker 使用数据库租约和乐观版本竞争消费。
 
 写调用超时或 Worker 中断不会直接重试，而是进入 `unknown`，按相同幂等键调用 Mock OMS 查询接口自动对账。确认结果后补写成功/失败状态事件；暂无结果时只 Retry 对账查询，耗尽进入 DLQ 并转人工。成功 Action 支持主管显式发起幂等补偿。Policy 回放是 deterministic 离线校验，不调用 Tool/LLM。上述能力仍基于 Mock OMS 契约，不代表真实资金系统集成或 exactly-once 保证。
 
 所有这些 Tool 当前均是本地 Mock Adapter。不得说成已经接入真实 CRM、OMS、工单系统，或能够执行真实退款、改订单、写 CRM 等操作。
+
+知识库初始化现在有 16 篇文档：原有 4 篇不变，新增 12 篇中文演示售后手册。新增内容覆盖退款资料和进度、支付发票、取消订单、物流延迟及未收到、保修与破损退换货、账户恢复、API 排查和资料补全。中文精确召回使用双字滑窗；部署后需显式执行 `scripts/seed_kb.py` 入库，不随应用启动自动导入。
 
 ## 10. MCP
 
@@ -377,7 +383,7 @@ React 前端已拆分为用户咨询页与客服员工后台。用户页采用�
 
 1. 已实现、部分实现、规划中和未知信息必须明确区分。
 2. 所有 CRM、OMS、Ticketing、退款初筛和默认 LLM 均为 Mock，除非代码与凭据明确变为真实集成。
-3. Agent 数量固定表述为 6 个逻辑业务 Agent 节点 + Skill Selector + Approval Gate；Tool 数量固定表述为 5 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
+3. Agent 数量固定表述为 6 个逻辑业务 Agent 节点 + Skill Selector + Approval Gate；Tool 数量为 9 个注册 Tool，其中 1 个为只能经审批 Action 执行的 Mock 高风险写 Tool。
 4. MCP 数量为 0；独立 TaskState、动态 Planner、自动 Reflection 和 pgvector 均未采用。Checkpoint 已实现，但只覆盖固定 Workflow 的审批暂停与恢复；Tool Outbox 是高风险写操作专用队列，不是通用 Agent 任务队列。
 5. Memory V1 以 SQL 结构化消息为事实源、Redis 为 revision Cache，有界历史已注入 Agent；它不等于向量长期记忆。
 6. ChromaDB 是当前向量数据库；Hybrid RAG 是当前检索方案。
