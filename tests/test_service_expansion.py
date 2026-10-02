@@ -9,6 +9,10 @@ from src.rag.vector_store import vector_store
 from src.tools.registry import tool_registry
 from src.tools.service_queries import service_query_adapter
 from src.rag.kb_versioning import kb_versioning_service
+from src.tools.crm import crm_tool
+from src.tools.order_mgmt import order_mgmt_tool
+from src.tools.ticketing import ticketing_tool
+from src.tools.service_queries import ServiceQueryAdapter
 
 
 @pytest.mark.parametrize("intent,tool", [
@@ -99,3 +103,32 @@ async def test_incremental_seed_preserves_admin_content(db_session, monkeypatch)
     assert saved.content == "管理员维护的退款说明"
     await seed_kb.seed(only_missing=True)
     assert len(await kb_versioning_service.list_documents(db_session)) == 16
+
+
+@pytest.mark.parametrize("customer,name,order,intent,resource", [
+    ("cust_201", "张晓雨", "ORD-12001", "order_status", "shipments"),
+    ("cust_202", "李明", "ORD-12002", "warranty_claim", "warranties"),
+    ("cust_203", "星河科技（联系人：陈晨）", "ORD-12003", "billing_dispute", "billing"),
+])
+@pytest.mark.asyncio
+async def test_chinese_demo_customer_records_and_workflow(customer, name, order, intent, resource):
+    assert crm_tool.get_customer_profile(customer)["name"] == name
+    orders = order_mgmt_tool.get_order_history(customer)
+    assert orders[0]["order_id"] == order
+    assert orders[0]["currency"] == "CNY"
+    assert ticketing_tool.get_past_tickets(customer)
+    result = await tooling_agent.enrich({
+        "customer_id": customer, "intent": intent,
+        "memory_active_entities": {"order_id": order},
+    })
+    data = result["tool_context"]["service_query"]["data"]
+    assert data["status"] == "found"
+    assert data["records"][0]["order_id"] == order
+    assert all(call["status"] == "success" for call in result["tool_calls"])
+    assert service_query_adapter._query("cust_101", resource)["customer_id"] == "cust_101"
+
+
+def test_demo_adapter_instances_do_not_share_chinese_records():
+    first, second = ServiceQueryAdapter(), ServiceQueryAdapter()
+    first._records["cust_201"]["shipments"][0]["status"] = "tampered"
+    assert second.get_shipments("cust_201")["records"][0]["status"] == "in_transit"

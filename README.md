@@ -56,6 +56,8 @@ uvicorn src.main:app --reload
 新增查询工具按意图自动调用，管理员可在资源管理页查看和停用。示例客户 `cust_102` 有物流延迟和未申请发票记录，`cust_103` 有服务支持权益。未知客户返回 `not_found`；这些适配器没有接入真实物流、财务或维修服务。
 
 已有环境建议使用 `python scripts/seed_kb.py --only-missing`，只补充缺失文档，保留后台已编辑的内容。若 SQL 文档存在但向量目录丢失，应从后台执行重建索引，不能依赖此增量模式修复索引。
+
+用户页还可选择 3 个中文演示客户：张晓雨 `cust_201`（订单 `ORD-12001`，物流延迟）、李明 `cust_202`（订单 `ORD-12002`，设备保修）和星河科技联系人陈晨 `cust_203`（订单 `ORD-12003`，API 与发票）。这些人民币订单、客户与历史工单全部虚构，随代码加载，不需要数据库初始化。若 Railway 或本地环境已配置 `PUBLIC_DEMO_PROFILE_IDS`，需要将 `cust_201,cust_202,cust_203` 加入原有名单并重启后端，否则公开入口会拒绝新客户。
 LangGraph Checkpoint 默认启用：本地写入独立的 `.runtime/langgraph-checkpoints.sqlite`；使用 PostgreSQL DATABASE_URL 时自动切换到官方 PostgreSQL Saver。高风险请求返回审批草稿后 Workflow 保持暂停，人工审批会恢复原执行而不是重跑前置节点。
 
 Memory V1 在 `/chat` 和用户咨询页中按 `session_id + customer_id` 续接会话。SQL 保存结构化消息、摘要和显式业务实体，Redis 只是带 revision 的可选缓存；待审草稿不会进入后续 Prompt，仅在审批通过或人工修改后结算为 final 消息。

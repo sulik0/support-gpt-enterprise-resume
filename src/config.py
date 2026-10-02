@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     )
     TRUST_PROXY_HEADERS: bool = Field(default=False)
     PUBLIC_DEMO_ISOLATION_ENABLED: bool = Field(default=True)
-    PUBLIC_DEMO_PROFILE_IDS: str = Field(default="cust_101,cust_102,cust_103")
+    PUBLIC_DEMO_PROFILE_IDS: str = Field(default="cust_101,cust_102,cust_103,cust_201,cust_202,cust_203")
     PUBLIC_VISITOR_SECRET: Optional[str] = Field(default=None)
     PUBLIC_VISITOR_COOKIE_NAME: str = Field(default="supportgpt_visitor")
     PUBLIC_VISITOR_COOKIE_MAX_AGE_SECONDS: int = Field(

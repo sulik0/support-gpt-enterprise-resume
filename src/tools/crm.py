@@ -1,5 +1,7 @@
 import logging
 from typing import Dict, Any, Optional
+from copy import deepcopy
+from src.tools.chinese_demo_customers import CUSTOMERS
 
 logger = logging.getLogger("supportgpt.tools.crm")
 
@@ -30,6 +32,7 @@ class CRMTool:
                 "email": "alice@acme.org"
             }
         }
+        self.customers.update(deepcopy(CUSTOMERS))
 
     def get_customer_profile(self, customer_id: str) -> Dict[str, Any]:
         """Fetch customer profile data. Returns defaults if user doesn't exist."""

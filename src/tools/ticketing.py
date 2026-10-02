@@ -1,6 +1,8 @@
 import logging
 import datetime
 from typing import List, Dict, Any
+from copy import deepcopy
+from src.tools.chinese_demo_customers import TICKETS
 
 logger = logging.getLogger("supportgpt.tools.ticketing")
 
@@ -31,6 +33,7 @@ class TicketingTool:
                 }
             ]
         }
+        self.ticket_history.update(deepcopy(TICKETS))
 
     def get_past_tickets(self, customer_id: str) -> List[Dict[str, Any]]:
         """Fetch historical tickets for a customer."""

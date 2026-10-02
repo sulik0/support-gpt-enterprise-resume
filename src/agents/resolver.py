@@ -121,6 +121,7 @@ class ResolutionAgent:
                         "status",
                         "items",
                         "total_amount",
+                        "currency",
                         "order_date",
                     )
                     if order.get(key) is not None

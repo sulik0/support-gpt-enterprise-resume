@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from typing import Any
+from src.tools.chinese_demo_customers import SERVICE_RECORDS
 
 
 class ServiceQueryAdapter:
@@ -27,6 +28,10 @@ class ServiceQueryAdapter:
             "billing": [{"order_id": "ORD-9003", "payment_status": "paid", "amount": 5400.0, "currency": "USD", "invoice_status": "issued", "invoice_id": "INV-DEMO-9003"}],
         },
     }
+
+    def __init__(self):
+        # 每个实例独立复制演示数据，避免测试或调用方污染其他实例。
+        self._records = {**deepcopy(self._records), **deepcopy(SERVICE_RECORDS)}
 
     def _query(self, customer_id: str, resource: str) -> dict[str, Any]:
         # 无记录与不存在分开表达，不能据此承诺退款或维修。

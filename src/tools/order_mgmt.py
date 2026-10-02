@@ -1,6 +1,8 @@
 import logging
 import datetime
 from typing import List, Dict, Any
+from copy import deepcopy
+from src.tools.chinese_demo_customers import ORDERS
 
 logger = logging.getLogger("supportgpt.tools.order_mgmt")
 
@@ -37,6 +39,7 @@ class OrderManagementTool:
                 }
             ]
         }
+        self.orders.update(deepcopy(ORDERS))
 
     def get_order_history(self, customer_id: str) -> List[Dict[str, Any]]:
         """Fetch e-commerce order details for a customer."""

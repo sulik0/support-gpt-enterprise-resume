@@ -21,6 +21,12 @@ const EXAMPLE_QUESTIONS = [
   'API 一直超时，应该如何排查？',
 ];
 
+const DEMO_CUSTOMER_HINTS = {
+  cust_201: '演示订单 ORD-12001：699 元，已发货，物流延迟。可以询问配送进度或取消订单。',
+  cust_202: '演示订单 ORD-12002：1299 元，网关设备已签收，有模拟保修权益。可以询问维修申请。',
+  cust_203: '演示订单 ORD-12003：3999 元，企业 API 套餐已付款，发票处理中。可以询问发票或 API 429 故障。',
+};
+
 const WELCOME_MESSAGE = {
   role: 'assistant',
   content: '您好，我是 SupportGPT 智能客服。请告诉我您遇到的问题，我会直接回复处理结果；需要人工确认时也会明确告知您。',
@@ -281,8 +287,13 @@ export default function CustomerSupportPage({ onStaffEntry, onWorkflowEntry }) {
               <option value="cust_101">简·多伊（VIP 客户）</option>
               <option value="cust_102">约翰·史密斯（标准客户）</option>
               <option value="cust_103">艾克米公司（企业客户）</option>
+              <option value="cust_201">张晓雨（标准客户 · 物流延迟）</option>
+              <option value="cust_202">李明（VIP 客户 · 设备保修）</option>
+              <option value="cust_203">星河科技 / 陈晨（企业客户 · API 与发票）</option>
             </select>
           </label>
+
+          {DEMO_CUSTOMER_HINTS[customerId] && <p className="support-privacy">{DEMO_CUSTOMER_HINTS[customerId]}以上客户和记录均为虚构演示数据。</p>}
 
           <div className="support-conversation" aria-label="当前对话记录" aria-live="polite">
             {historyLoading ? (
