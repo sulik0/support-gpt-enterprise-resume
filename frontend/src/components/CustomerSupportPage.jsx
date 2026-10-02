@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock3,
   Headphones,
+  GitBranch,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -93,7 +94,7 @@ function historyTime(value) {
   }).format(new Date(normalized));
 }
 
-export default function CustomerSupportPage({ onStaffEntry }) {
+export default function CustomerSupportPage({ onStaffEntry, onWorkflowEntry }) {
   const [customerId, setCustomerId] = useState('cust_101');
   const [sessionId, setSessionId] = useState(() => sessionForCustomer('cust_101'));
   const [message, setMessage] = useState('');
@@ -241,11 +242,14 @@ export default function CustomerSupportPage({ onStaffEntry }) {
           <span><Sparkles size={20} /></span>
           <div><strong>SupportGPT</strong><small>智能客户服务</small></div>
         </div>
+        <div className="customer-header-actions">
+        {onWorkflowEntry && <button type="button" className="staff-entry" onClick={onWorkflowEntry}><GitBranch size={16} /> 项目架构</button>}
         {onStaffEntry && (
           <button type="button" className="staff-entry" onClick={onStaffEntry}>
             <Headphones size={16} /> 客服员工入口 <ArrowRight size={15} />
           </button>
         )}
+        </div>
       </header>
 
       <section className="customer-hero">

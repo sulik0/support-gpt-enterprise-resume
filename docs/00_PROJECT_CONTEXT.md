@@ -110,6 +110,8 @@ Observability
 
 ## Agent 工作流
 
+前端提供公开的 `/#workflow` 架构演示页，以及后台导航入口。页面按照当前 `graph.py` 展示 7 个主 Graph 节点，并明确 Tooling 与 Retriever 是 `context_enrichment` 内部并行分支。可查看各节点的输入、输出和设计说明，并逐步演示普通查询、退款待审批、输入安全拦截与上下文安全拦截。演示只在前端运行，不执行 Agent，不读取后台数据。
+
 ### AgentState
 
 LangGraph 使用 `AgentState` 作为节点间共享状态。关键字段分为：

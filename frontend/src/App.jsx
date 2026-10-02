@@ -5,11 +5,13 @@ import TicketList from './components/TicketList';
 import TicketDetails from './components/TicketDetails';
 import ObservabilityPage from './components/ObservabilityPage';
 import ResourceManagementPage from './components/ResourceManagementPage';
+import WorkflowPage from './components/WorkflowPage';
 import { translateRole } from './i18n';
 import {
   Activity,
   ArrowLeft,
   Headphones,
+  GitBranch,
   LibraryBig,
   LayoutDashboard,
   LogOut,
@@ -22,7 +24,7 @@ export default function App() {
   const staffEntryEnabled = import.meta.env.VITE_STAFF_ENTRY_ENABLED !== 'false';
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('token')));
   const [entryMode, setEntryMode] = useState(() => (
-    window.location.hash === '#support' ? 'customer' : localStorage.getItem('token') ? 'staff' : 'customer'
+    window.location.hash === '#workflow' ? 'workflow' : window.location.hash === '#support' ? 'customer' : localStorage.getItem('token') ? 'staff' : 'customer'
   ));
   const [userRole, setUserRole] = useState(() => localStorage.getItem('role') || '');
   const [username, setUsername] = useState(() => localStorage.getItem('username') || '');
@@ -35,6 +37,17 @@ export default function App() {
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState('');
   const [serviceStatus, setServiceStatus] = useState('checking');
+
+  // 架构演示使用公开 hash 入口，不加载受保护的后台数据。
+  useEffect(() => {
+    function handleHashChange() {
+      if (window.location.hash === '#workflow') setEntryMode('workflow');
+      else if (window.location.hash === '#support') setEntryMode('customer');
+      else if (window.location.hash === '#staff') setEntryMode('staff');
+    }
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated && entryMode === 'staff') {
@@ -121,8 +134,18 @@ export default function App() {
     attention: tickets.filter((ticket) => ['urgent', 'high'].includes(ticket.priority)).length,
   }), [tickets]);
 
+  if (entryMode === 'workflow') {
+    return <main className="wf-public"><WorkflowPage onBack={() => {
+      window.location.hash = 'support';
+      setEntryMode('customer');
+    }} /></main>;
+  }
+
   if (entryMode === 'customer') {
-    return <CustomerSupportPage onStaffEntry={staffEntryEnabled ? () => {
+    return <CustomerSupportPage onWorkflowEntry={() => {
+      window.location.hash = 'workflow';
+      setEntryMode('workflow');
+    }} onStaffEntry={staffEntryEnabled ? () => {
       window.location.hash = 'staff';
       setEntryMode('staff');
     } : null} />;
@@ -163,6 +186,7 @@ export default function App() {
   const canManageResources = userRole === 'admin';
   const isObservabilityView = activeView === 'observability' && canViewObservability;
   const isResourceView = activeView === 'resources' && canManageResources;
+  const isWorkflowView = activeView === 'workflow';
 
   return (
     <div className="app-shell">
@@ -176,6 +200,9 @@ export default function App() {
           <span className="sidebar-nav-label">工作空间</span>
           <button className={activeView === 'workspace' ? 'active' : ''} onClick={() => setActiveView('workspace')}>
             <LayoutDashboard size={18} /><span>人工处理台</span><em>{workspaceStats.active}</em>
+          </button>
+          <button className={isWorkflowView ? 'active' : ''} onClick={() => setActiveView('workflow')}>
+            <GitBranch size={18} /><span>Workflow 架构演示</span>
           </button>
           {canViewObservability && (
             <button className={activeView === 'observability' ? 'active' : ''} onClick={() => setActiveView('observability')}>
@@ -208,10 +235,10 @@ export default function App() {
       <div className="app-main">
         <header className="app-topbar">
           <div>
-            <span className="topbar-eyebrow">{isResourceView ? '能力与内容治理' : isObservabilityView ? '系统运行洞察' : '人工审核中心'}</span>
-            <h1>{isResourceView ? '资源管理' : isObservabilityView ? 'Agent 可观测性' : '异常与待审批工单'}</h1>
+            <span className="topbar-eyebrow">{isWorkflowView ? '项目流程与架构' : isResourceView ? '能力与内容治理' : isObservabilityView ? '系统运行洞察' : '人工审核中心'}</span>
+            <h1>{isWorkflowView ? 'Workflow 架构演示' : isResourceView ? '资源管理' : isObservabilityView ? 'Agent 可观测性' : '异常与待审批工单'}</h1>
           </div>
-          {!isObservabilityView && !isResourceView && (
+          {!isObservabilityView && !isResourceView && !isWorkflowView && (
             <button className="icon-button" onClick={loadTickets} disabled={ticketsLoading} title="刷新工单" aria-label="刷新工单">
               <RefreshCw size={17} className={ticketsLoading ? 'spin' : ''} />
             </button>
@@ -219,7 +246,9 @@ export default function App() {
         </header>
 
         <div className="app-content">
-          {isResourceView ? (
+          {isWorkflowView ? (
+            <WorkflowPage />
+          ) : isResourceView ? (
             <ResourceManagementPage />
           ) : isObservabilityView ? (
             <ObservabilityPage />

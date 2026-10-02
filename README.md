@@ -31,6 +31,8 @@ SupportGPT Enterprise 是面向售后客服场景的 Agent 平台。系统将初
 | Memory | SQL 结构化会话为事实源、Redis revision Cache、有界上下文、实体续接与 HITL 结算 |
 | Frontend | 用户咨询与评价页、客服审批后台、Agent 可观测页 |
 
+用户页顶部“项目架构”和后台“Workflow 架构演示”可打开完整流程说明。也可以直接访问前端地址的 `/#workflow`，无需登录。页面支持节点详情和四种场景的逐步演示，展示并行 Tool/RAG、安全短路与人工审批恢复；不调用后端或模型，不展示真实客户数据，不代替 Agent Trace。
+
 ## 快速启动
 
 ### 后端
