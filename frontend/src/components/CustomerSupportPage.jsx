@@ -260,9 +260,9 @@ export default function CustomerSupportPage({ onStaffEntry, onWorkflowEntry }) {
 
       <section className="customer-hero">
         <div className="customer-hero-copy">
-          <span className="customer-eyebrow"><ShieldCheck size={15} /> 安全、专业、可追踪</span>
+          <span className="customer-eyebrow"><ShieldCheck size={15} /> 智能客服演示</span>
           <h1>您好，需要什么帮助？</h1>
-          <p>描述您的问题，智能客服会查询相关业务信息和服务政策。复杂或高风险问题将自动转交人工客服。</p>
+          <p>请描述您的问题，智能客服会查询相关资料和服务政策。需要确认风险、核对回复或审批操作时，系统会转交人工客服。</p>
           <div className="customer-capabilities">
             <span><CheckCircle2 size={15} /> 订单与物流</span>
             <span><CheckCircle2 size={15} /> 退款与售后</span>
@@ -335,9 +335,9 @@ export default function CustomerSupportPage({ onStaffEntry, onWorkflowEntry }) {
             <div className={`support-status-panel ${result.handling_reason || 'manual_review'}`} role="status">
               {result.handling_reason === 'processing_exception' ? <AlertTriangle size={18} /> : <Clock3 size={18} />}
               <div>
-                <strong>{result.handling_reason === 'risk_review' ? '该请求需要安全核验'
-                  : result.handling_reason === 'processing_exception' ? '部分处理环节出现异常'
-                    : result.handling_reason === 'quality_review' ? '回复需要质量复核' : '已转交人工客服'}</strong>
+                <strong>{result.handling_reason === 'risk_review' ? '需要人工确认请求是否安全'
+                  : result.handling_reason === 'processing_exception' ? '处理过程中出现了异常'
+                    : result.handling_reason === 'quality_review' ? '需要人工检查回复是否可靠' : '已转交人工客服'}</strong>
                 <span>{result.message}</span>
               </div>
             </div>
@@ -409,7 +409,7 @@ export default function CustomerSupportPage({ onStaffEntry, onWorkflowEntry }) {
                 ? <><RefreshCw className="spin" size={17} /> 正在处理…</>
                 : <><Send size={17} /> 发送问题</>}
             </button>
-            <p className="support-privacy"><ShieldCheck size={13} /> 敏感信息会被脱敏；风险或处理异常会明确反馈并转交人工。</p>
+            <p className="support-privacy"><ShieldCheck size={13} /> 系统会隐藏识别出的敏感信息。请勿发送密码、验证码或密钥；需要人工处理时，页面会说明情况。</p>
           </form>
         </div>
       </section>

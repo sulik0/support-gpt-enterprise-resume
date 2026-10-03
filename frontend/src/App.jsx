@@ -202,11 +202,11 @@ export default function App() {
             <LayoutDashboard size={18} /><span>人工处理台</span><em>{workspaceStats.active}</em>
           </button>
           <button className={isWorkflowView ? 'active' : ''} onClick={() => setActiveView('workflow')}>
-            <GitBranch size={18} /><span>Workflow 架构演示</span>
+            <GitBranch size={18} /><span>Agent 处理流程</span>
           </button>
           {canViewObservability && (
             <button className={activeView === 'observability' ? 'active' : ''} onClick={() => setActiveView('observability')}>
-              <Activity size={18} /><span>Agent 可观测性</span>
+              <Activity size={18} /><span>Agent 运行监控</span>
             </button>
           )}
           {canManageResources && (
@@ -220,7 +220,7 @@ export default function App() {
           <div className="runtime-title"><ShieldCheck size={15} /> {
             serviceStatus === 'healthy' ? 'Agent 服务正常'
               : serviceStatus === 'checking' ? '正在检查 Agent 服务'
-                : serviceStatus === 'degraded' ? 'Agent 服务状态异常' : 'Agent 服务不可达'
+                : serviceStatus === 'degraded' ? 'Agent 服务状态异常' : '无法连接 Agent 服务'
           }</div>
           <p>{serviceStatus === 'healthy' ? '普通问题自动处理，异常请求进入当前人工队列。' : '当前状态来自后端健康检查。'}</p>
         </div>
@@ -235,8 +235,8 @@ export default function App() {
       <div className="app-main">
         <header className="app-topbar">
           <div>
-            <span className="topbar-eyebrow">{isWorkflowView ? '项目流程与架构' : isResourceView ? '能力与内容治理' : isObservabilityView ? '系统运行洞察' : '人工审核中心'}</span>
-            <h1>{isWorkflowView ? 'Workflow 架构演示' : isResourceView ? '资源管理' : isObservabilityView ? 'Agent 可观测性' : '异常与待审批工单'}</h1>
+            <span className="topbar-eyebrow">{isWorkflowView ? '系统怎样处理用户问题' : isResourceView ? '工具与知识管理' : isObservabilityView ? '查看请求处理情况' : '需要人工处理的工单'}</span>
+            <h1>{isWorkflowView ? 'Agent 处理流程' : isResourceView ? '资源管理' : isObservabilityView ? 'Agent 运行监控' : '异常与待审批工单'}</h1>
           </div>
           {!isObservabilityView && !isResourceView && !isWorkflowView && (
             <button className="icon-button" onClick={loadTickets} disabled={ticketsLoading} title="刷新工单" aria-label="刷新工单">
@@ -258,7 +258,7 @@ export default function App() {
                 <div>
                   <span className="workspace-eyebrow"><Headphones size={14} /> 人工处理队列</span>
                   <h2>{workspaceStats.active > 0 ? `还有 ${workspaceStats.active} 张异常工单等待确认` : '当前没有需要人工处理的工单'}</h2>
-                  <p>普通问题已由 Agent 自动回复；这里仅保留高风险、低置信度、质量异常或需要人工审批的工单。</p>
+                  <p>普通问题由 Agent 自动回复。这里列出需要人工确认风险、核对回复或审批操作的工单。</p>
                 </div>
                 <div className="workspace-hero-actions">
                   {workspaceStats.attention > 0 && <span className="attention-pill">{workspaceStats.attention} 张高优工单</span>}

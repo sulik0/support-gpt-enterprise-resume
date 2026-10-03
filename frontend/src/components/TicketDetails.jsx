@@ -117,10 +117,10 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
         <span className="empty-state-icon"><ClipboardCheck size={34} /></span>
         <span className="section-label">等待处理</span>
         <h2>从人工队列中选择一张工单</h2>
-        <p>普通问题会自动回复；这里只展示 Agent 判定为高风险、低置信度或需要人工审批的已保存结果。</p>
+        <p>普通问题由 Agent 自动回复。这里显示需要人工确认或审批的工单；选择一张即可查看已保存的回复和处理原因。</p>
         <div className="empty-workflow">
-          <span>1. 理解诉求</span><i />
-          <span>2. 补全上下文</span><i />
+          <span>1. 理解问题</span><i />
+          <span>2. 查询相关资料</span><i />
           <span>3. 生成回复</span><i />
           <span>4. 人工确认</span>
         </div>
@@ -149,10 +149,10 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
             <span className={`priority-chip priority-${ticket.priority || 'medium'}`}>{translatePriority(ticket.priority)}优先级</span>
           </div>
           <h2>{translateSubject(ticket.subject)}</h2>
-          <p>客户 {ticket.customer_id} · 处理结果知识库 {chatOutput?.kb_version || '加载中'}</p>
+          <p>客户 {ticket.customer_id} · 本次使用的知识库版本：{chatOutput?.kb_version || '加载中'}</p>
         </div>
         <button className="btn btn-secondary compact-button" onClick={() => loadDetails(ticket)} disabled={loading}>
-          <RefreshCw size={15} className={loading ? 'spin' : ''} /> 刷新保存结果
+          <RefreshCw size={15} className={loading ? 'spin' : ''} /> 刷新已保存的结果
         </button>
       </header>
 
@@ -165,12 +165,12 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
 
       <div className="case-context-grid">
         <article className="detail-card issue-card">
-          <div className="card-heading"><span className="card-icon blue"><FileText size={17} /></span><div><span>客户原始诉求</span><small>Agent 分析的输入内容</small></div></div>
+          <div className="card-heading"><span className="card-icon blue"><FileText size={17} /></span><div><span>客户提出的问题</span><small>客户提交的原始内容</small></div></div>
           <p>{ticket.description}</p>
         </article>
 
         <article className="detail-card customer-card">
-          <div className="card-heading"><span className="card-icon purple"><User size={17} /></span><div><span>客户上下文</span><small>来自客户关系管理系统</small></div></div>
+          <div className="card-heading"><span className="card-icon purple"><User size={17} /></span><div><span>客户资料</span><small>来自本地 CRM 演示适配器</small></div></div>
           {customer ? (
             <div className="customer-facts">
               <div><span>客户</span><strong>{customer.name}</strong></div>
@@ -178,7 +178,7 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
               <div><span>未结工单</span><strong>{customer.open_tickets_count}</strong></div>
               <div><span>最近订单</span><strong>{recentOrders.length}</strong></div>
             </div>
-          ) : <div className="context-placeholder">正在获取客户画像…</div>}
+          ) : <div className="context-placeholder">正在读取客户资料…</div>}
         </article>
       </div>
 
@@ -200,13 +200,13 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
       {loading && (
         <div className="agent-loading-card">
           <span className="agent-orbit"><Sparkles size={22} /></span>
-          <div><strong>正在加载已保存的 Agent 结果</strong><p>正在读取客户上下文、引用依据与回复草稿，请稍候……</p></div>
+          <div><strong>正在读取已保存的处理结果</strong><p>正在加载客户资料、引用文档和回复草稿，请稍候……</p></div>
           <span className="loading-dots"><i /><i /><i /></span>
         </div>
       )}
 
       {!loading && loadError && (
-        <div className="detail-error"><AlertTriangle size={19} /><div><strong>本次 Agent 运行失败</strong><span>{loadError}</span></div><button className="btn btn-secondary" onClick={loadDetails}>重试</button></div>
+        <div className="detail-error"><AlertTriangle size={19} /><div><strong>处理结果加载失败</strong><span>{loadError}</span></div><button className="btn btn-secondary" onClick={loadDetails}>重新加载</button></div>
       )}
 
       {!loading && chatOutput && (
@@ -214,12 +214,12 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
           <header className="assistant-heading">
             <div className="assistant-title">
               <span className="assistant-logo"><Sparkles size={19} /></span>
-              <div><span>SupportGPT 建议</span><small>已完成检索、工具调用与质量校验</small></div>
+              <div><span>SupportGPT 回复建议</span><small>已保存的回复和检查结果</small></div>
             </div>
             <div className="assistant-badges">
               <span className="evidence-badge"><BookOpen size={13} /> {citations.length} 条知识依据</span>
               {chatOutput.qa_score != null && <span className="evidence-badge">QA {chatOutput.qa_score.toFixed(2)}</span>}
-              {chatOutput.hallucination_detected && <span className="risk-badge"><ShieldAlert size={13} /> 幻觉风险</span>}
+              {chatOutput.hallucination_detected && <span className="risk-badge"><ShieldAlert size={13} /> 回复可能缺少依据</span>}
               {chatOutput.approval_required
                 ? <span className="review-badge"><ShieldAlert size={13} /> 待人工审批</span>
                 : <span className="passed-badge"><CheckCircle2 size={13} /> 自动校验通过</span>}
@@ -230,7 +230,7 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
             <div className="escalation-banner">
               <ShieldAlert size={19} />
               <div>
-                <strong>建议升级人工处理</strong>
+                <strong>建议交给人工处理</strong>
                 <span>{reviewReasons[0] || '该工单需要人工复核。'}</span>
                 {reviewReasons.length > 1 && (
                   <ul className="escalation-reasons">
@@ -250,7 +250,7 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
 
           <div className="draft-section">
             <div className="draft-label"><div><strong>回复草稿</strong><span>发送前可直接编辑</span></div><span>{editedResponse.length} 字</span></div>
-            <textarea value={editedResponse} onChange={(event) => setEditedResponse(event.target.value)} placeholder="Agent 回复草稿将在这里生成……" />
+            <textarea value={editedResponse} onChange={(event) => setEditedResponse(event.target.value)} placeholder="已保存的 Agent 回复草稿会显示在这里……" />
           </div>
 
           <details className="reference-disclosure">
@@ -273,7 +273,7 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
               {chatOutput.approval_required ? (
                 <>
                   <button onClick={() => handleApproval('approved')} className="btn btn-primary" disabled={responseChanged}><CheckCircle2 size={16} /> 批准原回复</button>
-                  <button onClick={() => handleApproval('modified')} className="btn btn-secondary" disabled={!responseChanged}>发送人工修改</button>
+                  <button onClick={() => handleApproval('modified')} className="btn btn-secondary" disabled={!responseChanged}>批准修改后的回复</button>
                   <button onClick={() => handleApproval('rejected')} className="btn btn-danger"><XCircle size={16} /> 拒绝回复</button>
                 </>
               ) : <span className="no-review-needed"><CheckCircle2 size={16} /> 此回复无需人工审批</span>}
@@ -290,11 +290,11 @@ export default function TicketDetails({ ticket, userRole, onActionComplete }) {
 
           {evaluation && (
             <section className="evaluation-panel">
-              <div className="evaluation-heading"><div><span>离线质量评测</span><small>Ragas + DeepEval</small></div><CheckCircle2 size={19} /></div>
+              <div className="evaluation-heading"><div><span>本次回复的质量评测</span><small>Ragas + DeepEval</small></div><CheckCircle2 size={19} /></div>
               <div className="evaluation-grid">
-                <div><span>忠实度</span><strong>{evaluation.faithfulness_score}</strong></div>
-                <div><span>幻觉率</span><strong className={evaluation.hallucination_rate > 0.3 ? 'score-risk' : ''}>{evaluation.hallucination_rate}</strong></div>
-                <div><span>上下文召回</span><strong>{evaluation.context_recall}</strong></div>
+                <div><span>与依据一致程度</span><strong>{evaluation.faithfulness_score}</strong></div>
+                <div><span>无依据内容比例</span><strong className={evaluation.hallucination_rate > 0.3 ? 'score-risk' : ''}>{evaluation.hallucination_rate}</strong></div>
+                <div><span>相关资料召回率</span><strong>{evaluation.context_recall}</strong></div>
                 <div><span>回答相关性</span><strong>{evaluation.answer_relevance}</strong></div>
               </div>
             </section>

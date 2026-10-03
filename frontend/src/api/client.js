@@ -146,7 +146,7 @@ export async function submitChat(message, customerId, sessionId, kbVersion = 'v1
     headers: getHeaders(),
     body: JSON.stringify({ message, customer_id: customerId, session_id: sessionId, kb_version: kbVersion }),
   });
-  if (!response.ok) throw new Error('智能体对话请求失败');
+  if (!response.ok) throw new Error('对话请求失败');
   return response.json();
 }
 
@@ -157,7 +157,7 @@ export async function fetchCustomerContext(customerId, signal) {
     body: JSON.stringify({ customer_id: customerId }),
     signal,
   });
-  if (!response.ok) throw new Error('加载客户画像失败');
+  if (!response.ok) throw new Error('加载客户资料失败');
   return response.json();
 }
 
@@ -208,7 +208,7 @@ export async function fetchAgentRun(agentRunId) {
 
 export async function fetchAdminTools() {
   const response = await authenticatedFetch(`${BASE_URL}/admin/resources/tools`);
-  if (!response.ok) throw await apiError(response, '加载 Tool 清单失败');
+  if (!response.ok) throw await apiError(response, '加载工具列表失败');
   return response.json();
 }
 
@@ -217,13 +217,13 @@ export async function updateAdminTool(toolName, enabled, reason) {
     method: 'PUT',
     body: JSON.stringify({ enabled, reason: reason || null }),
   });
-  if (!response.ok) throw await apiError(response, '更新 Tool 状态失败');
+  if (!response.ok) throw await apiError(response, '更新工具状态失败');
   return response.json();
 }
 
 export async function fetchAdminPrompts() {
   const response = await authenticatedFetch(`${BASE_URL}/admin/resources/prompts`);
-  if (!response.ok) throw await apiError(response, '加载 Prompt Registry 失败');
+  if (!response.ok) throw await apiError(response, '加载提示词版本失败');
   return response.json();
 }
 
@@ -232,7 +232,7 @@ export async function createPromptCandidate(payload) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw await apiError(response, '创建 Prompt 候选版本失败');
+  if (!response.ok) throw await apiError(response, '创建提示词候选版本失败');
   return response.json();
 }
 

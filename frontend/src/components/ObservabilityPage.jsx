@@ -22,18 +22,24 @@ const LANGSMITH_PROJECT_URL = import.meta.env.VITE_LANGSMITH_PROJECT_URL || 'htt
 const HAS_PROJECT_URL = Boolean(import.meta.env.VITE_LANGSMITH_PROJECT_URL);
 
 const NODE_LABELS = {
+  analyzer: '分析问题',
+  skill_selector: '选择处理能力',
+  context_enrichment: '查询业务和知识',
+  resolver: '生成回复',
+  approval_gate: '检查是否需要审批',
+  human_approval: '人工审批后继续',
   ticket_analyzer: '工单分析',
   tool_call: '工具调用',
   retriever: '知识检索',
   llm_generation: '回复生成',
-  qa: '质量校验',
-  escalation: '升级判断',
+  qa: '检查回复质量',
+  escalation: '判断是否转人工',
 };
 
 const STRATEGY_LABELS = {
-  rule: 'Rule 规则',
-  jev: 'Jev 决策',
-  llm: 'LLM 识别',
+  rule: '规则处理',
+  jev: 'Jev 判断',
+  llm: 'LLM（大模型）判断',
   not_run: '未执行',
   unknown: '未知',
 };
@@ -43,7 +49,7 @@ const INTENT_LABELS = {
   outage_report: 'API / 服务故障',
   order_cancellation: '订单取消',
   order_status: '订单状态',
-  account_support: '账户支持',
+  account_support: '账户异常',
   warranty_claim: '保修申请',
   feedback: '用户反馈',
   information_request: '信息咨询',
@@ -113,10 +119,10 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
   const analyzer = snapshot?.analyzer_result || {};
   return (
     <div className="obs-detail-backdrop" onClick={onClose}>
-      <aside className="obs-detail-panel" role="dialog" aria-modal="true" aria-label="Agent Run 详情" onClick={(event) => event.stopPropagation()}>
+      <aside className="obs-detail-panel" role="dialog" aria-modal="true" aria-label="Agent 运行详情" onClick={(event) => event.stopPropagation()}>
         <div className="obs-detail-header">
           <div>
-            <span className="obs-eyebrow">Agent Run</span>
+            <span className="obs-eyebrow">AgentRun（运行记录）</span>
             <h2>{run?.id || '正在加载…'}</h2>
           </div>
           <button className="obs-icon-button" onClick={onClose} aria-label="关闭运行详情">
@@ -129,7 +135,7 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
         ) : (
           <div className="obs-detail-content">
             <section className="obs-detail-section">
-              <h3>Trace 关联</h3>
+              <h3>查看本次调用过程</h3>
               <div className="obs-trace-box">
                 <code>{run.trace_id || '本次运行未采集 Trace ID'}</code>
                 {run.trace_id && (
@@ -141,11 +147,11 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
               <a className="btn btn-primary obs-link-button" href={LANGSMITH_PROJECT_URL} target="_blank" rel="noreferrer">
                 在 LangSmith 中查看 <ExternalLink size={15} />
               </a>
-              <p className="obs-helper">打开 Project 后使用上方 Trace ID 定位完整 Span 链路。</p>
+              <p className="obs-helper">打开 LangSmith 项目后，用上方 Trace ID 搜索本次请求，查看各节点和服务调用的详情。</p>
             </section>
 
             <section className="obs-detail-section">
-              <h3>Workflow 路径</h3>
+              <h3>本次执行了哪些步骤？</h3>
               <div className="obs-workflow">
                 {(run.workflow_path || []).map((node, index) => (
                   <React.Fragment key={`${node}-${index}`}>
@@ -157,26 +163,26 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
             </section>
 
             <section className="obs-detail-section">
-              <h3>执行快照</h3>
+              <h3>本次运行的配置与结果</h3>
               <dl className="obs-kv-grid">
                 <div><dt>模型</dt><dd>{run.model_provider} / {run.model_name}</dd></div>
-                <div><dt>Prompt</dt><dd>{run.prompt_version}</dd></div>
-                <div><dt>Workflow</dt><dd>{run.workflow_version}</dd></div>
-                <div><dt>Skill</dt><dd>{run.skill_selection ? `${run.skill_selection.skill_name} / ${run.skill_selection.skill_version}` : '-'}</dd></div>
-                <div><dt>Skill 路由</dt><dd>{run.skill_selection?.selection_strategy || '-'}</dd></div>
-                <div><dt>Analyzer 方式</dt><dd>{snapshot ? <StrategyBadge value={snapshot.analyzer_strategy} /> : '-'}</dd></div>
-                <div><dt>QA 方式</dt><dd>{snapshot ? <StrategyBadge value={snapshot.qa_strategy} /> : '-'}</dd></div>
+                <div><dt>提示词版本</dt><dd>{run.prompt_version}</dd></div>
+                <div><dt>流程版本</dt><dd>{run.workflow_version}</dd></div>
+                <div><dt>所用 Skill</dt><dd>{run.skill_selection ? `${run.skill_selection.skill_name} / ${run.skill_selection.skill_version}` : '-'}</dd></div>
+                <div><dt>Skill 选择方式</dt><dd>{run.skill_selection?.selection_strategy === 'intent_rule' ? '按问题分类选择' : run.skill_selection?.selection_strategy || '-'}</dd></div>
+                <div><dt>问题分析方式</dt><dd>{snapshot ? <StrategyBadge value={snapshot.analyzer_strategy} /> : '-'}</dd></div>
+                <div><dt>回复检查方式</dt><dd>{snapshot ? <StrategyBadge value={snapshot.qa_strategy} /> : '-'}</dd></div>
                 <div><dt>知识库</dt><dd>{run.kb_version}</dd></div>
-                <div><dt>延迟</dt><dd>{run.latency_seconds.toFixed(3)}s</dd></div>
-                <div><dt>Token</dt><dd>{run.tokens_input + run.tokens_output}</dd></div>
-                <div><dt>QA Score</dt><dd>{run.qa_score == null ? '-' : run.qa_score.toFixed(2)}</dd></div>
+                <div><dt>处理耗时</dt><dd>{run.latency_seconds.toFixed(3)}s</dd></div>
+                <div><dt>Token 用量</dt><dd>{run.tokens_input + run.tokens_output}</dd></div>
+                <div><dt>QA 评分</dt><dd>{run.qa_score == null ? '-' : run.qa_score.toFixed(2)}</dd></div>
                 <div><dt>人工审批</dt><dd>{run.approval_required ? '需要' : '不需要'}</dd></div>
               </dl>
 
               {snapshot ? (
                 <div className="obs-analyzer-snapshot">
                   <div className="obs-snapshot-heading">
-                    <div><strong>Analyzer 分析结果</strong><span>工单进入后续 Skill 和 Tool 路由时使用的快照</span></div>
+                    <div><strong>Analyzer（问题分析）结果</strong><span>系统根据这些结果选择后续 Skill 和工具</span></div>
                     <StrategyBadge value={snapshot.analyzer_strategy} />
                   </div>
                   <dl className="obs-analyzer-grid">
@@ -188,7 +194,7 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
                   </dl>
                 </div>
               ) : (
-                <p className="obs-snapshot-unavailable">该记录生成于节点快照上线前，无法还原 Analyzer / QA 的决策方式。</p>
+                <p className="obs-snapshot-unavailable">这是一条旧记录，没有保存 Analyzer 和 QA 当时使用的处理方式。</p>
               )}
             </section>
 
@@ -201,12 +207,12 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
                     <span>{tool.tool_name || '未命名工具'}</span>
                     <em>{tool.status || '未知'}</em>
                   </div>
-                )) : <p>本次运行没有 Tool Calling 记录。</p>}
+                )) : <p>本次运行没有记录工具调用。</p>}
                 {(run.citations || []).map((citation, index) => (
                   <div key={`${citation.source}-${index}`}>
                     <Sparkles size={15} />
                     <span>{citation.source || '未命名知识来源'}</span>
-                    <em>citation</em>
+                    <em>知识引用</em>
                   </div>
                 ))}
               </div>
@@ -214,7 +220,7 @@ function RunDetail({ run, loading, onClose, onCopyTrace, copiedTrace }) {
 
             {(run.workflow_errors || []).length > 0 && (
               <section className="obs-detail-section obs-error-section">
-                <h3><AlertTriangle size={16} /> Workflow 异常</h3>
+                <h3><AlertTriangle size={16} /> 执行过程中出现的异常</h3>
                 {run.workflow_errors.map((error, index) => <p key={index}>{error}</p>)}
               </section>
             )}
@@ -290,7 +296,7 @@ export default function ObservabilityPage() {
     const normalized = ticketQuery.trim().replace(/^#/, '');
     const nextTicketId = Number(normalized);
     if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(nextTicketId) || nextTicketId < 1) {
-      setError('请输入有效的正整数工单编号。');
+      setError('请输入大于 0 的工单编号，例如 123。');
       return;
     }
     setError('');
@@ -313,9 +319,9 @@ export default function ObservabilityPage() {
     <section className="observability-page">
       <div className="obs-hero glass-card">
         <div>
-          <span className="obs-eyebrow"><Activity size={14} /> Agent Observability</span>
-          <h2>LangSmith 链路观测</h2>
-          <p>从 Agent Run 快照定位 Trace ID，再进入 LangSmith 查看 Workflow、LLM、Retriever 和 Tool Span。</p>
+          <span className="obs-eyebrow"><Activity size={14} /> Agent 运行监控</span>
+          <h2>查看 Agent 怎样处理每次请求</h2>
+          <p>先查找运行记录，再用 Trace ID 到 LangSmith 查看流程步骤、模型调用、知识检索和工具调用。</p>
         </div>
         <div className="obs-hero-actions">
           <button className="btn btn-secondary" onClick={loadRuns} disabled={loading}>
@@ -330,21 +336,21 @@ export default function ObservabilityPage() {
       {!HAS_PROJECT_URL && (
         <div className="obs-config-notice">
           <ShieldAlert size={17} />
-          当前未配置具体 Project URL，按钮将打开 LangSmith 首页。可在前端环境变量中设置 <code>VITE_LANGSMITH_PROJECT_URL</code>。
+          还没有设置 LangSmith 项目地址，按钮会打开首页。请在前端环境变量中设置 <code>VITE_LANGSMITH_PROJECT_URL</code>。
         </div>
       )}
 
       <div className="obs-summary-grid">
-        <SummaryCard icon={<Route size={20} />} label="Agent Run" value={page.total} hint="已持久化总数" />
-        <SummaryCard icon={<Clock3 size={20} />} label="本页平均延迟" value={`${summary.averageLatency.toFixed(2)}s`} hint={`当前 ${page.items.length} 条运行`} />
-        <SummaryCard icon={<Bot size={20} />} label="本页 Token" value={summary.totalTokens.toLocaleString()} hint="输入 + 输出" />
-        <SummaryCard icon={<ShieldAlert size={20} />} label="本页人工介入" value={summary.reviewCount} hint="升级 / 审批" />
+        <SummaryCard icon={<Route size={20} />} label="运行记录数" value={page.total} hint="符合当前查询条件的记录" />
+        <SummaryCard icon={<Clock3 size={20} />} label="本页平均耗时" value={`${summary.averageLatency.toFixed(2)}s`} hint={`按本页 ${page.items.length} 条记录计算`} />
+        <SummaryCard icon={<Bot size={20} />} label="本页 Token 用量" value={summary.totalTokens.toLocaleString()} hint="模型输入与输出合计" />
+        <SummaryCard icon={<ShieldAlert size={20} />} label="本页建议人工处理" value={summary.reviewCount} hint="需转人工或审批的运行记录" />
       </div>
 
       <div className="obs-runs-card glass-card">
         <div className="obs-table-heading">
           <div>
-            <h3>Agent Run 列表</h3>
+            <h3>Agent 运行记录</h3>
             <p>{ticketFilter ? `正在查看工单 #${ticketFilter} 的运行记录` : '仅主管和管理员可查看'}</p>
           </div>
           <div className="obs-table-controls">
@@ -355,7 +361,7 @@ export default function ObservabilityPage() {
                 value={ticketQuery}
                 onChange={(event) => setTicketQuery(event.target.value)}
                 placeholder="按工单编号查询"
-                aria-label="按工单编号查询 Agent Run"
+                aria-label="按工单编号查询运行记录"
               />
               <button type="submit" className="btn btn-secondary" disabled={loading}>查询</button>
               {ticketFilter && <button type="button" className="btn btn-quiet" onClick={clearTicketSearch}>清除</button>}
@@ -366,13 +372,13 @@ export default function ObservabilityPage() {
 
         {error && <div className="obs-error-banner"><AlertTriangle size={17} /> {error}</div>}
         {loading ? (
-          <div className="obs-empty"><RefreshCw className="spin" size={20} /> 正在加载 Agent Run…</div>
+          <div className="obs-empty"><RefreshCw className="spin" size={20} /> 正在加载运行记录…</div>
         ) : page.items.length === 0 ? (
-          <div className="obs-empty">{ticketFilter ? `工单 #${ticketFilter} 暂无 Agent Run。` : <>暂无 Agent Run，请先执行一次 <code>/chat</code>。</>}</div>
+          <div className="obs-empty">{ticketFilter ? `工单 #${ticketFilter} 还没有运行记录。` : '还没有运行记录。请先在用户咨询页提交一个问题，或创建一张工单。'}</div>
         ) : (
           <div className="obs-table-wrap">
             <table className="obs-table">
-              <thead><tr><th>北京时间</th><th>工单</th><th>Run / Trace</th><th>Workflow</th><th>质量</th><th>消耗</th><th>状态</th></tr></thead>
+              <thead><tr><th>北京时间</th><th>工单</th><th>运行 / Trace 编号</th><th>执行步骤</th><th>回复质量</th><th>耗时与用量</th><th>状态</th></tr></thead>
               <tbody>
                 {page.items.map((run) => {
                   const status = runStatus(run);
@@ -381,8 +387,8 @@ export default function ObservabilityPage() {
                       <td>{formatDate(run.created_at)}</td>
                       <td>{run.ticket_id ? <strong>#{run.ticket_id}</strong> : <span>-</span>}</td>
                       <td><code>{run.id.slice(0, 8)}</code><small>{run.trace_id ? `Trace ${run.trace_id.slice(0, 10)}…` : '无 Trace ID'}</small></td>
-                      <td><strong>{run.workflow_path?.length || 0} 节点</strong><small>{run.model_name}</small></td>
-                      <td><strong>{run.qa_score == null ? '-' : run.qa_score.toFixed(2)}</strong><small>{run.hallucination_detected ? '幻觉风险' : '未检出幻觉'}</small></td>
+                      <td><strong>{run.workflow_path?.length || 0} 个步骤</strong><small>{run.model_name}</small></td>
+                      <td><strong>{run.qa_score == null ? '-' : run.qa_score.toFixed(2)}</strong><small>{run.hallucination_detected ? '可能缺少依据' : '未发现编造内容'}</small></td>
                       <td><strong>{run.latency_seconds.toFixed(2)}s</strong><small>{(run.tokens_input + run.tokens_output).toLocaleString()} Token</small></td>
                       <td><span className={`obs-status ${status.className}`}>{status.label}</span></td>
                     </tr>

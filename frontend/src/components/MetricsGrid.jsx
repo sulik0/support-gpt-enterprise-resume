@@ -3,10 +3,10 @@ import { Clock3, Coins, Cpu, ShieldCheck } from 'lucide-react';
 
 export default function MetricsGrid({ metrics = {} }) {
   const items = [
-    { label: '本次预估成本', value: `$${(metrics.cost || 0).toFixed(4)}`, hint: '按令牌用量估算', icon: Coins, tone: 'green' },
-    { label: '大模型令牌', value: (metrics.tokens || 0).toLocaleString(), hint: '输入与输出合计', icon: Cpu, tone: 'blue' },
-    { label: 'Agent 平均响应', value: `${(metrics.latency || 0).toFixed(2)}s`, hint: '完整工作流耗时', icon: Clock3, tone: 'amber' },
-    { label: '安全护栏', value: metrics.violations ? `${metrics.violations} 次拦截` : '运行正常', hint: '注入、越权与敏感信息', icon: ShieldCheck, tone: metrics.violations ? 'red' : 'purple' },
+    { label: '本次预估成本', value: `$${(metrics.cost || 0).toFixed(4)}`, hint: '按模型 Token 用量估算', icon: Coins, tone: 'green' },
+    { label: '模型 Token 用量', value: (metrics.tokens || 0).toLocaleString(), hint: '模型输入与输出合计', icon: Cpu, tone: 'blue' },
+    { label: '本次处理耗时', value: `${(metrics.latency || 0).toFixed(2)}s`, hint: '本次 Agent 流程的总耗时', icon: Clock3, tone: 'amber' },
+    { label: '安全检查', value: metrics.violations ? `${metrics.violations} 次拦截` : '未记录拦截', hint: '检查恶意指令、越权和敏感内容', icon: ShieldCheck, tone: metrics.violations ? 'red' : 'purple' },
   ];
 
   return (
